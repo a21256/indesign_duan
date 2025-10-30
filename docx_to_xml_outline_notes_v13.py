@@ -1173,33 +1173,49 @@ class DOCXOutlineExporter:
                             c_vis += 1
                             continue
 
-                        # 计算 rowspan：向下统计 continue
+                                                # 计算 rowspan：按“同一可视列”向下统计 continue（修复误扩展）
                         rowspan = 1
                         if is_restart:
+                            # 以“展开后的可视列索引”对齐同列单元格，逐行检查 vMerge 状态
+                            col_index = c_vis  # 当前格在本行的可视列索引（从 0 起）
                             down = r_idx + 1
                             while down < len(all_tr):
                                 tlist = all_tr[down].findall("./w:tc", NSMAP)
-                                if len(tlist) == 0: break
-                                found_continue = False
-                                for n_tc in tlist:
-                                    n_pr = n_tc.find("./w:tcPr", NSMAP)
-                                    n_vm = n_pr.find("./w:vMerge", NSMAP) if n_pr is not None else None
-                                    if n_vm is None:
-                                        found_continue = False;
-                                        break
-                                    nv = n_vm.get(f"{{{W_NS}}}val")
-                                    if nv in (None, "", "continue", "cont", "1"):
-                                        found_continue = True;
-                                        break
-                                    else:
-                                        found_continue = False;
-                                        break
-                                if found_continue:
-                                    rowspan += 1;
-                                    down += 1
-                                else:
+                                if not tlist:
                                     break
 
+                                # 在该行按 gridSpan 展开后，找到覆盖 col_index 的单元格
+                                cur_col = 0
+                                target_tc = None
+                                for n_tc in tlist:
+                                    n_pr = n_tc.find("./w:tcPr", NSMAP)
+                                    n_grid = n_pr.find("./w:gridSpan", NSMAP) if n_pr is not None else None
+                                    n_cs = 1
+                                    if n_grid is not None and n_grid.get(f"{{{W_NS}}}val"):
+                                        try:
+                                            n_cs = max(1, min(MAX_SPAN, int(n_grid.get(f"{{{W_NS}}}val"))))
+                                        except Exception:
+                                            n_cs = 1
+                                    if cur_col <= col_index < cur_col + n_cs:
+                                        target_tc = n_tc
+                                        break
+                                    cur_col += n_cs
+
+                                if target_tc is None:
+                                    break
+
+                                # 仅当“同列单元格”为 continue 时才累计 rowspan；遇到 restart 或无 vMerge 即停止
+                                n_pr = target_tc.find("./w:tcPr", NSMAP)
+                                n_vm = n_pr.find("./w:vMerge", NSMAP) if n_pr is not None else None
+                                if n_vm is None:
+                                    break
+                                nv = n_vm.get(f"{{{W_NS}}}val")
+                                if nv in (None, "", "continue", "cont", "1"):
+                                    rowspan += 1
+                                    down += 1
+                                    continue
+                                else:
+                                    break
                         row_cells.append({
                             "text": cell_text,
                             "colspan": colspan,
