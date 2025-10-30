@@ -1,50 +1,16 @@
-# Byte-compiled / cache
-__pycache__/
-*.py[cod]
-*.pyo
+# Ignore everything by default, then whitelist the few files we want to track
+/*
 
-# Editor / OS files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+# Keep .gitignore itself and allow these three main scripts
+!.gitignore
+!docx_to_idml.py
+!xml_to_idml.py
+!docx_to_xml_outline_notes_v13.py
 
-# Python envs
-env/
-venv/
-.venv/
+# (Keep Git metadata always)
+!.git/
 
-# Test / cache
-.pytest_cache/
-.cache/
-
-# Temporary/generated outputs
-tmp_idml_latest/
-tmp_docx/
-
-# Office / large binary source files (keep local, don't track)
-*.docx
-~$*.docx
-*.jpg
-*.jpeg
-*.png
-
-# Backups / archives
-*.zip
-*.bak
-*~
-
-# IDML / generated packaging
-*.idml
-
-# Logs
-*.log
-
-# Keep xml tracked unless explicitly generated - ignore specific generated patterns
-*_regex.xml
-
-# Optional: ignore user temp files created by editors
-*.swp
+# If you later want to allow other files, add patterns beginning with '!'
 # Python
 __pycache__/
 *.py[cod]
