@@ -1,0 +1,87 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python envs
+env/
+venv/
+.venv/
+
+# Test / cache
+.pytest_cache/
+.cache/
+
+# Temporary/generated outputs
+tmp_idml_latest/
+tmp_docx/
+
+# Office / large binary source files (keep local, don't track)
+*.docx
+~$*.docx
+*.jpg
+*.jpeg
+*.png
+
+# Backups / archives
+*.zip
+*.bak
+*~
+
+# IDML / generated packaging
+*.idml
+
+# Logs
+*.log
+
+# Keep xml tracked unless explicitly generated - ignore specific generated patterns
+*_regex.xml
+
+# Optional: ignore user temp files created by editors
+*.swp
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+.env
+.Python
+
+# IDEs
+.vscode/
+.idea/
+
+# Project outputs / logs
+formatted_output.xml
+indesign_autoflow_map_levels.jsx
+output.idml
+inline_style_debug.log
+assets/
+backup/
+docx_idml_table_image_patch.zip
+
+# Misc
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+
+# Requirements
+requirements-locked.txt
+
+# Temporary outputs and archives
+*.zip
+tmp_docx/
+tmp_idml/
