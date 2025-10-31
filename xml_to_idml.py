@@ -1308,6 +1308,9 @@ if (!gb){
             var innerHOn = (opts.innerHOn !== false);
             var innerVOn = (opts.innerVOn !== false);
 
+            if (typeof opts.inner === "number" && typeof opts.innerWeight !== "number") opts.innerWeight = opts.inner;
+            if (typeof opts.outer === "number" && typeof opts.outerWeight !== "number") opts.outerWeight = opts.outer;
+
             var outerWeight = (typeof opts.outerWeight === "number") ? opts.outerWeight : 0.75;
             var innerWeight = (typeof opts.innerWeight === "number") ? opts.innerWeight : 0.5;
             var colorHex    = (opts.color || "#000000");
@@ -1336,6 +1339,9 @@ if (!gb){
             var rows = tbl.rows.length, cols = tbl.columns.length;
             var allCells = tbl.cells.everyItem();
             try{
+                allCells.strokeWeight = innerWeight;
+                allCells.strokeColor  = strokeCol;
+
                 allCells.topStrokeWeight    = innerWeight;
                 allCells.bottomStrokeWeight = innerWeight;
                 allCells.leftStrokeWeight   = innerWeight;
@@ -1345,6 +1351,16 @@ if (!gb){
                 allCells.bottomStrokeColor  = strokeCol;
                 allCells.leftStrokeColor    = strokeCol;
                 allCells.rightStrokeColor   = strokeCol;
+
+                allCells.topEdgeStrokeWeight    = innerWeight;
+                allCells.bottomEdgeStrokeWeight = innerWeight;
+                allCells.leftEdgeStrokeWeight   = innerWeight;
+                allCells.rightEdgeStrokeWeight  = innerWeight;
+
+                allCells.topEdgeStrokeColor     = strokeCol;
+                allCells.bottomEdgeStrokeColor  = strokeCol;
+                allCells.leftEdgeStrokeColor    = strokeCol;
+                allCells.rightEdgeStrokeColor   = strokeCol;
 
                 if (cellInset !== null){
                     allCells.topInset    = cellInset;
@@ -1356,12 +1372,20 @@ if (!gb){
 
             if(!innerHOn){
                 for(var r=0; r<rows-1; r++){
-                    try{ tbl.rows[r].cells.everyItem().bottomStrokeWeight = 0; }catch(_){}
+                    try{
+                        var cells = tbl.rows[r].cells.everyItem();
+                        cells.bottomStrokeWeight = 0;
+                        cells.bottomEdgeStrokeWeight = 0;
+                    }catch(_){}
                 }
             }
             if(!innerVOn){
                 for(var c=0; c<cols-1; c++){
-                    try{ tbl.columns[c].cells.everyItem().rightStrokeWeight = 0; }catch(_){}
+                    try{
+                        var cc = tbl.columns[c].cells.everyItem();
+                        cc.rightStrokeWeight = 0;
+                        cc.rightEdgeStrokeWeight = 0;
+                    }catch(_){}
                 }
             }
 
@@ -1371,20 +1395,55 @@ if (!gb){
             var rightCol  = tbl.columns[cols-1];
 
             if(outerOn){
-                try{ topRow.cells.everyItem().topStrokeWeight    = outerWeight; }catch(_){}
-                try{ bottomRow.cells.everyItem().bottomStrokeWeight = outerWeight; }catch(_){}
-                try{ leftCol.cells.everyItem().leftStrokeWeight  = outerWeight; }catch(_){}
-                try{ rightCol.cells.everyItem().rightStrokeWeight = outerWeight; }catch(_){}
-
-                try{ topRow.cells.everyItem().topStrokeColor     = strokeCol; }catch(_){}
-                try{ bottomRow.cells.everyItem().bottomStrokeColor  = strokeCol; }catch(_){}
-                try{ leftCol.cells.everyItem().leftStrokeColor   = strokeCol; }catch(_){}
-                try{ rightCol.cells.everyItem().rightStrokeColor = strokeCol; }catch(_){}
+                try{
+                    var tr = topRow.cells.everyItem();
+                    tr.topStrokeWeight = outerWeight;
+                    tr.topEdgeStrokeWeight = outerWeight;
+                    tr.topStrokeColor = strokeCol;
+                    tr.topEdgeStrokeColor = strokeCol;
+                }catch(_){}
+                try{
+                    var br = bottomRow.cells.everyItem();
+                    br.bottomStrokeWeight = outerWeight;
+                    br.bottomEdgeStrokeWeight = outerWeight;
+                    br.bottomStrokeColor = strokeCol;
+                    br.bottomEdgeStrokeColor = strokeCol;
+                }catch(_){}
+                try{
+                    var lc = leftCol.cells.everyItem();
+                    lc.leftStrokeWeight = outerWeight;
+                    lc.leftEdgeStrokeWeight = outerWeight;
+                    lc.leftStrokeColor = strokeCol;
+                    lc.leftEdgeStrokeColor = strokeCol;
+                }catch(_){}
+                try{
+                    var rc = rightCol.cells.everyItem();
+                    rc.rightStrokeWeight = outerWeight;
+                    rc.rightEdgeStrokeWeight = outerWeight;
+                    rc.rightStrokeColor = strokeCol;
+                    rc.rightEdgeStrokeColor = strokeCol;
+                }catch(_){}
             }else{
-                try{ topRow.cells.everyItem().topStrokeWeight    = 0; }catch(_){}
-                try{ bottomRow.cells.everyItem().bottomStrokeWeight = 0; }catch(_){}
-                try{ leftCol.cells.everyItem().leftStrokeWeight  = 0; }catch(_){}
-                try{ rightCol.cells.everyItem().rightStrokeWeight = 0; }catch(_){}
+                try{
+                    var tr0 = topRow.cells.everyItem();
+                    tr0.topStrokeWeight = 0;
+                    tr0.topEdgeStrokeWeight = 0;
+                }catch(_){}
+                try{
+                    var br0 = bottomRow.cells.everyItem();
+                    br0.bottomStrokeWeight = 0;
+                    br0.bottomEdgeStrokeWeight = 0;
+                }catch(_){}
+                try{
+                    var lc0 = leftCol.cells.everyItem();
+                    lc0.leftStrokeWeight = 0;
+                    lc0.leftEdgeStrokeWeight = 0;
+                }catch(_){}
+                try{
+                    var rc0 = rightCol.cells.everyItem();
+                    rc0.rightStrokeWeight = 0;
+                    rc0.rightEdgeStrokeWeight = 0;
+                }catch(_){}
             }
 
             if(opts.headerBoldBorder && tbl.headerRowCount>0){
@@ -1392,8 +1451,11 @@ if (!gb){
                     var w = (typeof opts.headerBorderWeight === "number") ? opts.headerBorderWeight : (outerWeight*1.2);
                     for(var rr=0; rr<Math.min(tbl.headerRowCount, rows); rr++){
                         var row = tbl.rows[rr];
-                        row.cells.everyItem().bottomStrokeWeight = w;
-                        row.cells.everyItem().bottomStrokeColor  = strokeCol;
+                        var cells = row.cells.everyItem();
+                        cells.bottomStrokeWeight = w;
+                        cells.bottomEdgeStrokeWeight = w;
+                        cells.bottomStrokeColor  = strokeCol;
+                        cells.bottomEdgeStrokeColor  = strokeCol;
                     }
                 }catch(_){}
             }
@@ -1795,7 +1857,15 @@ if (!gb){
 
         var merges = [];
         var covered = [];
-        for (var r=0; r<rows; r++){ covered[r]=[]; for (var c=0; c<cols; c++) covered[r][c]=false; }
+        var cellMeta = [];
+        for (var r=0; r<rows; r++){
+          covered[r]=[];
+          cellMeta[r]=[];
+          for (var c=0; c<cols; c++){
+            covered[r][c]=false;
+            cellMeta[r][c]=null;
+          }
+        }
 
         for (var r=0; r<rows; r++){
           for (var c=0; c<cols; c++){
@@ -1807,6 +1877,10 @@ if (!gb){
             if (rsRaw===0 || csRaw===0){ covered[r][c] = true; continue; }
 
             var rs = Math.max(1, rsRaw), cs = Math.max(1, csRaw);
+            cellMeta[r][c] = {
+              align: cellSpec.align||"left",
+              valign: cellSpec.valign||"top"
+            };
             if (rs>1 || cs>1){
               merges.push({r:r, c:c, rs:rs, cs:cs});
               for (var rr=r; rr<Math.min(rows, r+rs); rr++){
@@ -1829,8 +1903,11 @@ if (!gb){
             try { tbl.rows[r].cells[c].texts[0].contents = txt; }
             catch(_){ try { tbl.cells[r*cols+c].contents = txt; } catch(__){} }
 
-            try { tbl.rows[r].cells[c].texts[0].paragraphs.everyItem().justification = _mapAlign(cellSpec2.align||"left"); } catch(_){ }
-            try { tbl.rows[r].cells[c].verticalJustification = _mapVAlign(cellSpec2.valign||"top"); } catch(_){ }
+            var alignVal = cellSpec2.align || "left";
+            var valignVal = cellSpec2.valign || "top";
+            try { tbl.rows[r].cells[c].texts[0].paragraphs.everyItem().justification = _mapAlign(alignVal); } catch(_){ }
+            try { tbl.rows[r].cells[c].verticalJustification = _mapVAlign(valignVal); } catch(_){ }
+            cellMeta[r][c] = { align: alignVal, valign: valignVal };
 
             try{
               if (cellSpec2.shading && /^#([0-9a-fA-F]{6})$/.test(cellSpec2.shading)){
@@ -1855,7 +1932,12 @@ if (!gb){
           }
         }
 
-        merges.sort(function(a,b){ return (b.rs*b.cs) - (a.rs*a.cs); });
+        merges.sort(function(a,b){
+          if (a.c !== b.c) return b.c - a.c;          // rightmost columns first
+          var areaDiff = (b.rs*b.cs) - (a.rs*a.cs);    // larger spans first within same column
+          if (areaDiff !== 0) return areaDiff;
+          return a.r - b.r;                            // top to bottom
+        });
         for (var i=0; i<merges.length; i++){
           var m  = merges[i];
           var r1 = m.r, c1 = m.c, r2 = Math.min(rows-1, r1+m.rs-1), c2 = Math.min(cols-1, c1+m.cs-1);
@@ -1863,6 +1945,21 @@ if (!gb){
             var range = tbl.cells.itemByRange(tbl.rows[r1].cells[c1], tbl.rows[r2].cells[c2]);
             range.merge();
           }catch(e){ }
+        }
+
+        if (merges.length){
+          for (var mi=0; mi<merges.length; mi++){
+            var mr = merges[mi];
+            var meta = cellMeta[mr.r][mr.c];
+            if (!meta) continue;
+            try{
+              var cell = tbl.rows[mr.r].cells[mr.c];
+              cell.verticalJustification = _mapVAlign(meta.valign||"top");
+              try{
+                cell.texts[0].paragraphs.everyItem().justification = _mapAlign(meta.align||"left");
+              }catch(_){}
+            }catch(_){}
+          }
         }
 
         try{
