@@ -1856,25 +1856,92 @@ if (!gb){
         }catch(_){ }
 
         var merges = [];
-        var covered = [];
         var cellMeta = [];
+        var cellPlan = [];
+        var skipPos = [];
         for (var r=0; r<rows; r++){
-          covered[r]=[];
-          cellMeta[r]=[];
+          cellPlan[r] = [];
+          cellMeta[r] = [];
+          skipPos[r] = [];
           for (var c=0; c<cols; c++){
-            covered[r][c]=false;
-            cellMeta[r][c]=null;
+            cellPlan[r][c] = null;
+            cellMeta[r][c] = null;
+            skipPos[r][c] = false;
+          }
+        }
+
+        for (var r=0; r<rows; r++){
+          var rowEntries = obj.data[r] || [];
+          var needsProject = (rowEntries.length !== cols);
+          if (!needsProject){
+            for (var c=0; c<cols; c++){
+              var rawSpec = rowEntries[c];
+              if (rawSpec == null) rawSpec = {text:""};
+              if (typeof rawSpec === "string") rawSpec = {text: rawSpec};
+              var rsRaw0 = rawSpec.rowspan==null ? 1 : parseInt(rawSpec.rowspan,10);
+              var csRaw0 = rawSpec.colspan==null ? 1 : parseInt(rawSpec.colspan,10);
+              if (!isFinite(rsRaw0)) rsRaw0 = 1;
+              if (!isFinite(csRaw0)) csRaw0 = 1;
+              if (rsRaw0 === 0 || csRaw0 === 0){
+                skipPos[r][c] = true;
+                continue;
+              }
+              cellPlan[r][c] = rawSpec;
+              var rsTmp = Math.max(1, rsRaw0), csTmp = Math.max(1, csRaw0);
+              if (rsTmp>1 || csTmp>1){
+                for (var rr=r; rr<Math.min(rows, r+rsTmp); rr++){
+                  for (var cc=c; cc<Math.min(cols, c+csTmp); cc++){
+                    if (!(rr===r && cc===c)) skipPos[rr][cc] = true;
+                  }
+                }
+              }
+            }
+          } else {
+            var cPtr = 0;
+            for (var e=0; e<rowEntries.length; e++){
+              var rawSpec2 = rowEntries[e];
+              if (rawSpec2 == null) rawSpec2 = {text:""};
+              if (typeof rawSpec2 === "string") rawSpec2 = {text: rawSpec2};
+              var tmpRS = rawSpec2.rowspan==null ? 1 : parseInt(rawSpec2.rowspan,10);
+              var tmpCS = rawSpec2.colspan==null ? 1 : parseInt(rawSpec2.colspan,10);
+              if (!isFinite(tmpRS)) tmpRS = 1;
+              if (!isFinite(tmpCS)) tmpCS = 1;
+              if (tmpRS === 0 || tmpCS === 0){
+                while (cPtr < cols && skipPos[r][cPtr]) cPtr++;
+                if (cPtr < cols){
+                  skipPos[r][cPtr] = true;
+                  cPtr++;
+                }
+                continue;
+              }
+              while (cPtr < cols && skipPos[r][cPtr]) cPtr++;
+              if (cPtr >= cols) break;
+              cellPlan[r][cPtr] = rawSpec2;
+              var rsMark = Math.max(1, tmpRS), csMark = Math.max(1, tmpCS);
+              for (var rr=r; rr<Math.min(rows, r+rsMark); rr++){
+                for (var cc=cPtr; cc<Math.min(cols, cPtr+csMark); cc++){
+                  if (!(rr===r && cc===cPtr)){
+                    skipPos[rr][cc] = true;
+                  }
+                }
+              }
+              cPtr += csMark;
+            }
           }
         }
 
         for (var r=0; r<rows; r++){
           for (var c=0; c<cols; c++){
-            var cellSpec = (obj.data[r] && obj.data[r][c]) ? obj.data[r][c] : {text:""};
+            if (skipPos[r][c] && !cellPlan[r][c]) continue;
+
+            var cellSpec = cellPlan[r][c] || {text:""};
             if (typeof cellSpec === "string") cellSpec = {text: cellSpec};
 
             var rsRaw = (cellSpec.rowspan==null ? 1 : parseInt(cellSpec.rowspan,10));
             var csRaw = (cellSpec.colspan==null ? 1 : parseInt(cellSpec.colspan,10));
-            if (rsRaw===0 || csRaw===0){ covered[r][c] = true; continue; }
+            if (!isFinite(rsRaw)) rsRaw = 1;
+            if (!isFinite(csRaw)) csRaw = 1;
+            if (rsRaw===0 || csRaw===0){ skipPos[r][c] = true; continue; }
 
             var rs = Math.max(1, rsRaw), cs = Math.max(1, csRaw);
             cellMeta[r][c] = {
@@ -1883,44 +1950,30 @@ if (!gb){
             };
             if (rs>1 || cs>1){
               merges.push({r:r, c:c, rs:rs, cs:cs});
-              for (var rr=r; rr<Math.min(rows, r+rs); rr++){
-                for (var cc=c; cc<Math.min(cols, c+cs); cc++){
-                  if (!(rr===r && cc===c)) covered[rr][cc] = true;
-                }
-              }
             }
-          }
-        }
 
-        for (var r=0; r<rows; r++){
-          for (var c=0; c<cols; c++){
-            if (covered[r][c]) continue;
-
-            var cellSpec2 = (obj.data[r] && obj.data[r][c]) ? obj.data[r][c] : {text:""};
-            if (typeof cellSpec2 === "string") cellSpec2 = {text: cellSpec2};
-
-            var txt = smartWrapStr(String(cellSpec2.text||"").replace(/\r?\n/g, "\r"));
+            var txt = smartWrapStr(String(cellSpec.text||"").replace(/\r?\n/g, "\r"));
             try { tbl.rows[r].cells[c].texts[0].contents = txt; }
             catch(_){ try { tbl.cells[r*cols+c].contents = txt; } catch(__){} }
 
-            var alignVal = cellSpec2.align || "left";
-            var valignVal = cellSpec2.valign || "top";
+            var alignVal = cellSpec.align || "left";
+            var valignVal = cellSpec.valign || "top";
             try { tbl.rows[r].cells[c].texts[0].paragraphs.everyItem().justification = _mapAlign(alignVal); } catch(_){ }
             try { tbl.rows[r].cells[c].verticalJustification = _mapVAlign(valignVal); } catch(_){ }
             cellMeta[r][c] = { align: alignVal, valign: valignVal };
 
             try{
-              if (cellSpec2.shading && /^#([0-9a-fA-F]{6})$/.test(cellSpec2.shading)){
-                var cname="CellFill_"+cellSpec2.shading.substr(1);
+              if (cellSpec.shading && /^#([0-9a-fA-F]{6})$/.test(cellSpec.shading)){
+                var cname="CellFill_"+cellSpec.shading.substr(1);
                 var col; try{ col=app.activeDocument.colors.itemByName(cname); }catch(__){}
                 try{
                   if(!col || !col.isValid){
                     col = app.activeDocument.colors.add({
                       name:cname, model:ColorModel.PROCESS, space:ColorSpace.RGB,
                       colorValue:[
-                        parseInt(cellSpec2.shading.substr(1,2),16),
-                        parseInt(cellSpec2.shading.substr(3,2),16),
-                        parseInt(cellSpec2.shading.substr(5,2),16)
+                        parseInt(cellSpec.shading.substr(1,2),16),
+                        parseInt(cellSpec.shading.substr(3,2),16),
+                        parseInt(cellSpec.shading.substr(5,2),16)
                       ]
                     });
                   }
@@ -2546,7 +2599,6 @@ function fixAllTables(){
                 try { T.rows.everyItem().maximumHeight = 1000000; } catch(_){}
                 try { T.rows.everyItem().keepWithNext = false; } catch(_){}
                 try { T.rows.everyItem().keepTogether = false; } catch(_){}
-                try { T.cells.everyItem().splitCells = true; } catch(_){}
                 try {
                     var paras = T.cells.everyItem().texts[0].paragraphs.everyItem();
                     paras.keepOptions.keepLinesTogether = false;
