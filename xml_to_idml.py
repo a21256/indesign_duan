@@ -1836,6 +1836,11 @@ if (!gb){
           try{ log('[ERR] addTableHiFi: table create failed ' + eAdd); }catch(__){}
           return;
         }
+        try{
+          var __colLenInit = 0;
+          try{ __colLenInit = tbl.columns.length; }catch(__colErr){}
+          log("[TABLE] init columns expected=" + cols + " actual=" + __colLenInit);
+        }catch(__colLog){}
         try{ tableStory.recompose(); }catch(_){ }
         try {
           var hr = parseInt(obj.headerRows || 0, 10);
@@ -1855,10 +1860,53 @@ if (!gb){
           }catch(_){ }
         }catch(_){ }
 
+        var MAX_ROWSPAN_INLINE = 25;
         var merges = [];
-        var cellMeta = [];
         var cellPlan = [];
+        var cellMeta = [];
         var skipPos = [];
+        var degradeNotice = false;
+        function _cloneCellSpec(base, rsOverride, csOverride){
+          var clone = {};
+          for (var key in base){
+            if (!base.hasOwnProperty(key)) continue;
+            if (key === "rowspan" || key === "colspan") continue;
+            clone[key] = base[key];
+          }
+          var rsSrc = base.rowspan==null ? 1 : parseInt(base.rowspan,10);
+          var csSrc = base.colspan==null ? 1 : parseInt(base.colspan,10);
+          if (!isFinite(rsSrc)) rsSrc = 1;
+          if (!isFinite(csSrc)) csSrc = 1;
+          clone.rowspan = (rsOverride!=null) ? rsOverride : rsSrc;
+          clone.colspan = (csOverride!=null) ? csOverride : csSrc;
+          return clone;
+        }
+        function _markCovered(r, c, spanRows, spanCols){
+          for (var rr=r; rr<Math.min(rows, r+spanRows); rr++){
+            for (var cc=c; cc<Math.min(cols, c+spanCols); cc++){
+              if (rr===r && cc===c) continue;
+              skipPos[rr][cc] = true;
+            }
+          }
+        }
+        function _flattenRowspan(r, c, rawSpec, spanRows, spanCols){
+          degradeNotice = true;
+          try{ log("[WARN] degrade rowspan rows=" + spanRows + " at r=" + r + " c=" + c); }catch(__warnLog){}
+          var maxR = Math.min(rows, r + spanRows);
+          for (var rr=r; rr<maxR; rr++){
+            var clone = _cloneCellSpec(rawSpec, 1, spanCols);
+            if (rr !== r){
+              try{ clone.text = ""; }catch(__txt){}
+              skipPos[rr][c] = true;
+            }
+            cellPlan[rr][c] = clone;
+            cellMeta[rr][c] = { align: clone.align||"left", valign: clone.valign||"top" };
+            for (var cc=c+1; cc<c+spanCols && cc<cols; cc++){
+              skipPos[rr][cc] = true;
+            }
+          }
+        }
+
         for (var r=0; r<rows; r++){
           cellPlan[r] = [];
           cellMeta[r] = [];
@@ -1872,108 +1920,78 @@ if (!gb){
 
         for (var r=0; r<rows; r++){
           var rowEntries = obj.data[r] || [];
-          var needsProject = (rowEntries.length !== cols);
-          if (!needsProject){
-            for (var c=0; c<cols; c++){
-              var rawSpec = rowEntries[c];
-              if (rawSpec == null) rawSpec = {text:""};
-              if (typeof rawSpec === "string") rawSpec = {text: rawSpec};
-              var rsRaw0 = rawSpec.rowspan==null ? 1 : parseInt(rawSpec.rowspan,10);
-              var csRaw0 = rawSpec.colspan==null ? 1 : parseInt(rawSpec.colspan,10);
-              if (!isFinite(rsRaw0)) rsRaw0 = 1;
-              if (!isFinite(csRaw0)) csRaw0 = 1;
-              if (rsRaw0 === 0 || csRaw0 === 0){
-                skipPos[r][c] = true;
-                continue;
-              }
-              cellPlan[r][c] = rawSpec;
-              var rsTmp = Math.max(1, rsRaw0), csTmp = Math.max(1, csRaw0);
-              if (rsTmp>1 || csTmp>1){
-                for (var rr=r; rr<Math.min(rows, r+rsTmp); rr++){
-                  for (var cc=c; cc<Math.min(cols, c+csTmp); cc++){
-                    if (!(rr===r && cc===c)) skipPos[rr][cc] = true;
-                  }
-                }
-              }
+          var cPtr = 0;
+          for (var e=0; e<rowEntries.length; e++){
+            var rawSpec = rowEntries[e];
+            if (rawSpec == null) rawSpec = {text:""};
+            if (typeof rawSpec === "string") rawSpec = {text: rawSpec};
+            var tmpRS = rawSpec.rowspan==null ? 1 : parseInt(rawSpec.rowspan,10);
+            var tmpCS = rawSpec.colspan==null ? 1 : parseInt(rawSpec.colspan,10);
+            if (!isFinite(tmpRS)) tmpRS = 1;
+            if (!isFinite(tmpCS)) tmpCS = 1;
+
+            if (tmpRS === 0 || tmpCS === 0){
+              while (cPtr < cols && !skipPos[r][cPtr]) cPtr++;
+              if (cPtr < cols) cPtr++;
+              continue;
             }
-          } else {
-            var cPtr = 0;
-            for (var e=0; e<rowEntries.length; e++){
-              var rawSpec2 = rowEntries[e];
-              if (rawSpec2 == null) rawSpec2 = {text:""};
-              if (typeof rawSpec2 === "string") rawSpec2 = {text: rawSpec2};
-              var tmpRS = rawSpec2.rowspan==null ? 1 : parseInt(rawSpec2.rowspan,10);
-              var tmpCS = rawSpec2.colspan==null ? 1 : parseInt(rawSpec2.colspan,10);
-              if (!isFinite(tmpRS)) tmpRS = 1;
-              if (!isFinite(tmpCS)) tmpCS = 1;
-              if (tmpRS === 0 || tmpCS === 0){
-                while (cPtr < cols && skipPos[r][cPtr]) cPtr++;
-                if (cPtr < cols){
-                  skipPos[r][cPtr] = true;
-                  cPtr++;
-                }
-                continue;
-              }
-              while (cPtr < cols && skipPos[r][cPtr]) cPtr++;
-              if (cPtr >= cols) break;
-              cellPlan[r][cPtr] = rawSpec2;
-              var rsMark = Math.max(1, tmpRS), csMark = Math.max(1, tmpCS);
-              for (var rr=r; rr<Math.min(rows, r+rsMark); rr++){
-                for (var cc=cPtr; cc<Math.min(cols, cPtr+csMark); cc++){
-                  if (!(rr===r && cc===cPtr)){
-                    skipPos[rr][cc] = true;
-                  }
-                }
-              }
-              cPtr += csMark;
+
+            while (cPtr < cols && skipPos[r][cPtr]) cPtr++;
+            if (cPtr >= cols) break;
+
+            var spanRows = Math.max(1, tmpRS);
+            var spanCols = Math.max(1, tmpCS);
+
+            if (spanRows > MAX_ROWSPAN_INLINE){
+              _flattenRowspan(r, cPtr, rawSpec, spanRows, spanCols);
+              cPtr += spanCols;
+              continue;
             }
+
+            cellPlan[r][cPtr] = _cloneCellSpec(rawSpec, spanRows, spanCols);
+            cellMeta[r][cPtr] = { align: rawSpec.align||"left", valign: rawSpec.valign||"top" };
+            if (spanRows>1 || spanCols>1){
+              merges.push({r:r, c:cPtr, rs:spanRows, cs:spanCols});
+              _markCovered(r, cPtr, spanRows, spanCols);
+            }
+            cPtr += spanCols;
           }
         }
 
         for (var r=0; r<rows; r++){
           for (var c=0; c<cols; c++){
             if (skipPos[r][c] && !cellPlan[r][c]) continue;
-
-            var cellSpec = cellPlan[r][c] || {text:""};
-            if (typeof cellSpec === "string") cellSpec = {text: cellSpec};
-
-            var rsRaw = (cellSpec.rowspan==null ? 1 : parseInt(cellSpec.rowspan,10));
-            var csRaw = (cellSpec.colspan==null ? 1 : parseInt(cellSpec.colspan,10));
-            if (!isFinite(rsRaw)) rsRaw = 1;
-            if (!isFinite(csRaw)) csRaw = 1;
-            if (rsRaw===0 || csRaw===0){ skipPos[r][c] = true; continue; }
-
-            var rs = Math.max(1, rsRaw), cs = Math.max(1, csRaw);
-            cellMeta[r][c] = {
-              align: cellSpec.align||"left",
-              valign: cellSpec.valign||"top"
-            };
-            if (rs>1 || cs>1){
-              merges.push({r:r, c:c, rs:rs, cs:cs});
+            var cellSpec2 = cellPlan[r][c];
+            if (!cellSpec2){
+              var src = (obj.data[r] && obj.data[r][c]) ? obj.data[r][c] : {text:""};
+              if (typeof src === "string") src = {text: src};
+              cellSpec2 = _cloneCellSpec(src, 1, 1);
+              cellPlan[r][c] = cellSpec2;
+              cellMeta[r][c] = { align: cellSpec2.align||"left", valign: cellSpec2.valign||"top" };
             }
 
-            var txt = smartWrapStr(String(cellSpec.text||"").replace(/\r?\n/g, "\r"));
+            var txt = smartWrapStr(String(cellSpec2.text||"").replace(/\r?\n/g, "\r"));
             try { tbl.rows[r].cells[c].texts[0].contents = txt; }
             catch(_){ try { tbl.cells[r*cols+c].contents = txt; } catch(__){} }
 
-            var alignVal = cellSpec.align || "left";
-            var valignVal = cellSpec.valign || "top";
+            var alignVal = cellSpec2.align || "left";
+            var valignVal = cellSpec2.valign || "top";
             try { tbl.rows[r].cells[c].texts[0].paragraphs.everyItem().justification = _mapAlign(alignVal); } catch(_){ }
             try { tbl.rows[r].cells[c].verticalJustification = _mapVAlign(valignVal); } catch(_){ }
             cellMeta[r][c] = { align: alignVal, valign: valignVal };
 
             try{
-              if (cellSpec.shading && /^#([0-9a-fA-F]{6})$/.test(cellSpec.shading)){
-                var cname="CellFill_"+cellSpec.shading.substr(1);
+              if (cellSpec2.shading && /^#([0-9a-fA-F]{6})$/.test(cellSpec2.shading)){
+                var cname="CellFill_"+cellSpec2.shading.substr(1);
                 var col; try{ col=app.activeDocument.colors.itemByName(cname); }catch(__){}
                 try{
                   if(!col || !col.isValid){
                     col = app.activeDocument.colors.add({
                       name:cname, model:ColorModel.PROCESS, space:ColorSpace.RGB,
                       colorValue:[
-                        parseInt(cellSpec.shading.substr(1,2),16),
-                        parseInt(cellSpec.shading.substr(3,2),16),
-                        parseInt(cellSpec.shading.substr(5,2),16)
+                        parseInt(cellSpec2.shading.substr(1,2),16),
+                        parseInt(cellSpec2.shading.substr(3,2),16),
+                        parseInt(cellSpec2.shading.substr(5,2),16)
                       ]
                     });
                   }
@@ -1986,10 +2004,10 @@ if (!gb){
         }
 
         merges.sort(function(a,b){
-          if (a.c !== b.c) return b.c - a.c;          // rightmost columns first
-          var areaDiff = (b.rs*b.cs) - (a.rs*a.cs);    // larger spans first within same column
+          if (a.c !== b.c) return b.c - a.c;
+          var areaDiff = (b.rs*b.cs) - (a.rs*a.cs);
           if (areaDiff !== 0) return areaDiff;
-          return a.r - b.r;                            // top to bottom
+          return a.r - b.r;
         });
         for (var i=0; i<merges.length; i++){
           var m  = merges[i];
@@ -2196,6 +2214,34 @@ if (!gb){
             }catch(__postDbg){}
           }
         }catch(__ipErr){}
+        if (degradeNotice){
+          try{
+            var __noticeIP = null;
+            if (__postTableIP && __postTableIP.isValid && story && story.isValid){
+              try{ __noticeIP = story.insertionPoints[__postTableIP.index]; }catch(__noticeIdxErr){}
+            }
+            if ((!__noticeIP || !__noticeIP.isValid) && tbl && tbl.isValid){
+              try{
+                var __anchorIdx = (tbl.storyOffset && tbl.storyOffset.isValid) ? tbl.storyOffset.index : null;
+                if (__anchorIdx != null){
+                  try{ __noticeIP = story.insertionPoints[__anchorIdx+1]; }catch(__noticeIdxErr2){}
+                }
+              }catch(__noticeIdxEval){}
+            }
+            if ((!__noticeIP || !__noticeIP.isValid) && story && story.isValid){
+              try{ __noticeIP = story.insertionPoints[-1]; }catch(__noticeFallback){}
+            }
+            if (__noticeIP && __noticeIP.isValid){
+              var __noticeMsg = "\u3010\u8868\u683c\u63d0\u793a\u3011\u8be5\u8868\u5305\u542b\u8d85\u8fc7 "
+                                + MAX_ROWSPAN_INLINE
+                                + " \u884c\u7684\u7eb5\u5411\u5408\u5e76\uff0c\u7cfb\u7edf\u5df2\u62c6\u5206\u5bfc\u5165\uff0c\u8bf7\u6838\u5bf9\u539f\u7a3f\u5e76\u624b\u52a8\u8865\u9f50\u9057\u6f0f\u5185\u5bb9\u3002";
+              try{ __noticeIP.contents = __noticeMsg + "\r"; }catch(__noticeInsert){}
+              try{ log("[TABLE] degrade notice inserted idx=" + __noticeIP.index); }catch(__noticeLog){}
+            }
+          }catch(__noticeBlockErr){
+            try{ log("[WARN] degrade notice insert failed: " + __noticeBlockErr); }catch(__noticeWarn){}
+          }
+        }
         try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(__resetErr){}
 
         try{
