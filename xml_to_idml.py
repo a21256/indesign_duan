@@ -1931,8 +1931,8 @@ if (!gb){
             if (!isFinite(tmpCS)) tmpCS = 1;
 
             if (tmpRS === 0 || tmpCS === 0){
-              while (cPtr < cols && !skipPos[r][cPtr]) cPtr++;
-              if (cPtr < cols) cPtr++;
+              var __adv = (tmpCS <= 0) ? 1 : tmpCS;
+              cPtr += __adv;
               continue;
             }
 
