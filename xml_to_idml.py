@@ -306,6 +306,66 @@ function iso() {
         LOG_FILE.close();
       }catch(_){}
     }
+    function __logUnitValueFail(msg, err){
+      if (__UNITVALUE_FAIL_ONCE) return;
+      __UNITVALUE_FAIL_ONCE = true;
+      try{ log("[WARN] UnitValue unavailable: " + msg + " err=" + err); }catch(_){}
+    }
+
+    function unitPt(val){
+      if (val && typeof val === "object") return val;
+      var num = parseFloat(val);
+      if (!isFinite(num)) return null;
+      if (typeof UnitValue === "function"){
+        try{ return new UnitValue(num, "pt"); }catch(e){ __logUnitValueFail("num+pt", e); }
+        try{ return new UnitValue(num, "points"); }catch(e2){ __logUnitValueFail("num+points", e2); }
+        try{ return new UnitValue(num + " pt"); }catch(e3){ __logUnitValueFail("str pt", e3); }
+        try{ return new UnitValue(num + "pt"); }catch(e4){ __logUnitValueFail("strpt", e4); }
+      }
+      else{
+        __logUnitValueFail("UnitValue undefined", "NA");
+      }
+      return null;
+    }
+
+    function _assignColumnWidth(colObj, widthPt, idx){
+      if (!colObj || !colObj.isValid) return false;
+      var num = parseFloat(widthPt);
+      if (!isFinite(num)) num = widthPt;
+      var attempts = [];
+      attempts.push({label:"unitPt", factory:function(){ return unitPt(num); }});
+      if (typeof UnitValue === "function"){
+        attempts.push({label:"Unit(pt)", factory:function(){ return new UnitValue(num, "pt"); }});
+        attempts.push({label:"Unit(points)", factory:function(){ return new UnitValue(num, "points"); }});
+        attempts.push({label:"Unit(str pt)", factory:function(){ return new UnitValue(num + " pt"); }});
+        attempts.push({label:"Unit(strpt)", factory:function(){ return new UnitValue(num + "pt"); }});
+      }
+      attempts.push({label:"number", factory:function(){ return num; }});
+      var logs = [];
+      for (var i=0; i<attempts.length; i++){
+        var attempt = attempts[i];
+        var val = null;
+        try{
+          val = attempt.factory();
+        }catch(factoryErr){
+          logs.push(attempt.label + ":ctor=" + factoryErr);
+          continue;
+        }
+        if (val === null || val === undefined){
+          logs.push(attempt.label + ":null");
+          continue;
+        }
+        try{
+          colObj.width = val;
+          return true;
+        }catch(applyErr){
+          logs.push(attempt.label + ":set=" + applyErr);
+        }
+      }
+      try{ log("[WARN] width apply failed idx=" + idx + " val=" + widthPt + " trace=" + logs.join("|")); }catch(_){}
+      return false;
+    }
+
 
     // 兼容 InDesign 2020：没有 String#trim
     if (!String.prototype.trim) {
@@ -322,6 +382,12 @@ function iso() {
     // 全局状态：不要挂在 app 上（COM 对象不能扩展），改为脚本内私有变量
     var __FLOAT_CTX = {};               // 用于 addFloatingImage 的同段堆叠
     var __LAST_IMG_ANCHOR_IDX = -1;     // 用于 addImageAtV2 的“同锚点”检测
+    var __DEFAULT_LAYOUT = null;
+    var __CURRENT_LAYOUT = null;
+    var __DEFAULT_INNER_WIDTH = null;
+    var __DEFAULT_INNER_HEIGHT = null;
+    var __ENABLE_TRAILING_TRIM = false;
+    var __UNITVALUE_FAIL_ONCE = false;
 
     // 放在定义 log() 之后、其它函数之前即可
     if (typeof curTextFrame === "undefined" && typeof tf !== "undefined") {
@@ -365,6 +431,203 @@ function iso() {
                    try { ip2 = story.insertionPoints[-1]; } catch(_){} }
         return ip2;
       }catch(e){ log("[LOG] _safeIP fallback error"); return null; }
+    }
+
+    function __cloneLayoutState(src){
+      var out = {};
+      if (!src) return out;
+      if (src.pageOrientation){
+        out.pageOrientation = String(src.pageOrientation).toLowerCase();
+      }
+      function _num(v){
+        if (v === undefined || v === null) return null;
+        var n = parseFloat(v);
+        return isFinite(n) ? n : null;
+      }
+      var w = _num(src.pageWidthPt);
+      if (w !== null) out.pageWidthPt = w;
+      var h = _num(src.pageHeightPt);
+      if (h !== null) out.pageHeightPt = h;
+      var pmSrc = src.pageMarginsPt;
+      if (pmSrc && typeof pmSrc === "object"){
+        var pm = {};
+        var has = false;
+        var keys = ["top","bottom","left","right"];
+        for (var i=0;i<keys.length;i++){
+          var k = keys[i];
+          if (pmSrc.hasOwnProperty(k)){
+            var nv = _num(pmSrc[k]);
+            if (nv !== null){
+              pm[k] = nv;
+              has = true;
+            }
+          }
+        }
+        if (has) out.pageMarginsPt = pm;
+      }
+      return out;
+    }
+
+    function __layoutsEqual(a, b){
+      function _ori(x){ return (x && typeof x === "string") ? String(x).toLowerCase() : ""; }
+      function _diff(n1, n2){
+        if (n1 === undefined || n1 === null){
+          return !(n2 === undefined || n2 === null);
+        }
+        if (n2 === undefined || n2 === null) return true;
+        var v1 = parseFloat(n1), v2 = parseFloat(n2);
+        if (!isFinite(v1) || !isFinite(v2)) return false;
+        return Math.abs(v1 - v2) > 0.5;
+      }
+      a = a || {};
+      b = b || {};
+      if (_ori(a.pageOrientation) !== _ori(b.pageOrientation)) return false;
+      if (_diff(a.pageWidthPt, b.pageWidthPt)) return false;
+      if (_diff(a.pageHeightPt, b.pageHeightPt)) return false;
+      var keys = ["top","bottom","left","right"];
+      var am = a.pageMarginsPt || {};
+      var bm = b.pageMarginsPt || {};
+      for (var i=0;i<keys.length;i++){
+        var k = keys[i];
+        if (_diff(am[k], bm[k])) return false;
+      }
+      return true;
+    }
+
+    function __createLayoutFrame(layoutState, linkFromFrame, opts){
+      opts = opts || {};
+      var target = __cloneLayoutState(layoutState);
+      try{
+        if (!target.pageOrientation && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation){
+          target.pageOrientation = __DEFAULT_LAYOUT.pageOrientation;
+        }
+        if ((target.pageWidthPt === undefined || target.pageWidthPt === null) && __DEFAULT_LAYOUT){
+          target.pageWidthPt = __DEFAULT_LAYOUT.pageWidthPt;
+        }
+        if ((target.pageHeightPt === undefined || target.pageHeightPt === null) && __DEFAULT_LAYOUT){
+          target.pageHeightPt = __DEFAULT_LAYOUT.pageHeightPt;
+        }
+        if (!target.pageMarginsPt && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageMarginsPt){
+          target.pageMarginsPt = __cloneLayoutState({pageMarginsPt:__DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
+        }
+        var basePage = (opts.afterPage && opts.afterPage.isValid) ? opts.afterPage : (page && page.isValid ? page : doc.pages[doc.pages.length-1]);
+        var newPage = null;
+        var docAllowPrev = null;
+        var spreadAllowPrev = null;
+        try{
+          try{ docAllowPrev = doc.allowPageShuffle; doc.allowPageShuffle = true; }catch(_docShuf){}
+          if (basePage && basePage.parent && basePage.parent.isValid){
+            try{
+              spreadAllowPrev = { id: basePage.parent.id, value: basePage.parent.allowPageShuffle };
+              basePage.parent.allowPageShuffle = true;
+            }catch(_spShuf){}
+          }
+        }catch(_prep){}
+        try{
+          if (basePage && basePage.isValid){
+            newPage = doc.pages.add(LocationOptions.AFTER, basePage);
+          } else {
+            newPage = doc.pages.add(LocationOptions.AT_END);
+          }
+        }catch(eAdd){
+          try{ newPage = doc.pages.add(LocationOptions.AT_END); }catch(eAdd2){ newPage = doc.pages.add(); }
+        }
+        try{
+          if (spreadAllowPrev && spreadAllowPrev.id != null){
+            try{
+              var sp = basePage && basePage.parent && basePage.parent.isValid ? basePage.parent : null;
+              if (sp && sp.isValid && sp.id === spreadAllowPrev.id){
+                sp.allowPageShuffle = spreadAllowPrev.value;
+              }
+            }catch(_restoreSp){}
+          }
+          if (docAllowPrev !== null){
+            try{ doc.allowPageShuffle = docAllowPrev; }catch(_restoreDoc){}
+          }
+          if (docAllowPrev === false && newPage && newPage.parent && newPage.parent.isValid){
+            try{ newPage.parent.allowPageShuffle = false; }catch(_restoreNew){}
+          }
+        }catch(_restore){}
+        if (!newPage || !newPage.isValid){
+          throw new Error("page add failed");
+        }
+        try{
+          var w = target.pageWidthPt, h = target.pageHeightPt;
+          if (isFinite(w) && isFinite(h) && w > 0 && h > 0){
+            newPage.resize(
+              CoordinateSpaces.PASTEBOARD_COORDINATES,
+              AnchorPoint.TOP_LEFT_ANCHOR,
+              ResizeMethods.REPLACING_CURRENT_DIMENSIONS_WITH,
+              [w, h]
+            );
+          }
+        }catch(eResize){ try{ log("[WARN] layout page resize failed: " + eResize); }catch(_){ } }
+        try{
+          var mp = newPage.marginPreferences;
+          var margins = target.pageMarginsPt || {};
+          if (mp){
+            if (isFinite(margins.top)) mp.top = margins.top;
+            if (isFinite(margins.bottom)) mp.bottom = margins.bottom;
+            if (isFinite(margins.left)) mp.left = margins.left;
+            if (isFinite(margins.right)) mp.right = margins.right;
+          }
+        }catch(eMargin){ try{ log("[WARN] layout margin apply failed: " + eMargin); }catch(_){ } }
+        var newFrame = createTextFrameOnPage(newPage, target);
+        try{
+          if (newFrame && newFrame.isValid){
+            log("[LAYOUT] new frame id=" + newFrame.id + " orient=" + (target.pageOrientation||"") + " page=" + (newPage && newPage.name));
+          }
+        }catch(_){}
+        if (newFrame && newFrame.isValid && linkFromFrame && linkFromFrame.isValid){
+          try{ linkFromFrame.nextTextFrame = newFrame; }catch(eLink){ try{ log("[WARN] layout frame link failed: " + eLink); }catch(_){ } }
+        }
+        return { page: newPage, frame: newFrame };
+      }catch(e){ try{ log("[WARN] create layout frame failed: " + e); }catch(_){ } }
+      return null;
+    }
+
+    function __ensureLayout(targetState){
+      try{ log("[LAYOUT] ensure request orient=" + (targetState && targetState.pageOrientation) + " width=" + (targetState && targetState.pageWidthPt) + " height=" + (targetState && targetState.pageHeightPt)); }catch(_){}
+      var target = targetState ? __cloneLayoutState(targetState) : __cloneLayoutState(__DEFAULT_LAYOUT);
+      if ((target.pageWidthPt === undefined || target.pageWidthPt === null) && __DEFAULT_LAYOUT){
+        target.pageWidthPt = __DEFAULT_LAYOUT.pageWidthPt;
+      }
+      if ((target.pageHeightPt === undefined || target.pageHeightPt === null) && __DEFAULT_LAYOUT){
+        target.pageHeightPt = __DEFAULT_LAYOUT.pageHeightPt;
+      }
+      if (!target.pageMarginsPt && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageMarginsPt){
+        target.pageMarginsPt = __cloneLayoutState({pageMarginsPt:__DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
+      }
+      if (!__DEFAULT_LAYOUT) __DEFAULT_LAYOUT = __cloneLayoutState(target);
+      if (target.pageOrientation === "landscape" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt < target.pageHeightPt){
+        var tmpW = target.pageWidthPt;
+        target.pageWidthPt = target.pageHeightPt;
+        target.pageHeightPt = tmpW;
+      }else if (target.pageOrientation === "portrait" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt > target.pageHeightPt){
+        var tmpH = target.pageHeightPt;
+        target.pageHeightPt = target.pageWidthPt;
+        target.pageWidthPt = tmpH;
+      }
+      if (__layoutsEqual(__CURRENT_LAYOUT, target)){
+        try{ log("[LAYOUT] ensure skip orient=" + (target.pageOrientation||"") + " width=" + target.pageWidthPt + " height=" + target.pageHeightPt); }catch(_){}
+        return;
+      }
+      var prevFrame = (typeof tf !== "undefined" && tf && tf.isValid) ? tf : null;
+      var pkt = __createLayoutFrame(target, prevFrame, {});
+      if (pkt && pkt.frame && pkt.frame.isValid){
+        try{ log("[LAYOUT] ensure apply orient=" + (target.pageOrientation||"") + " page=" + (pkt.page && pkt.page.name) + " frame=" + pkt.frame.id); }catch(_){}
+        page = pkt.page;
+        tf = pkt.frame;
+        story = tf.parentStory;
+        curTextFrame = tf;
+        __CURRENT_LAYOUT = __cloneLayoutState(target);
+        try{ story.recompose(); }catch(_){}
+        try{ app.activeDocument.recompose(); }catch(_){}
+      }
+    }
+
+    function __ensureLayoutDefault(){
+      __ensureLayout(__DEFAULT_LAYOUT);
     }
 
     // ==== 图片路径解析（新增） ====
@@ -1294,9 +1557,21 @@ if (!gb){
     }
 
     function _innerFrameWidth(frame){
-        var gb=frame.geometricBounds, w=gb[3]-gb[1];
-        var inset=frame.textFramePreferences.insetSpacing;
-        return w-((inset && inset.length>=4)?(inset[1]+inset[3]):0);
+        if (!frame || !frame.isValid) return 0;
+        try{
+            var tfp = frame.textFramePreferences;
+            if (tfp){
+                var cw = parseFloat(tfp.textColumnFixedWidth);
+                if (isFinite(cw) && cw > 0) return cw;
+            }
+        }catch(_){}
+        var gb = null;
+        try{ gb = frame.geometricBounds; }catch(_){}
+        var w = (gb && gb.length>=4) ? (gb[3]-gb[1]) : 0;
+        var inset = null;
+        try{ inset = frame.textFramePreferences.insetSpacing; }catch(_){}
+        var insetWidth = (inset && inset.length>=4) ? ( (parseFloat(inset[1])||0) + (parseFloat(inset[3])||0) ) : 0;
+        return w - insetWidth;
     }
     function _mapAlign(h){ if(h=="center") return Justification.CENTER_ALIGN; if(h=="right") return Justification.RIGHT_ALIGN; return Justification.LEFT_ALIGN; }
     function _mapVAlign(v){ if(v=="bottom") return VerticalJustification.BOTTOM_ALIGN; if(v=="center"||v=="middle") return VerticalJustification.CENTER_ALIGN; return VerticalJustification.TOP_ALIGN; }
@@ -1512,11 +1787,11 @@ if (!gb){
                 try{
                     var C = tbl.columns.length;
                     if (C>0){
-                        var even = colW / C;
-                        for (var c=0;c<C;c++){
-                            try{ tbl.columns[c].width = even; }catch(__){}
-                        }
-                    }
+                var even = colW / C;
+                for (var c=0;c<C;c++){
+                    try{ tbl.columns[c].width = even; }catch(__){}
+                }
+            }
                 }catch(_){}
             }
         }catch(e){ try{ log("[WARN] _normalizeTableWidth: "+e); }catch(__){} }
@@ -1527,6 +1802,61 @@ if (!gb){
       try{
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
+        var layoutSpec = null;
+        try{
+          if (obj){
+            if (obj.pageOrientation){
+              layoutSpec = { pageOrientation: obj.pageOrientation };
+            } else if (obj.pageWidthPt && obj.pageHeightPt){
+              var w = parseFloat(obj.pageWidthPt), h = parseFloat(obj.pageHeightPt);
+              if (isFinite(w) && isFinite(h)){
+                layoutSpec = { pageOrientation: (w > h ? "landscape" : "portrait") };
+              }
+            }
+            if (layoutSpec && layoutSpec.pageOrientation && __DEFAULT_LAYOUT){
+              var baseW = parseFloat(__DEFAULT_LAYOUT.pageWidthPt);
+              var baseH = parseFloat(__DEFAULT_LAYOUT.pageHeightPt);
+              if (isFinite(baseW) && isFinite(baseH)){
+                if (layoutSpec.pageOrientation === "landscape"){
+                  layoutSpec.pageWidthPt = baseH;
+                  layoutSpec.pageHeightPt = baseW;
+                } else {
+                  layoutSpec.pageWidthPt = baseW;
+                  layoutSpec.pageHeightPt = baseH;
+                }
+              }
+              if (__DEFAULT_LAYOUT.pageMarginsPt){
+                layoutSpec.pageMarginsPt = __cloneLayoutState({pageMarginsPt: __DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
+              }
+            } else if (layoutSpec && obj.pageMarginsPt){
+              layoutSpec.pageMarginsPt = obj.pageMarginsPt;
+            }
+          }
+        }catch(_){ layoutSpec = null; }
+        var layoutSwitchApplied = false;
+        try{
+          if (layoutSpec){
+            var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
+            __ensureLayout(layoutSpec);
+            var newOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : prevOrientation;
+            if (layoutSpec.pageOrientation && newOrientation !== prevOrientation){
+              layoutSwitchApplied = true;
+            }
+            log("[TABLE] layout request orient=" + (layoutSpec.pageOrientation||""));
+          }else if (__CURRENT_LAYOUT && __DEFAULT_LAYOUT && !__layoutsEqual(__CURRENT_LAYOUT, __DEFAULT_LAYOUT)){
+            __ensureLayoutDefault();
+          }
+        }catch(__layoutErr){
+          try{ log("[WARN] ensure layout failed: " + __layoutErr); }catch(__layoutLog){}
+        }
+        if (layoutSwitchApplied){
+          try{
+            story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
+            story.recompose();
+          }catch(__frameBreakErr){
+            try{ log("[WARN] frame break after layout failed: " + __frameBreakErr); }catch(_){}
+          }
+        }
         try{ log("[TABLE] begin rows="+rows+" cols="+cols); }catch(__){}
         var doc = app.activeDocument;
 
@@ -1601,6 +1931,7 @@ if (!gb){
                 }catch(_){ }
             }
             if (frameCandidate && frameCandidate.isValid && !frameCandidate.overflows){
+                __applyFrameLayout(frameCandidate, __CURRENT_LAYOUT);
                 return frameCandidate;
             }
 
@@ -1615,15 +1946,15 @@ if (!gb){
                 basePage = page;
             }
             try{
-                var np = doc.pages.add(LocationOptions.AFTER, basePage);
-                var nf = createTextFrameOnPage(np);
-                try{ if (baseFrame && baseFrame.isValid) baseFrame.nextTextFrame = nf; }catch(__){ }
-                try{ storyArg.recompose(); }catch(__){ }
-                page = np;
-                tf = nf;
-                story = nf.parentStory;
-                curTextFrame = nf;
-                return nf;
+                var pktLocal = __createLayoutFrame(__CURRENT_LAYOUT, baseFrame, {afterPage: basePage});
+                if (pktLocal && pktLocal.frame && pktLocal.frame.isValid){
+                    try{ storyArg.recompose(); }catch(__){ }
+                    page = pktLocal.page;
+                    tf = pktLocal.frame;
+                    story = tf.parentStory;
+                    curTextFrame = pktLocal.frame;
+                    return pktLocal.frame;
+                }
             }catch(__){ }
 
             return frameCandidate;
@@ -1811,7 +2142,16 @@ if (!gb){
 
         var tableStory = story;
         var activeFrame = baseFrame;
-        var innerWidth = _innerFrameWidth(activeFrame);
+        var layoutInnerWidth = null;
+        if (layoutSpec && isFinite(layoutSpec.pageWidthPt)){
+          var leftMargin = 0, rightMargin = 0;
+          if (layoutSpec.pageMarginsPt){
+            leftMargin = parseFloat(layoutSpec.pageMarginsPt.left) || 0;
+            rightMargin = parseFloat(layoutSpec.pageMarginsPt.right) || 0;
+          }
+          layoutInnerWidth = layoutSpec.pageWidthPt - leftMargin - rightMargin;
+        }
+        var innerWidth = layoutInnerWidth || _innerFrameWidth(activeFrame);
         var insertIP = anchorIP;
         if (!insertIP || !insertIP.isValid){
           insertIP = (typeof _safeIP==='function') ? _safeIP(baseFrame) : baseFrame.insertionPoints[-1];
@@ -2104,8 +2444,62 @@ if (!gb){
             totalBefore = base;
           }
 
+          var totalBefore = 0;
+          for (var sumIdx=0; sumIdx<widths.length; sumIdx++){
+            totalBefore += widths[sumIdx];
+          }
+          var avgWidth = (isFinite(innerW) && innerW>0) ? (innerW/Math.max(cols,1)) : (totalBefore/Math.max(cols,1));
+          var tinyThreshold = Math.max(6, avgWidth * 0.08);
+          var tinyMask = [];
+          var delta = 0;
+          var adjustable = 0;
+          for (var clampIdx=0; clampIdx<cols; clampIdx++){
+            var needClamp = (widths[clampIdx] < tinyThreshold);
+            if (needClamp){
+              delta += (tinyThreshold - widths[clampIdx]);
+              widths[clampIdx] = tinyThreshold;
+              tinyMask[clampIdx] = true;
+            }else{
+              adjustable += widths[clampIdx];
+              tinyMask[clampIdx] = false;
+            }
+          }
+          if (delta > 0 && adjustable > 0){
+            var nonTinyCount = 0;
+            for (var cntIdx=0; cntIdx<cols; cntIdx++){
+              if (!tinyMask[cntIdx]) nonTinyCount++;
+            }
+            var scale = (adjustable - delta) / adjustable;
+            if (scale > 0){
+              for (var shrinkIdx=0; shrinkIdx<cols; shrinkIdx++){
+                if (!tinyMask[shrinkIdx]){
+                  widths[shrinkIdx] = widths[shrinkIdx] * scale;
+                }
+              }
+            }else if (nonTinyCount > 0){
+              var even = adjustable / nonTinyCount;
+              for (var evenIdx=0; evenIdx<cols; evenIdx++){
+                if (!tinyMask[evenIdx]){
+                  widths[evenIdx] = even;
+                }
+              }
+            }
+          }
+          totalBefore = 0;
+          for (var sumIdx2=0; sumIdx2<widths.length; sumIdx2++){
+            totalBefore += widths[sumIdx2];
+          }
+          var enforcedWidth = innerW;
+          if (!isFinite(enforcedWidth) || enforcedWidth <= 0){
+            enforcedWidth = totalBefore;
+          }
+          if (enforcedWidth > 0){
+            try{ tbl.preferredWidth = enforcedWidth; }catch(_){}
+            try{ tbl.width = enforcedWidth; }catch(_){}
+          }
+
           if (canAdjust){
-            try { tbl.width = totalBefore; } catch(_){ canAdjust = false; }
+            try { tbl.width = enforcedWidth; } catch(_){ canAdjust = false; }
           }
           if (canAdjust){
             try{
@@ -2123,9 +2517,19 @@ if (!gb){
                     try{ log("[WARN] column object invalid idx=" + tci); }catch(__){}
                     break;
                   }
-                  try{ colObj.width = widths[tci]; }catch(colErr){
+                  var targetWidth = widths[tci];
+                  if (!isFinite(targetWidth) || targetWidth <= 0){
+                    targetWidth = 1;
+                  }else if (targetWidth < 1){
+                    targetWidth = 1;
+                  }
+                  var assigned = false;
+                  try{
+                    assigned = _assignColumnWidth(colObj, targetWidth, tci);
+                  }catch(_){}
+                  if (!assigned){
                     canAdjust = false;
-                    try{ log("[WARN] column width assign failed idx=" + tci + " err=" + colErr); }catch(__){}
+                    try{ log("[WARN] column width assign failed idx=" + tci); }catch(__){}
                     break;
                   }
                 }
@@ -2522,6 +2926,37 @@ if (!gb){
         }
     } catch(e) {}
     while (doc.pages.length > 1) { doc.pages[doc.pages.length - 1].remove(); }
+    __DEFAULT_LAYOUT = (function(){
+        var state = {};
+        try{
+            var dp = doc.documentPreferences;
+            if (dp){
+                try{
+                    var ori = "portrait";
+                    if (dp.pageOrientation === PageOrientation.LANDSCAPE) ori = "landscape";
+                    state.pageOrientation = ori;
+                }catch(_){ }
+                try{ state.pageWidthPt = parseFloat(dp.pageWidth); }catch(_){ }
+                try{ state.pageHeightPt = parseFloat(dp.pageHeight); }catch(_){ }
+            }
+        }catch(_){ }
+        try{
+            var mpSource = null;
+            try{ if (doc.pages.length > 0){ mpSource = doc.pages[0].marginPreferences; } }catch(_){ }
+            if (!mpSource){ try{ mpSource = doc.marginPreferences; }catch(_){ } }
+            if (mpSource){
+                state.pageMarginsPt = {
+                    top: parseFloat(mpSource.top),
+                    bottom: parseFloat(mpSource.bottom),
+                    left: parseFloat(mpSource.left),
+                    right: parseFloat(mpSource.right)
+                };
+            }
+        }catch(_){ }
+        return __cloneLayoutState(state);
+    })();
+    __CURRENT_LAYOUT = __cloneLayoutState(__DEFAULT_LAYOUT);
+
 
     // 简易样式兜底（保持你原逻辑）
     function ensureStyle(name, pointSize, leading, spaceBefore, spaceAfter) {
@@ -2543,11 +2978,78 @@ if (!gb){
         var pb = page.bounds, mp = page.marginPreferences;
         return [pb[0] + mp.top, pb[1] + mp.left, pb[2] - mp.bottom, pb[3] - mp.right];
     }
-    function createTextFrameOnPage(page) {
+
+    function _innerFrameHeight(frame){
+        if (!frame || !frame.isValid) return 0;
+        var gb = null;
+        try{ gb = frame.geometricBounds; }catch(_){}
+        var h = (gb && gb.length>=4) ? (gb[2]-gb[0]) : 0;
+        var inset = null;
+        try{ inset = frame.textFramePreferences.insetSpacing; }catch(_){}
+        var insetHeight = (inset && inset.length>=4) ? ( (parseFloat(inset[0])||0) + (parseFloat(inset[2])||0) ) : 0;
+        return h - insetHeight;
+    }
+
+    function __calcInnerWidthForLayout(layout){
+        if (!layout) return null;
+        var w = parseFloat(layout.pageWidthPt);
+        var margins = layout.pageMarginsPt || {};
+        if (isFinite(w)){
+            var left = parseFloat(margins.left) || 0;
+            var right = parseFloat(margins.right) || 0;
+            return w - left - right;
+        }
+        return null;
+    }
+
+    function __applyFrameLayout(frame, layoutState){
+        try{
+            if (!frame || !frame.isValid) return;
+            var tfp = frame.textFramePreferences;
+            if (!tfp) return;
+            try{ tfp.textColumnCount = 1; }catch(_){}
+            try{ tfp.textColumnGutter = 0; }catch(_){}
+            try{ tfp.useFixedColumnWidth = true; }catch(_){}
+            try{ tfp.textColumnFlexibleWidth = false; }catch(_){}
+            var leftInset = 0, rightInset = 0;
+            try{
+                var inset = tfp.insetSpacing;
+                if (inset && inset.length >= 4){
+                    leftInset = parseFloat(inset[1]) || 0;
+                    rightInset = parseFloat(inset[3]) || 0;
+                }
+            }catch(_){}
+            var gb = null;
+            try{ gb = frame.geometricBounds; }catch(_){}
+            var innerWidth = null;
+            if (gb && gb.length >= 4){
+                innerWidth = (gb[3] - gb[1]) - leftInset - rightInset;
+            }
+            if (!isFinite(innerWidth) || innerWidth <= 0){
+                var pageWidth = layoutState && layoutState.pageWidthPt;
+                var margins = layoutState && layoutState.pageMarginsPt;
+                if (isFinite(pageWidth)){
+                    innerWidth = pageWidth;
+                    if (margins){
+                        innerWidth -= (parseFloat(margins.left) || 0);
+                        innerWidth -= (parseFloat(margins.right) || 0);
+                    }
+                }
+            }
+            if (!isFinite(innerWidth) || innerWidth <= 0){
+                innerWidth = 400;
+            }
+            try{ tfp.textColumnFixedWidth = innerWidth; }catch(_){}
+            try{ log("[LAYOUT] apply frame id=" + frame.id + " innerWidth=" + innerWidth + " orient=" + (layoutState && layoutState.pageOrientation)); }catch(_log){}
+        }catch(_){}
+    }
+
+    function createTextFrameOnPage(page, layoutState) {
         var gb = frameBoundsForPage2(page, doc);
         var tf = page.textFrames.add();
         tf.geometricBounds = gb;
-        tf.textFramePreferences.verticalJustification = VerticalJustification.TOP_ALIGN;
+        __applyFrameLayout(tf, layoutState || __CURRENT_LAYOUT);
+        try{ tf.textFramePreferences.verticalJustification = VerticalJustification.TOP_ALIGN; }catch(_){}
         return tf;
     }
 
@@ -2556,28 +3058,90 @@ if (!gb){
         // 最小修复：移除早停判定；只要 still overset 就继续加页并接链，直到不 overset 或达到 MAX_PAGES。
         var MAX_PAGES = 1000;
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
-            var np  = doc.pages.add(LocationOptions.AFTER, lastPage);
-            var nft = createTextFrameOnPage(np);
-            // 先尝试用传入帧连链
-            try { lastFrame.nextTextFrame = nft; } catch(_) {}
-            // 再兜底：用当前 story 的尾容器连链，避免孤立 story
-            try {
-                var containers = currentStory.textContainers;
-                if (containers && containers.length) {
-                    var tail = containers[containers.length - 1];
-                    if (tail && tail.isValid && tail !== nft) {
-                        try { tail.nextTextFrame = nft; } catch(__) {}
-                    }
-                }
-            } catch(__) {}
-            lastPage  = np;
-            lastFrame = nft;
+            var pkt = __createLayoutFrame(__CURRENT_LAYOUT, lastFrame, {afterPage:lastPage, forceBreak:false});
+            if (!pkt || !pkt.frame || !pkt.page) { break; }
+            lastPage  = pkt.page;
+            lastFrame = pkt.frame;
 
             try { currentStory.recompose(); } catch(_) {}
             try { app.activeDocument.recompose(); } catch(_) {}
             $.sleep(10);
         }
         return { page: lastPage, frame: lastFrame };
+    }
+
+    function __trimTrailingEmptyFrames(story){
+        if (!__ENABLE_TRAILING_TRIM) return;
+        try{
+            if (!story || !story.isValid) return;
+            var tcs = story.textContainers;
+            if (!tcs || !tcs.length) return;
+            for (var idx = tcs.length - 1; idx >= 0; idx--){
+                var frame = tcs[idx];
+                if (!frame || !frame.isValid) continue;
+                var hasTable = false;
+                try{ hasTable = (frame.tables && frame.tables.length>0); }catch(_){}
+                if (!hasTable){
+                    try{
+                        var tfTexts = frame.texts;
+                        if (tfTexts && tfTexts.length){
+                            for (var ti=0; ti<tfTexts.length; ti++){
+                                var txtObj = tfTexts[ti];
+                                try{
+                                    if (txtObj.tables && txtObj.tables.length){
+                                        hasTable = true;
+                                        break;
+                                    }
+                                }catch(_){}
+                            }
+                        }
+                    }catch(_){}
+                }
+                if (hasTable) break;
+                var txt = "";
+                try{ txt = String(frame.contents || ""); }catch(_){}
+                if (txt.replace(/[\s\u0000-\u001f\u2028\u2029\uFFFC\uF8FF]+/g, "") !== ""){
+                    break;
+                }
+                try{
+                    var prevFrame = null;
+                    try{ prevFrame = frame.previousTextFrame; }catch(_){}
+                    if (prevFrame && prevFrame.isValid){
+                        var prevOverflow = false;
+                        try{ prevOverflow = prevFrame.overflows; }catch(_){}
+                        if (prevOverflow){
+                            break;
+                        }
+                    }
+                }catch(_){}
+                try{
+                    var prev = null;
+                    try{ prev = frame.previousTextFrame; }catch(_){}
+                    if (prev && prev.isValid){
+                        try{ prev.nextTextFrame = null; }catch(_){}
+                    }
+                }catch(_){}
+                try{ frame.remove(); }catch(_){}
+            }
+        }catch(eTrim){
+            try{ log("[WARN] trim trailing frames failed: " + eTrim); }catch(_){}
+        }
+    }
+
+    function __trimTrailingEmptyPages(doc){
+        if (!__ENABLE_TRAILING_TRIM) return;
+        try{
+            for (var idx = doc.pages.length - 1; idx >= 1; idx--){
+                var pg = doc.pages[idx];
+                if (!pg || !pg.isValid) continue;
+                var items = 0;
+                try{ items = pg.pageItems.length; }catch(_){}
+                if (items && items > 0) break;
+                try{ pg.remove(); }catch(_){}
+            }
+        }catch(ePg){
+            try{ log("[WARN] trim trailing pages failed: " + ePg); }catch(_){}
+        }
     }
 
     function startNewChapter(currentStory, currentPage, currentFrame) {
@@ -2589,7 +3153,7 @@ if (!gb){
             curTextFrame = tf;              // ★ 新增：切到新框后更新全局指针
         }
         var np  = doc.pages.add(LocationOptions.AFTER, currentPage);
-        var nft = createTextFrameOnPage(np);
+        var nft = createTextFrameOnPage(np, __CURRENT_LAYOUT);
         try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(_){}
         return { story: nft.parentStory, page: np, frame: nft };
     }
@@ -2597,20 +3161,23 @@ if (!gb){
     var page  = doc.pages[0];
     try{ log("[LOG] script boot ok; page="+doc.pages.length); }catch(_){}
 
-    var tf    = createTextFrameOnPage(page);
+    var tf    = createTextFrameOnPage(page, __DEFAULT_LAYOUT);
+    if (__DEFAULT_INNER_WIDTH === null) __DEFAULT_INNER_WIDTH = _innerFrameWidth(tf);
+    if (__DEFAULT_INNER_HEIGHT === null) __DEFAULT_INNER_HEIGHT = _innerFrameHeight(tf);
+    try{ log("[LAYOUT] default inner width=" + __DEFAULT_INNER_WIDTH + " height=" + __DEFAULT_INNER_HEIGHT); }catch(_defaultLog){}
     var story = tf.parentStory;
     curTextFrame = tf; 
 
     var firstChapterSeen = false;
 
     __ADD_LINES__
-
-
     var tail = flushOverflow(story, page, tf);
     page  = tail.page;
     tf    = tail.frame;
     story = tf.parentStory;
     curTextFrame = tf;
+    __trimTrailingEmptyFrames(story);
+    __trimTrailingEmptyPages(doc);
     try { fixAllTables(); } catch(_) {}
                   // ★ 新增：切到新框后更新全局指针
 
@@ -2723,6 +3290,7 @@ def write_jsx(jsx_path, paragraphs):
             continue
         elif m_img:
             # 解析 [[IMG ...]] 的属性为 kv
+            add_lines.append("__ensureLayoutDefault();")
             kv = dict(re.findall(r'(\w+)=["\'“”]([^"\'”]*)["\'”]', m_img.group(1)))
 
             def _esc(s: str) -> str:
@@ -2818,6 +3386,7 @@ def write_jsx(jsx_path, paragraphs):
             except Exception:
                 pass
         elif m_xmli:
+            add_lines.append("__ensureLayoutDefault();")
             # 处理整段是 <img ...> 的情况（原生 XML/HTML 片段）
             import xml.etree.ElementTree as ET
 
@@ -2882,6 +3451,7 @@ def write_jsx(jsx_path, paragraphs):
             continue
 
         # 默认：仍走 addParaWithNotes（它现在也能识别行内 IMG/TABLE）
+        add_lines.append("__ensureLayoutDefault();")
         add_lines.append(f'addParaWithNotes(story, "{sty}", "{esc}");')
 
     style_lines = build_style_lines(levels_used)
@@ -3013,7 +3583,7 @@ def run_indesign_macos(jsx_path):
 
 def main():
     input_file = "1.docx"
-    mode = "regex"
+    mode = "heading"
     exporter = DOCXOutlineExporter(input_file, mode=mode)
     exporter.process(XML_PATH)
 

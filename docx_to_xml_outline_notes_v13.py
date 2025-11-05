@@ -38,9 +38,10 @@ import re
 import json
 import zipfile
 import argparse
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from docx import Document
+from docx.oxml.ns import qn
 from lxml import etree
 
 import logging
@@ -291,6 +292,9 @@ class DOCXOutlineExporter:
         self.num_overrides: Dict[int, Dict[int, int]] = {}
         self.num_counters: Dict[int, List[int]] = {}
         self.assets_dir = None  # set in process()
+        self.default_section_state = self._resolve_default_section_state()
+        self._body_iter_items: List[Tuple[str, int, Dict[str, Any]]] = []
+        self._build_body_iter_index()
 
     # ---------- Notes extraction ----------
     @staticmethod
@@ -343,6 +347,139 @@ class DOCXOutlineExporter:
             logger.info("numbering.xml parsed.")
         else:
             logger.info("No numbering.xml found (list numbers may not be reconstructed).")
+
+    # ---------- Section helpers ----------
+    @staticmethod
+    def _copy_section_state(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not state:
+            return {}
+        copied: Dict[str, Any] = {}
+        for key in ("pageOrientation", "pageWidthPt", "pageHeightPt"):
+            if key in state:
+                copied[key] = state[key]
+        margins = state.get("pageMarginsPt") if isinstance(state, dict) else None
+        if isinstance(margins, dict):
+            copied["pageMarginsPt"] = {k: margins[k] for k in ("top", "bottom", "left", "right") if k in margins}
+        return copied
+
+    def _build_body_iter_index(self):
+        body = self.doc._element.body
+        children = list(body)
+        default_state = self.default_section_state
+        if not children:
+            self._body_iter_items = []
+            return
+        states: List[Dict[str, Any]] = [self._copy_section_state(default_state) for _ in children]
+        next_state = self._copy_section_state(default_state)
+        for idx in range(len(children) - 1, -1, -1):
+            child = children[idx]
+            sects = [el for el in child.iter() if el.tag == qn('w:sectPr')]
+            if sects:
+                next_state = self._merge_section_state(default_state, sects[-1])
+            states[idx] = self._copy_section_state(next_state)
+        items: List[Tuple[str, int, Dict[str, Any]]] = []
+        p_idx = 0
+        t_idx = 0
+        for idx, child in enumerate(children):
+            tag = child.tag
+            if tag.endswith('}p'):
+                items.append(('p', p_idx, states[idx]))
+                p_idx += 1
+            elif tag.endswith('}tbl'):
+                items.append(('tbl', t_idx, states[idx]))
+                t_idx += 1
+        self._body_iter_items = items
+
+    def _resolve_default_section_state(self) -> Dict[str, Any]:
+        base = {
+            "pageOrientation": "portrait",
+            "pageWidthPt": 612.0,
+            "pageHeightPt": 792.0,
+            "pageMarginsPt": {"top": 72.0, "bottom": 72.0, "left": 72.0, "right": 72.0},
+        }
+        body_sect = getattr(self.doc._element.body, "sectPr", None)
+        if body_sect is not None:
+            return self._merge_section_state(base, body_sect)
+        return base
+
+    def _merge_section_state(self, base_state: Dict[str, Any], sect_pr) -> Dict[str, Any]:
+        state = self._copy_section_state(base_state)
+        if sect_pr is None:
+            return state
+        pg_sz = sect_pr.find("./w:pgSz", NSMAP)
+        width_pt = state.get("pageWidthPt")
+        height_pt = state.get("pageHeightPt")
+        orientation = state.get("pageOrientation", "portrait")
+        if pg_sz is not None:
+            w_attr = pg_sz.get(f"{{{W_NS}}}w")
+            h_attr = pg_sz.get(f"{{{W_NS}}}h")
+            ori_attr = pg_sz.get(f"{{{W_NS}}}orient")
+            w_pt = _twip_to_pt(w_attr)
+            h_pt = _twip_to_pt(h_attr)
+            if w_pt:
+                width_pt = round(w_pt, 2)
+            if h_pt:
+                height_pt = round(h_pt, 2)
+            if ori_attr:
+                orientation = str(ori_attr).lower()
+            elif w_pt and h_pt:
+                orientation = "landscape" if w_pt > h_pt else "portrait"
+        pg_mar = sect_pr.find("./w:pgMar", NSMAP)
+        margins = self._copy_section_state(state).get("pageMarginsPt", {})
+        margins = dict(margins) if margins else {}
+        if pg_mar is not None:
+            for key in ("top", "bottom", "left", "right"):
+                val = pg_mar.get(f"{{{W_NS}}}{key}")
+                if val is not None:
+                    pt = _twip_to_pt(val)
+                    if pt is not None:
+                        margins[key] = round(pt, 2)
+        state["pageOrientation"] = orientation
+        if width_pt is not None:
+            state["pageWidthPt"] = width_pt
+        if height_pt is not None:
+            state["pageHeightPt"] = height_pt
+        if margins:
+            state["pageMarginsPt"] = margins
+        return state
+
+    def _section_state_delta(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        if not state:
+            return {}
+        default = self.default_section_state or {}
+        delta: Dict[str, Any] = {}
+
+        def _diff(a, b, tol=0.5):
+            if a is None or b is None:
+                return a is not None or b is not None
+            try:
+                return abs(float(a) - float(b)) > tol
+            except Exception:
+                return a != b
+
+        if state.get("pageOrientation") and state.get("pageOrientation") != default.get("pageOrientation"):
+            delta["pageOrientation"] = state["pageOrientation"]
+        if _diff(state.get("pageWidthPt"), default.get("pageWidthPt")):
+            delta["pageWidthPt"] = state.get("pageWidthPt")
+        if _diff(state.get("pageHeightPt"), default.get("pageHeightPt")):
+            delta["pageHeightPt"] = state.get("pageHeightPt")
+
+        margins = state.get("pageMarginsPt")
+        def_margins = default.get("pageMarginsPt") if isinstance(default, dict) else None
+        margins_delta: Dict[str, float] = {}
+        if isinstance(margins, dict):
+            for key in ("top", "bottom", "left", "right"):
+                if key in margins:
+                    base_val = def_margins.get(key) if isinstance(def_margins, dict) else None
+                    if _diff(margins[key], base_val):
+                        margins_delta[key] = margins[key]
+        if margins_delta:
+            # include untouched defaults so the importer has complete margins
+            complete = dict(def_margins) if isinstance(def_margins, dict) else {}
+            complete.update(margins_delta)
+            delta["pageMarginsPt"] = complete
+
+        return delta
 
     # ---------- Numbering (lists) ----------
     def _parse_numbering_xml(self, xml_bytes: bytes):
@@ -973,17 +1110,12 @@ class DOCXOutlineExporter:
             logger.info("Hybrid build complete.")
 
     def _iter_block_items(self):
-        """Yield ('p', paragraph) or ('tbl', table) in document order."""
-        body = self.doc._element.body
-        p_idx = 0
-        t_idx = 0
-        for child in list(body):
-            if child.tag.endswith('}p'):
-                yield ('p', self.doc.paragraphs[p_idx])
-                p_idx += 1
-            elif child.tag.endswith('}tbl'):
-                yield ('tbl', self.doc.tables[t_idx])
-                t_idx += 1
+        """Yield ('p'/'tbl', object, section_state) in document order."""
+        for kind, index, state in self._body_iter_items:
+            if kind == 'p':
+                yield ('p', self.doc.paragraphs[index], self._copy_section_state(state))
+            elif kind == 'tbl':
+                yield ('tbl', self.doc.tables[index], self._copy_section_state(state))
 
     def _build_tree_heading_mode(self):
         logger.info("Building hierarchy (heading mode)...")
@@ -1018,7 +1150,7 @@ class DOCXOutlineExporter:
                 n += max(1, cs)
             return n
 
-        for kind, obj in self._iter_block_items():
+        for kind, obj, section_state in self._iter_block_items():
             if kind == "p":
                 p = obj
                 raw_text = (p.text or "").strip()
@@ -1319,6 +1451,18 @@ class DOCXOutlineExporter:
                     table_obj["cellPadding"] = cellPadding
                 if borders:
                     table_obj["borders"] = borders
+
+                # 4.4 Section overrides (only when different from defaults)
+                working_state = section_state or {}
+                delta_state = self._section_state_delta(working_state)
+                if delta_state.get("pageOrientation"):
+                    table_obj["pageOrientation"] = delta_state["pageOrientation"]
+                if "pageWidthPt" in delta_state:
+                    table_obj["pageWidthPt"] = delta_state["pageWidthPt"]
+                if "pageHeightPt" in delta_state:
+                    table_obj["pageHeightPt"] = delta_state["pageHeightPt"]
+                if "pageMarginsPt" in delta_state:
+                    table_obj["pageMarginsPt"] = delta_state["pageMarginsPt"]
 
                 ph = "[[TABLE " + json.dumps(table_obj, ensure_ascii=False) + "]]"
                 target = stack[-1] if stack else self.root
