@@ -42,6 +42,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from docx import Document
 from docx.oxml.ns import qn
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from lxml import etree
 
 import logging
@@ -295,6 +296,25 @@ class DOCXOutlineExporter:
         self.default_section_state = self._resolve_default_section_state()
         self._body_iter_items: List[Tuple[str, int, Dict[str, Any]]] = []
         self._build_body_iter_index()
+
+    @staticmethod
+    def _paragraph_align_token(paragraph) -> str:
+        try:
+            val = paragraph.alignment
+        except Exception:
+            val = None
+        mapping = {
+            WD_ALIGN_PARAGRAPH.LEFT: "left",
+            WD_ALIGN_PARAGRAPH.CENTER: "center",
+            WD_ALIGN_PARAGRAPH.RIGHT: "right",
+            WD_ALIGN_PARAGRAPH.JUSTIFY: "justify"
+        }
+        # optional members (not in all python-docx versions)
+        for attr in ("JUSTIFY_MED", "DISTRIBUTE", "THAI_DISTRIBUTE"):
+            member = getattr(WD_ALIGN_PARAGRAPH, attr, None)
+            if member is not None:
+                mapping[member] = "justify"
+        return mapping.get(val, "")
 
     # ---------- Notes extraction ----------
     @staticmethod
@@ -723,6 +743,7 @@ class DOCXOutlineExporter:
     # ---------- Text with inline refs + numbering + styles ----------
     def _paragraph_text_with_refs(self, paragraph, include_pstyle: bool = True) -> str:
         chunks = []
+        para_align = self._paragraph_align_token(paragraph)
         # list numbering
         try:
             label = self.list_label_for_paragraph(paragraph)
@@ -794,8 +815,13 @@ class DOCXOutlineExporter:
 
                     wrap = ""
                     posH = posV = ""
+                    posHref = posVref = ""
                     offX = offY = ""
                     distT = distB = distL = distR = ""
+                    rotation = ""
+                    flipH = ""
+                    flipV = ""
+                    cropT = cropB = cropL = cropR = ""
                     try:
                         if anchor_el:
                             # wrap: square / tight / through / none...
@@ -809,6 +835,7 @@ class DOCXOutlineExporter:
                             if phs:
                                 al = phs[0].find("wp:align", NSMAP_ALL)
                                 of = phs[0].find("wp:posOffset", NSMAP_ALL)
+                                posHref = phs[0].get(f"{{{WP_NS}}}relativeFrom") or phs[0].get("relativeFrom") or ""
                                 if al is not None and al.text:
                                     posH = al.text
                                 if of is not None and of.text:
@@ -816,6 +843,7 @@ class DOCXOutlineExporter:
                             if pvs:
                                 al = pvs[0].find("wp:align", NSMAP_ALL)
                                 of = pvs[0].find("wp:posOffset", NSMAP_ALL)
+                                posVref = pvs[0].get(f"{{{WP_NS}}}relativeFrom") or pvs[0].get("relativeFrom") or ""
                                 if al is not None and al.text:
                                     posV = al.text
                                 if of is not None and of.text:
@@ -831,6 +859,34 @@ class DOCXOutlineExporter:
                                         locals()[var_name] = f"{float(v) / 12700.0:.2f}pt"
                                     except Exception:
                                         pass
+                        # rotation / flip / crop
+                        try:
+                            xfrm = r_el.find(".//a:xfrm", NSMAP_ALL)
+                            if xfrm is not None:
+                                rot_val = xfrm.get("rot")
+                                if rot_val:
+                                    rotation = f"{int(rot_val)/60000.0:.2f}"
+                                flipH = xfrm.get("flipH") or ""
+                                flipV = xfrm.get("flipV") or ""
+                        except Exception:
+                            pass
+                        try:
+                            crop = r_el.find(".//a:blipFill/a:srcRect", NSMAP_ALL)
+                            if crop is not None:
+                                def _pct(attr):
+                                    val = crop.get(attr)
+                                    if val is None:
+                                        return ""
+                                    try:
+                                        return f"{float(val)/10000.0:.2f}%"
+                                    except Exception:
+                                        return ""
+                                cropT = _pct("t")
+                                cropB = _pct("b")
+                                cropL = _pct("l")
+                                cropR = _pct("r")
+                        except Exception:
+                            pass
                     except Exception:
                         pass
 
@@ -859,13 +915,16 @@ class DOCXOutlineExporter:
 
                     chunks.append(
                         '[[IMG src="{src}" w="{w}" h="{h}" pxw="{pxw}" pxh="{pxh}" '
-                        'inline="{inline_}" wrap="{wrap}" posH="{posH}" posV="{posV}" '
+                        'align="{align}" inline="{inline_}" wrap="{wrap}" posH="{posH}" posHref="{posHref}" '
+                        'posV="{posV}" posVref="{posVref}" rotation="{rotation}" flipH="{flipH}" flipV="{flipV}" '
                         'offX="{offX}" offY="{offY}" distT="{distT}" distB="{distB}" '
-                        'distL="{distL}" distR="{distR}"]]'
+                        'distL="{distL}" distR="{distR}" cropT="{cropT}" cropB="{cropB}" cropL="{cropL}" cropR="{cropR}"]]'
                             .format(
-                            src=out_path, w=wpt, h=hpt, pxw=pxw, pxh=pxh, inline_=inline_flag,
-                            wrap=wrap, posH=posH, posV=posV, offX=offX, offY=offY,
-                            distT=distT, distB=distB, distL=distL, distR=distR
+                            src=out_path, w=wpt, h=hpt, pxw=pxw, pxh=pxh, align=para_align,
+                            inline_=inline_flag, wrap=wrap, posH=posH, posHref=posHref,
+                            posV=posV, posVref=posVref, rotation=rotation, flipH=flipH, flipV=flipV,
+                            offX=offX, offY=offY, distT=distT, distB=distB, distL=distL, distR=distR,
+                            cropT=cropT, cropB=cropB, cropL=cropL, cropR=cropR
                         )
                     )
 
