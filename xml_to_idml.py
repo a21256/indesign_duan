@@ -1,9 +1,13 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import os, sys, subprocess, re
+import argparse
 import xml.etree.ElementTree as ET
 from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 import json
 import time
+from builders.text_block import append_text_block
+from builders.table_block import append_table_block
+from builders.image_block import append_marker_image, append_xml_image
 
 # ========== 路径与配置 ==========
 OUT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -29,6 +33,28 @@ WIN_PROGIDS = [
     "InDesign.Application",
 ]
 MAC_APP_NAME = "Adobe InDesign 2020"
+
+
+def build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="DOCX → XML → JSX → InDesign automation")
+    parser.add_argument("docx", nargs="?", default="1.docx", help="Input DOCX file (default: 1.docx)")
+    parser.add_argument("--mode", choices=["heading", "regex", "hybrid"], default="heading", help="DOCX parse mode")
+    parser.add_argument(
+        "--skip-docx",
+        action="store_true",
+        help="Skip DOCX→XML stage and reuse existing XML (requires --xml-path file to exist)",
+    )
+    parser.add_argument(
+        "--xml-path",
+        default=None,
+        help="Path to XML file (default: formatted_output.xml under project root)",
+    )
+    parser.add_argument(
+        "--no-run",
+        action="store_true",
+        help="Do not invoke InDesign after generating JSX/logs",
+    )
+    return parser
 
 # 仅作为“模板缺失样式时”的兜底（不会覆盖模板样式）
 BODY_PT = 11
@@ -3250,6 +3276,9 @@ def write_jsx(jsx_path, paragraphs):
     add_lines = []
     levels_used = set()
 
+    def _esc_js_value(s: str) -> str:
+        return (s or "").replace("\\", "\\\\").replace('"', '\\"')
+
     add_lines.append(
         "function onNewLevel1(){ var pkt = startNewChapter(story, page, tf); story=pkt.story; page=pkt.page; tf=pkt.frame; }")
     add_lines.append("firstChapterSeen = false;")
@@ -3286,17 +3315,14 @@ def write_jsx(jsx_path, paragraphs):
             rows = int(obj.get("rows", 0));
             cols = int(obj.get("cols", 0));
             data = obj.get("data", [])
-            add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
+            append_table_block(add_lines, obj)
             continue
         elif m_img:
             # 解析 [[IMG ...]] 的属性为 kv
             add_lines.append("__ensureLayoutDefault();")
             kv = dict(re.findall(r'(\w+)=["\'“”]([^"\'”]*)["\'”]', m_img.group(1)))
 
-            def _esc(s: str) -> str:
-                return (s or "").replace("\\", "\\\\").replace('"', '\\"')
-
-            src = _esc(kv.get("src", ""))
+            src = _esc_js_value(kv.get("src", ""))
             w = kv.get("w", "") or ""
             h = kv.get("h", "") or ""
             align = kv.get("align", "center")
@@ -3312,52 +3338,43 @@ def write_jsx(jsx_path, paragraphs):
             distR = kv.get("distR", "") or ""
             sb = kv.get("spaceBefore", "6")
             sa = kv.get("spaceAfter", "6")
-            cap = _esc(kv.get("caption", "") or "")
+            cap = _esc_js_value(kv.get("caption", "") or "")
 
-            add_lines.append(f'''(function(){{
-              log("[PY][m_img] {src} inline={inline}");
-              try {{
-                // 0) 环境检查
-                log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
-                    + " typeof addImageAtV2=" + (typeof addImageAtV2)
-                    + " typeof _normPath=" + (typeof _normPath));
-                log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
+            w = _esc_js_value(w)
+            h = _esc_js_value(h)
+            align = _esc_js_value(align)
+            inline = _esc_js_value(inline)
+            wrap = _esc_js_value(wrap)
+            posH = _esc_js_value(posH)
+            posV = _esc_js_value(posV)
+            offX = _esc_js_value(offX)
+            offY = _esc_js_value(offY)
+            distT = _esc_js_value(distT)
+            distB = _esc_js_value(distB)
+            distL = _esc_js_value(distL)
+            distR = _esc_js_value(distR)
 
-                // 1) 溢出兜底
-                try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
-                  if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
-                }}
-
-                // 2) 锚点
-                var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
-
-                // 3) 路径
-                var f=_normPath("{src}");
-                log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
-
-                if(f&&f.exists){{
-                  var spec={{src:f.fsName,w:"{w}",h:"{h}",align:"{align}",spaceBefore:{sb},spaceAfter:{sa},caption:"{cap}",
-                            inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",offX:"{offX}",offY:"{offY}",
-                            distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}"}};
-                  var inl=_trim(spec.inline); // 兼容 InDesign 2020
-                  log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
-
-                  if(inl==="0"||/^false$/i.test(inl)){{
-                    log("[DBG] dispatch -> addFloatingImage");
-                    var rect=addFloatingImage(tf,story,page,spec);
-                    if(rect&&rect.isValid) log("[IMG] ok (float): " + spec.src);
-                  }} else {{
-                    log("[DBG] dispatch -> addImageAtV2");
-                    var rect=addImageAtV2(ip,spec);
-                    if(rect&&rect.isValid) log("[IMG] ok (inline): " + spec.src);
-                  }}
-                }} else {{
-                  log("[IMG] missing: {src}");
-                }}
-              }} catch(e) {{
-                log("[IMG][EXC] " + e);
-              }}
-            }})();''')
+            append_marker_image(
+                add_lines,
+                src_log=src,
+                src=src,
+                w=w,
+                h=h,
+                align=align,
+                inline=inline,
+                wrap=wrap,
+                posH=posH,
+                posV=posV,
+                offX=offX,
+                offY=offY,
+                distT=distT,
+                distB=distB,
+                distL=distL,
+                distR=distR,
+                sb=sb,
+                sa=sa,
+                caption=cap,
+            )
             continue
         elif m_xmlt:
             try:
@@ -3381,22 +3398,19 @@ def write_jsx(jsx_path, paragraphs):
                         row.append("\n".join([x for x in parts if x]))
                     rows_data.append(row)
                 cols = max([len(r) for r in rows_data]) if rows_data else 0
-                add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
+                table_obj = {"rows": len(rows_data), "cols": cols, "data": rows_data}
+                append_table_block(add_lines, table_obj)
                 continue
             except Exception:
                 pass
         elif m_xmli:
-            add_lines.append("__ensureLayoutDefault();")
-            # 处理整段是 <img ...> 的情况（原生 XML/HTML 片段）
+            # ���������� <img ...> �������ԭ�� XML/HTML Ƭ�Σ�
             import xml.etree.ElementTree as ET
-
-            def _esc(s: str) -> str:
-                return (s or "").replace("\\", "\\\\").replace('"', '\\"')
 
             try:
                 root = ET.fromstring(text)
                 # 兼容 src/href/xlink:href
-                src = _esc(
+                src = _esc_js_value(
                     root.get("src", "") or root.get("href", "") or root.get("{http://www.w3.org/1999/xlink}href", ""))
 
                 # 尺寸与排版属性（都允空字符串，JS 端自行解释）
@@ -3404,21 +3418,59 @@ def write_jsx(jsx_path, paragraphs):
                 h = root.get("h", "") or root.get("height", "") or ""
                 align = root.get("align", "center")
                 inline = root.get("inline", "") or ""
-                wrap = root.get("wrap", "") or ""
+                w = root.get("w", "") or root.get("width", "") or ""
+                h = root.get("h", "") or root.get("height", "") or ""
+                align = root.get("align", "") or root.get("placement", "") or ""
                 posH = root.get("posH", "") or ""
                 posV = root.get("posV", "") or ""
                 offX = root.get("offX", "") or ""
                 offY = root.get("offY", "") or ""
                 distT = root.get("distT", "") or ""
                 distB = root.get("distB", "") or ""
-                distL = root.get("distL", "") or ""
-                distR = root.get("distR", "") or ""
                 sb = root.get("spaceBefore", "6")
                 sa = root.get("spaceAfter", "6")
-                cap = _esc(root.get("caption", "") or "")
+                cap = _esc_js_value(root.get("caption", "") or "")
+                w = _esc_js_value(w)
+                h = _esc_js_value(h)
+                align = _esc_js_value(align or "center")
+                posH = _esc_js_value(posH)
+                posV = _esc_js_value(posV)
+                offX = _esc_js_value(offX)
+                offY = _esc_js_value(offY)
+                distT = _esc_js_value(distT)
+                distB = _esc_js_value(distB)
+                distL = _esc_js_value(distL)
+                distR = _esc_js_value(distR)
+                inline_attr = root.get("inline", "") or ""
+                wrap_attr = root.get("wrap", "") or ""
+                inline_attr = _esc_js_value(inline_attr)
+                wrap_attr = _esc_js_value(wrap_attr)
             except Exception:
                 # 解析失败则回退为普通段落处理
                 continue
+
+            append_xml_image(
+                add_lines,
+                src_log=src,
+                src=src,
+                w=w,
+                h=h,
+                align=align,
+                inline=inline_attr,
+                wrap=wrap_attr,
+                posH=posH,
+                posV=posV,
+                offX=offX,
+                offY=offY,
+                distT=distT,
+                distB=distB,
+                distL=distL,
+                distR=distR,
+                sb=root.get("spaceBefore", "6"),
+                sa=root.get("spaceAfter", "6"),
+                caption=cap,
+            )
+            continue
 
             add_lines.append(f'''(function(){{
         log("[PY][m_xmli] {src}");
@@ -3450,9 +3502,8 @@ def write_jsx(jsx_path, paragraphs):
         }})();''')
             continue
 
-        # 默认：仍走 addParaWithNotes（它现在也能识别行内 IMG/TABLE）
-        add_lines.append("__ensureLayoutDefault();")
-        add_lines.append(f'addParaWithNotes(story, "{sty}", "{esc}");')
+        # Ĭ�ϣ����� addParaWithNotes��������Ҳ��ʶ������ IMG/TABLE��
+        append_text_block(add_lines, sty, esc)
 
     style_lines = build_style_lines(levels_used)
 
@@ -3582,21 +3633,38 @@ def run_indesign_macos(jsx_path):
 
 
 def main():
-    input_file = "1.docx"
-    mode = "heading"
-    exporter = DOCXOutlineExporter(input_file, mode=mode)
-    exporter.process(XML_PATH)
+    parser = build_cli_parser()
+    args = parser.parse_args()
+
+    input_file = os.path.abspath(args.docx)
+    mode = args.mode
+
+    global XML_PATH
+    if args.xml_path:
+        XML_PATH = os.path.abspath(args.xml_path)
+    else:
+        XML_PATH = os.path.join(OUT_DIR, "formatted_output.xml")
+
+    if args.skip_docx:
+        if not os.path.exists(XML_PATH):
+            print(f"[ERR] --skip-docx 指定但未找到 XML 文件: {XML_PATH}")
+            return
+        print(f"[INFO] 跳过 DOCX → XML，直接使用: {XML_PATH}")
+    else:
+        exporter = DOCXOutlineExporter(input_file, mode=mode)
+        exporter.process(XML_PATH)
 
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
-    print(f"[INFO] 解析到 {len(paragraphs)} 段；示例前3段: {paragraphs[:3]}")
+    print(f"[INFO] 解析了 {len(paragraphs)} 段；示例前三段: {paragraphs[:3]}")
 
     write_jsx(JSX_PATH, paragraphs)
 
     ran = False
-    if AUTO_RUN_WINDOWS and sys.platform.startswith("win"):
-        ran = run_indesign_windows(JSX_PATH)
-    elif AUTO_RUN_MACOS and sys.platform == "darwin":
-        ran = run_indesign_macos(JSX_PATH)
+    if not args.no_run:
+        if AUTO_RUN_WINDOWS and sys.platform.startswith("win"):
+            ran = run_indesign_windows(JSX_PATH)
+        elif AUTO_RUN_MACOS and sys.platform == "darwin":
+            ran = run_indesign_macos(JSX_PATH)
 
     print("\n=== 完成 ===")
     print("XML: ", XML_PATH)
