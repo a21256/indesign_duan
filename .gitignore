@@ -7,6 +7,8 @@
 !xml_to_idml.py
 !docx_to_xml_outline_notes_v13.py
 !README.md
+!builders/
+!builders/*.py
 
 # (Keep Git metadata always)
 !.git/
