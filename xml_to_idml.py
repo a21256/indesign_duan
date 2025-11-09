@@ -5,9 +5,6 @@ import xml.etree.ElementTree as ET
 from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 import json
 import time
-from builders.text_block import append_text_block
-from builders.table_block import append_table_block
-from builders.image_block import append_marker_image, append_xml_image
 
 # ========== 路径与配置 ==========
 OUT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -33,28 +30,6 @@ WIN_PROGIDS = [
     "InDesign.Application",
 ]
 MAC_APP_NAME = "Adobe InDesign 2020"
-
-
-def build_cli_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="DOCX → XML → JSX → InDesign automation")
-    parser.add_argument("docx", nargs="?", default="1.docx", help="Input DOCX file (default: 1.docx)")
-    parser.add_argument("--mode", choices=["heading", "regex", "hybrid"], default="heading", help="DOCX parse mode")
-    parser.add_argument(
-        "--skip-docx",
-        action="store_true",
-        help="Skip DOCX→XML stage and reuse existing XML (requires --xml-path file to exist)",
-    )
-    parser.add_argument(
-        "--xml-path",
-        default=None,
-        help="Path to XML file (default: formatted_output.xml under project root)",
-    )
-    parser.add_argument(
-        "--no-run",
-        action="store_true",
-        help="Do not invoke InDesign after generating JSX/logs",
-    )
-    return parser
 
 # 仅作为“模板缺失样式时”的兜底（不会覆盖模板样式）
 BODY_PT = 11
@@ -414,6 +389,8 @@ function iso() {
     var __DEFAULT_INNER_HEIGHT = null;
     var __ENABLE_TRAILING_TRIM = false;
     var __UNITVALUE_FAIL_ONCE = false;
+    var __ALLOW_IMG_EXT_FALLBACK = (typeof $.global.__ALLOW_IMG_EXT_FALLBACK !== "undefined")
+                                   ? !!$.global.__ALLOW_IMG_EXT_FALLBACK : true;
 
     // 放在定义 log() 之后、其它函数之前即可
     if (typeof curTextFrame === "undefined" && typeof tf !== "undefined") {
@@ -671,6 +648,7 @@ function iso() {
         function _alts(name){
             var i = name.lastIndexOf(".");
             if (i < 0) return [name, name+".png", name+".jpg", name+".jpeg"];
+            if (!__ALLOW_IMG_EXT_FALLBACK) return [name];
             var stem = name.substring(0,i), ext = name.substring(i+1).toLowerCase();
             if (ext==="jpg")  return [name, stem+".jpeg", stem+".png"];
             if (ext==="jpeg") return [name, stem+".jpg",  stem+".png"];
@@ -683,7 +661,14 @@ function iso() {
             try{
                 for (var n=0;n<candNames.length;n++){
                     var f1 = File(IMG_DIRS[i]+"/"+candNames[n]);
-                    if (f1.exists) return f1;
+                    if (f1.exists) {
+                      if (__ALLOW_IMG_EXT_FALLBACK && candNames[n].toLowerCase() !== baseName.toLowerCase()) {
+                        try{
+                          log("[IMG] fallback ext hit base=" + baseName + " -> " + candNames[n] + " dir=" + IMG_DIRS[i]);
+                        }catch(_){}
+                      }
+                      return f1;
+                    }
                 }
                 var f2 = File(IMG_DIRS[i]+"/"+p);
                 if (f2.exists) return f2;
@@ -728,131 +713,106 @@ function iso() {
       if (!st) { log("[ERR] addImageAtV2: no valid story"); return null; }
       try { st.recompose(); } catch(_){}
 
+      var inlineFlag = String((spec && spec.inline)||"").toLowerCase();
+      var isInline = !(inlineFlag==="0" || inlineFlag==="false");
+      if (spec && spec.forceBlock) isInline = false;
+
       // 关键：默认用“当前可写文本框 tf 的末尾插入点”，避免落到上一页的 story 尾框
       var ip2 = (ip && ip.isValid) ? ip
                : ((typeof tf!=="undefined" && tf && tf.isValid && tf.insertionPoints && tf.insertionPoints.length)
                     ? tf.insertionPoints[-1]
                     : st.insertionPoints[-1]);
 
-        // --- FIX: 连续图片落在同一 IP 时，先推进一段，避免叠放 ---
-        try{
-          if (ip2 && ip2.isValid) {
-            var lastIdx = (typeof __LAST_IMG_ANCHOR_IDX==="number") ? (__LAST_IMG_ANCHOR_IDX|0) : -1;
-            // 如果这次拿到的 IP 和上一次锚点 index 一样，说明还在同一位置 → 先断段推进
-            if (ip2.index === lastIdx) {
-              try { ip2.contents = "\r"; } catch(_){}
-              try { st.recompose(); } catch(_){}
-              try {
-                // 以“当前文本框末尾”为准重新拿一次
-                if (typeof tf!=="undefined" && tf && tf.isValid) ip2 = tf.insertionPoints[-1];
-                else ip2 = st.insertionPoints[-1];
-              } catch(__){}
-            }
-          }
-        } catch(__){}
-
-
-        try{
-          var __holder = (ip2 && ip2.isValid && ip2.parentTextFrames.length) ? ip2.parentTextFrames[0] : null;
-          var __page   = (__holder && __holder.isValid) ? __holder.parentPage : null;
-          log('[IMGDBG] ip2.pick holderTf=' + (__holder?__holder.id:'NA')
-              + ' page=' + (__page?__page.name:'NA')
-              + ' ipIdx=' + (ip2?ip2.index:'NA')
-              + ' lastIdx=' + (typeof __LAST_IMG_ANCHOR_IDX==='number'?__LAST_IMG_ANCHOR_IDX:'NA'));
-        }catch(_){}
-
       // --- FIX: 连续图片落在同一 IP 时，先推进一段，避免叠放 ---
-      try{
-        if (ip2 && ip2.isValid) {
-          var lastIdx = (typeof __LAST_IMG_ANCHOR_IDX==="number") ? (__LAST_IMG_ANCHOR_IDX|0) : -1;
-          // [日志] 放图前：本次 IP 与上次锚点 index
-          try { log("[IMG-STACK][pre] ip.index=" + ip2.index + " lastIdx=" + lastIdx); } catch(__){}
-          // 如果这次拿到的 IP 和上一次锚点 index 一样，说明还在同一位置 → 先断段推进
-          if (ip2.index === lastIdx) {
-            try { ip2.contents = "\r"; } catch(_){}
-            try { st.recompose(); } catch(_){}
-            try {
-              // 以“当前文本框末尾”为准重新拿一次
-              if (typeof tf!=="undefined" && tf && tf.isValid) ip2 = tf.insertionPoints[-1];
-              else ip2 = st.insertionPoints[-1];
-            } catch(__){}
-            // [日志] 推进后新的插入点 index
-            try { log("[IMG-STACK][shift] new ip.index=" + (ip2&&ip2.isValid?ip2.index:"NA")); } catch(__){}
-          }
-        }
-      } catch(__){}
-
+      function _logAnchorContext(tag, ipCandidate){
         try{
-          var __holderR = (ip2 && ip2.isValid && ip2.parentTextFrames.length)? ip2.parentTextFrames[0] : null;
-          var __pageR   = (__holderR && __holderR.isValid)? __holderR.parentPage : null;
-          log('[IMGDBG] after-sameIP-break holderTf=' + (__holderR?__holderR.id:'NA')
-              + ' page=' + (__pageR?__pageR.name:'NA')
-              + ' ipIdx=' + (ip2?ip2.index:'NA'));
-        }catch(_){}
+          var holder = (ipCandidate && ipCandidate.isValid && ipCandidate.parentTextFrames.length)
+                       ? ipCandidate.parentTextFrames[0] : null;
+          var page   = (holder && holder.isValid) ? holder.parentPage : null;
+          log('[IMGDBG] ' + tag + ' holderTf=' + (holder?holder.id:'NA')
+              + ' page=' + (page?page.name:'NA')
+              + ' ipIdx=' + (ipCandidate?ipCandidate.index:'NA')
+              + ' lastIdx=' + (typeof __LAST_IMG_ANCHOR_IDX==='number'?__LAST_IMG_ANCHOR_IDX:'NA'));
+        }catch(_){}}
 
-      // --- 保障：每次放图前都新起一段，避免与上一张叠在同一锚点 ---
-      try{
-        var ipChk = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1];
-        // 如果当前插入点前一个字符不是段落结束符，则先补一个回车再回排
-        var prev = (ipChk && ipChk.isValid && ipChk.index>0) ? st.insertionPoints[ipChk.index-1] : null;
-        var prevIsCR = false; try{ prevIsCR = (prev && prev.isValid && String(prev.contents)==="\r"); }catch(__){}
-        if (!prevIsCR) {
-          try { ipChk.contents = "\r"; } catch(__){}
-          try { st.recompose(); } catch(__){}
-          // 重新获取“当前文本框末尾”的插入点作为最终 ip2
-          try { ip2 = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1]; } catch(__){}
-          try { log("[IMG-STACK][prebreak] force new para; ip.index=" + (ip2&&ip2.isValid?ip2.index:"NA")); } catch(__){}
-        }
-      }catch(__){}
-
-      // ---- 关键修正：确保插入点确实在“当前末尾文本框 tf”内，而不是上一页的尾框 ----
-      try{
-        if ((!ip || !ip.isValid) && typeof tf!=="undefined" && tf && tf.isValid) {
-          var guard = 0;
-          while (guard++ < 3) {
-            var holder = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
-                         ? ip2.parentTextFrames[0] : null;
-            var ok = (holder && holder.isValid && tf && tf.isValid && holder.id === tf.id);
-            if (ok) break;
-            // 不在当前 tf：只在“当前文本框”的末尾补一个回车，再回排并重取 tf 的末尾
-            try { tf.insertionPoints[-1].contents = "\r"; } catch(_){}
-            try { st.recompose(); } catch(_){}
-            try { ip2 = tf.insertionPoints[-1]; } catch(_){}            
+      function _dedupeAnchor(ipCandidate){
+        if (!ipCandidate || !ipCandidate.isValid) return ipCandidate;
+        try{
+          var lastIdx = (typeof __LAST_IMG_ANCHOR_IDX==='number') ? (__LAST_IMG_ANCHOR_IDX|0) : -1;
+          try { log("[IMG-STACK][pre] ip.index=" + ipCandidate.index + " lastIdx=" + lastIdx); } catch(__){}
+          if (ipCandidate.index === lastIdx) {
+            try { ipCandidate.contents = "\r"; } catch(_){ }
+            try { st.recompose(); } catch(_){ }
+            try {
+              if (typeof tf!=="undefined" && tf && tf.isValid) ipCandidate = tf.insertionPoints[-1];
+              else ipCandidate = st.insertionPoints[-1];
+            } catch(__){}
+            try { log("[IMG-STACK][shift] new ip.index=" + (ipCandidate&&ipCandidate.isValid?ipCandidate.index:"NA")); } catch(__){}
           }
-          try{
-            var _h = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
-                     ? ip2.parentTextFrames[0] : null;
-            var _p = (_h && _h.isValid) ? _h.parentPage : null;
-            log("[IMG] ip2.adjust  tf=" + (_h?_h.id:"NA") + " page=" + (_p?_p.name:"NA"));
-          }catch(__){}
-        }
-      }catch(__){}
+        }catch(_){ }
+        return ipCandidate;
+      }
 
-      // ---- 关键修正②：如果 ip2 处的“段落起点”不在当前文本框 tf（即本框是该段续行），
-      // 则先在 ip2 处插入一个段落结束符，让图片锚定到“本框中新起的一段”，避免被提升到上一页段首
-      try{
-        if (ip2 && ip2.isValid && typeof tf!=="undefined" && tf && tf.isValid) {
-          var para = ip2.paragraphs[0];
-          var p0   = (para && para.isValid) ? para.insertionPoints[0] : null; // 段首插入点
-          var h0   = (p0 && p0.isValid && p0.parentTextFrames && p0.parentTextFrames.length)
-                     ? p0.parentTextFrames[0] : null;                          // 段首所在文本框
-          if (h0 && h0.isValid && h0.id !== tf.id) {
-            // 当前框只是该段的续行 -> 先断一段再放图
-            try { ip2.contents = "\r"; } catch(_){}
-            try { st.recompose(); } catch(_){}
-            try { ip2 = tf.insertionPoints[-1]; } catch(_){}
+      if (!isInline) {
+        // --- 保障：每次放图前都新起一段，避免与上一张叠在同一锚点 ---
+        try{
+          var ipChk = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1];
+          var prev = (ipChk && ipChk.isValid && ipChk.index>0) ? st.insertionPoints[ipChk.index-1] : null;
+          var prevIsCR = false; try{ prevIsCR = (prev && prev.isValid && String(prev.contents)=="\r"); }catch(__){}
+          if (!prevIsCR) {
+            try { ipChk.contents = "\r"; } catch(__){}
+            try { st.recompose(); } catch(__){}
+            try { ip2 = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1]; } catch(__){}
+            try { log("[IMG-STACK][prebreak] force new para; ip.index=" + (ip2&&ip2.isValid?ip2.index:"NA")); } catch(__){}
+          }
+        }catch(__){}
+
+        // ---- 关键修正：确保插入点确实在“当前末尾文本框 tf 内”，而不是上一页的尾框 ----
+        try{
+          if ((!ip || !ip.isValid) && typeof tf!=="undefined" && tf && tf.isValid) {
+            var guard = 0;
+            while (guard++ < 3) {
+              var holder = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
+                           ? ip2.parentTextFrames[0] : null;
+              var ok = (holder && holder.isValid && tf && tf.isValid && holder.id === tf.id);
+              if (ok) break;
+              try { tf.insertionPoints[-1].contents = "\r"; } catch(_){ }
+              try { st.recompose(); } catch(_){ }
+              try { ip2 = tf.insertionPoints[-1]; } catch(_){ }
+            }
             try{
-              var _h2 = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
-                        ? ip2.parentTextFrames[0] : null;
-              var _p2 = (_h2 && _h2.isValid) ? _h2.parentPage : null;
-              log("[IMG] ip2.breakPara  tf=" + (_h2?_h2.id:"NA") + " page=" + (_p2?_p2.name:"NA"));
+              var _h = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
+                       ? ip2.parentTextFrames[0] : null;
+              var _p = (_h && _h.isValid) ? _h.parentPage : null;
+              log("[IMG] ip2.adjust  tf=" + (_h?_h.id:"NA") + " page=" + (_p?_p.name:"NA"));
             }catch(__){}
           }
-            try{
-              log('[IMGDBG] breakPara ipIdx=' + (ip2?ip2.index:'NA'));
-            }catch(_){}
-        }
-      }catch(__){}
+        }catch(__){}
+
+        // ---- 关键修正②：如果 ip2 处的“段落起点”不在当前文本框 tf（即本框是该段续行），
+        try{
+          if (ip2 && ip2.isValid && typeof tf!=="undefined" && tf && tf.isValid) {
+            var para = ip2.paragraphs[0];
+            var p0   = (para && para.isValid) ? para.insertionPoints[0] : null;
+            var h0   = (p0 && p0.isValid && p0.parentTextFrames && p0.parentTextFrames.length)
+                       ? p0.parentTextFrames[0] : null;
+            if (h0 && h0.isValid && h0.id !== tf.id) {
+              try { ip2.contents = "\r"; } catch(_){ }
+              try { st.recompose(); } catch(_){ }
+              try { ip2 = tf.insertionPoints[-1]; } catch(_){ }
+              try{
+                var _h2 = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
+                          ? ip2.parentTextFrames[0] : null;
+                var _p2 = (_h2 && _h2.isValid) ? _h2.parentPage : null;
+                log("[IMG] ip2.breakPara  tf=" + (_h2?_h2.id:"NA") + " page=" + (_p2?_p2.name:"NA"));
+              }catch(__){}
+            }
+              try{
+                log('[IMGDBG] breakPara ipIdx=' + (ip2?ip2.index:'NA'));
+              }catch(_){ }
+          }
+        }catch(__){}
+      } // end !isInline guard for prebreak/breakPara adjustments
 
       try{
         var _tf0 = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)? ip2.parentTextFrames[0] : null;
@@ -898,8 +858,20 @@ function iso() {
 
       // 5) 锚定：Above-Line（块级，最稳），不启用文绕图
       try {
-        rect.anchoredObjectSettings.anchoredPosition = AnchorPosition.ABOVE_LINE;
-        rect.anchoredObjectSettings.anchorPoint      = AnchorPoint.TOP_LEFT_ANCHOR;
+        var _anch = rect.anchoredObjectSettings;
+        if (_anch && _anch.isValid !== false) {
+          _anch.anchoredPosition = isInline ? AnchorPosition.INLINE_POSITION : AnchorPosition.ABOVE_LINE;
+          var _anchorPoint = AnchorPoint.TOP_LEFT_ANCHOR;
+          var _alignKey = String((spec&&spec.align)||"left").toLowerCase();
+          if (!isInline) {
+            if (_alignKey === "center") {
+              _anchorPoint = AnchorPoint.TOP_CENTER_ANCHOR;
+            } else if (_alignKey === "right") {
+              _anchorPoint = AnchorPoint.TOP_RIGHT_ANCHOR;
+            }
+          }
+          _anch.anchorPoint = _anchorPoint;
+        }
       } catch(_){}
       try { rect.textWrapPreferences.textWrapMode = TextWrapModes.NONE; } catch(_){}
 
@@ -922,23 +894,25 @@ function iso() {
               holder = aIP.parentTextFrames[0];
             if ((!holder || !holder.isValid) && rect.parentTextFrames && rect.parentTextFrames.length)
               holder = rect.parentTextFrames[0];
-            if ((!holder || !holder.isValid) && typeof curTextFrame!=="undefined")
-              holder = curTextFrame;
+            if (!holder || !holder.isValid) {
+              if (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid) holder = curTextFrame;
+              else if (typeof tf!=="undefined" && tf && tf.isValid) holder = tf;
+            }
             if (holder && holder.isValid){
-              var hb = holder.geometricBounds;
-              var inset = holder.textFramePreferences.insetSpacing;
-              var li = (inset && inset.length>=2)? inset[1] : 0;
-              var ri = (inset && inset.length>=4)? inset[3] : 0;
-              innerW = (hb[3]-hb[1]) - li - ri;
+              innerW = _innerFrameWidth(holder);
+              try{
+                log("[IMGDBG] widthCtx holderTf=" + holder.id + " innerW=" + innerW.toFixed ? innerW.toFixed(2) : innerW);
+              }catch(__){}
             }
           }catch(__){}
 
           // 目标宽高：直接用绝对几何边界设定，避免“按初始值缩放”引入倍数偏差
-          var targetW = (wPt>0 ? wPt : (innerW>0 ? innerW : curW));
-var targetH = (hPt>0 ? hPt : (targetW / ratio));
+          var widthLimit = innerW>0 ? innerW : curW;
+          var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
+          var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio, 1e-6)));
 
           try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
-rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
+          rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
 
           // 再自适应一次，让内容紧贴新框
           try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(__){}
@@ -952,83 +926,89 @@ rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
           } catch(__){}
         } catch(_){}
 
-      // 7) 锚点所在段：默认居中，前后距紧凑
+      // 7) 锚点所在段：根据 align 控制段落对齐；块级图再设置段前段后
       try{
         var p = rect.storyOffset.paragraphs[0];
         if (p && p.isValid){
           var a = String((spec&&spec.align)||"center").toLowerCase();
           p.justification = (a==="right") ? Justification.RIGHT_ALIGN : (a==="center" ? Justification.CENTER_ALIGN : Justification.LEFT_ALIGN);
-          try { p.spaceBefore = _toPtLocal(spec&&spec.spaceBefore) || 0; } catch(_){}
-          try { p.spaceAfter  = _toPtLocal(spec&&spec.spaceAfter)  || 2; } catch(_){}
+          if (!isInline) {
+            try { p.spaceBefore = _toPtLocal(spec&&spec.spaceBefore) || 0; } catch(_){}
+            try { p.spaceAfter  = _toPtLocal(spec&&spec.spaceAfter)  || 2; } catch(_){}
+          }
           p.keepOptions.keepWithNext = false;
           p.keepOptions.keepLinesTogether = false;
         }
       }catch(_){}
 
-      // 8) 在锚点之后补“段落结束 + 零宽空格”，并立即回排，确保下一次取到的是新段落的末尾
-      try{
-        var aIP = rect.storyOffset;
-        if (aIP && aIP.isValid){
-          // 8.1 先在锚点后补一个段落结束
-          var aft1 = aIP.parentStory.insertionPoints[aIP.index+1];
-          if (aft1 && aft1.isValid){ aft1.contents = "\r"; }
-          // 8.2 再补一个零宽空格，保证 storyEnd 真正来到“新段”末尾
-          var aft2 = aIP.parentStory.insertionPoints[aIP.index+2];
-          if (aft2 && aft2.isValid){ aft2.contents = "\u200B"; }
-          try{ aIP.parentStory.recompose(); }catch(__){}
-          // 8.3 用新段的插入点反查父文本框，强制把 tf/curTextFrame/story 切到“下一段所在的框”
-          try{
-            var holderNext = (aft2 && aft2.isValid && aft2.parentTextFrames && aft2.parentTextFrames.length)
-                               ? aft2.parentTextFrames[0] : null;
-            if (holderNext && holderNext.isValid){
-              tf = holderNext;
-              curTextFrame = holderNext;
-              story = holderNext.parentStory;
-            }
-          }catch(__){}
-        }
-      }catch(_){}
+      // 8) 块级图片在锚点后补「段落结束 + 零宽空格」，保证下一步接在新段
+      if (!isInline) {
+        try{
+          var aIP = rect.storyOffset;
+          if (aIP && aIP.isValid){
+            // 8.1 先在锚点后补一个段落结束
+            var aft1 = aIP.parentStory.insertionPoints[aIP.index+1];
+            if (aft1 && aft1.isValid){ aft1.contents = "\r"; }
+            // 8.2 再补一个零宽空格，保证 storyEnd 真正来到“新段”末尾
+            var aft2 = aIP.parentStory.insertionPoints[aIP.index+2];
+            if (aft2 && aft2.isValid){ aft2.contents = "\u200B"; }
+            try{ aIP.parentStory.recompose(); }catch(__){}
+            // 8.3 用新段的插入点反查父文本框，强制把 tf/curTextFrame/story 切到“下一段所在的框”
+            try{
+              var holderNext = (aft2 && aft2.isValid && aft2.parentTextFrames && aft2.parentTextFrames.length)
+                                 ? aft2.parentTextFrames[0] : null;
+              if (holderNext && holderNext.isValid){
+                tf = holderNext;
+                curTextFrame = holderNext;
+                story = holderNext.parentStory;
+              }
+            }catch(__){}
+          }
+        }catch(_){}
 
+      }
       // 9) 立即回排并疏通 overset，避免正文被甩到文末；并把 “当前活动文本框” 切到这张图所在的框
-      try {
-        if (st && st.isValid) st.recompose();
-        if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
-        var __pg = (rect && rect.parentPage) ? rect.parentPage : (typeof page!=="undefined"?page:null);
-        // 用矩形锚点反查真正所在的文本框，作为下一个动作的基准
-        var __tf = null;
-        try{
-          var _a = rect.storyOffset;
-          if (_a && _a.isValid && _a.parentTextFrames && _a.parentTextFrames.length)
-            __tf = _a.parentTextFrames[0];
-        }catch(_){}
-        // 优先使用 8.3 中刚切换过来的 tf，其次才兜底
-        if (!__tf && typeof tf!=="undefined") __tf = tf;
-        if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
-        if (__pg && __tf && typeof flushOverflow === "function") {
-          var fl = flushOverflow(st, __pg, __tf);
-          if (fl && fl.frame && fl.page) {
-            page  = fl.page;
-            tf    = fl.frame;
-            story = tf.parentStory;
-            curTextFrame = tf;
-          }
+      if (!isInline) {
+        try {
+          if (st && st.isValid) st.recompose();
+          if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
+          var __pg = (rect && rect.parentPage) ? rect.parentPage : (typeof page!=="undefined"?page:null);
+          // 用矩形锚点反查真正所在的文本框，作为下一个动作的基准
+          var __tf = null;
           try{
-            log("[IMG] after.flush  tf=" + (tf&&tf.isValid?tf.id:"NA")
-                + " page=" + (page?page.name:"NA")
-                + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
-                + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
+            var _a = rect.storyOffset;
+            if (_a && _a.isValid && _a.parentTextFrames && _a.parentTextFrames.length)
+              __tf = _a.parentTextFrames[0];
           }catch(_){}
-        }
-        // 再兜底一次：若 flush 没返回新框，也把 curTextFrame 切到图所在框
-        try{
-          if ((!curTextFrame || !curTextFrame.isValid) && rect && rect.isValid){
-            var a2 = rect.storyOffset;
-            if (a2 && a2.isValid && a2.parentTextFrames && a2.parentTextFrames.length)
-              curTextFrame = a2.parentTextFrames[0];
+          // 优先使用 8.3 中刚切换过来的 tf，其次才兜底
+          if (!__tf && typeof tf!=="undefined") __tf = tf;
+          if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
+          if (__pg && __tf && typeof flushOverflow === "function") {
+            var fl = flushOverflow(st, __pg, __tf);
+            if (fl && fl.frame && fl.page) {
+              page  = fl.page;
+              tf    = fl.frame;
+              story = tf.parentStory;
+              curTextFrame = tf;
+            }
+            try{
+              log("[IMG] after.flush  tf=" + (tf&&tf.isValid?tf.id:"NA")
+                  + " page=" + (page?page.name:"NA")
+                  + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
+                  + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
+            }catch(_){}
           }
-        }catch(_){}
-      } catch(eFlush){ log("[WARN] flush after image: " + eFlush); }
+          // 再兜底一次：若 flush 没返回新框，也把 curTextFrame 切到图所在框
+          try{
+            if ((!curTextFrame || !curTextFrame.isValid) && rect && rect.isValid){
+              var a2 = rect.storyOffset;
+              if (a2 && a2.isValid && a2.parentTextFrames && a2.parentTextFrames.length)
+                curTextFrame = a2.parentTextFrames[0];
+            }
+          }catch(_){}
+        } catch(eFlush){ log("[WARN] flush after image: " + eFlush); }
 
+      }
       return rect;
     }
 
@@ -3276,9 +3256,6 @@ def write_jsx(jsx_path, paragraphs):
     add_lines = []
     levels_used = set()
 
-    def _esc_js_value(s: str) -> str:
-        return (s or "").replace("\\", "\\\\").replace('"', '\\"')
-
     add_lines.append(
         "function onNewLevel1(){ var pkt = startNewChapter(story, page, tf); story=pkt.story; page=pkt.page; tf=pkt.frame; }")
     add_lines.append("firstChapterSeen = false;")
@@ -3307,6 +3284,13 @@ def write_jsx(jsx_path, paragraphs):
             add_lines.append(
                 "if (firstChapterSeen) { var __fl = flushOverflow(story, page, tf); story = __fl.frame.parentStory; page = __fl.page; tf = __fl.frame; onNewLevel1(); } else { firstChapterSeen = true; }")
 
+        only_img = False
+        m_img = re.match(r'^\s*(\[\[IMG\s+.+?\]\])\s*$', text, flags=re.I)
+        if not m_img:
+            m_img = re.search(r'\[\[IMG\s+(.+?)\]\]', text, re.I)
+        else:
+            only_img = True
+
         if m_tbl:
             try:
                 obj = json.loads(m_tbl.group(1))
@@ -3315,14 +3299,17 @@ def write_jsx(jsx_path, paragraphs):
             rows = int(obj.get("rows", 0));
             cols = int(obj.get("cols", 0));
             data = obj.get("data", [])
-            append_table_block(add_lines, obj)
+            add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
             continue
         elif m_img:
             # 解析 [[IMG ...]] 的属性为 kv
             add_lines.append("__ensureLayoutDefault();")
             kv = dict(re.findall(r'(\w+)=["\'“”]([^"\'”]*)["\'”]', m_img.group(1)))
 
-            src = _esc_js_value(kv.get("src", ""))
+            def _esc(s: str) -> str:
+                return (s or "").replace("\\", "\\\\").replace('"', '\\"')
+
+            src = _esc(kv.get("src", ""))
             w = kv.get("w", "") or ""
             h = kv.get("h", "") or ""
             align = kv.get("align", "center")
@@ -3338,43 +3325,52 @@ def write_jsx(jsx_path, paragraphs):
             distR = kv.get("distR", "") or ""
             sb = kv.get("spaceBefore", "6")
             sa = kv.get("spaceAfter", "6")
-            cap = _esc_js_value(kv.get("caption", "") or "")
+            cap = _esc(kv.get("caption", "") or "")
 
-            w = _esc_js_value(w)
-            h = _esc_js_value(h)
-            align = _esc_js_value(align)
-            inline = _esc_js_value(inline)
-            wrap = _esc_js_value(wrap)
-            posH = _esc_js_value(posH)
-            posV = _esc_js_value(posV)
-            offX = _esc_js_value(offX)
-            offY = _esc_js_value(offY)
-            distT = _esc_js_value(distT)
-            distB = _esc_js_value(distB)
-            distL = _esc_js_value(distL)
-            distR = _esc_js_value(distR)
+            add_lines.append(f'''(function(){{
+              log("[PY][m_img] {src} inline={inline}");
+              try {{
+                // 0) 环境检查
+                log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
+                    + " typeof addImageAtV2=" + (typeof addImageAtV2)
+                    + " typeof _normPath=" + (typeof _normPath));
+                log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
 
-            append_marker_image(
-                add_lines,
-                src_log=src,
-                src=src,
-                w=w,
-                h=h,
-                align=align,
-                inline=inline,
-                wrap=wrap,
-                posH=posH,
-                posV=posV,
-                offX=offX,
-                offY=offY,
-                distT=distT,
-                distB=distB,
-                distL=distL,
-                distR=distR,
-                sb=sb,
-                sa=sa,
-                caption=cap,
-            )
+                // 1) 溢出兜底
+                try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
+                  if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
+                }}
+
+                // 2) 锚点
+                var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
+
+                // 3) 路径
+                var f=_normPath("{src}");
+                log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
+
+                if(f&&f.exists){{
+                  var spec={{src:f.fsName,w:"{w}",h:"{h}",align:"{align}",spaceBefore:{sb},spaceAfter:{sa},caption:"{cap}",
+                            inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",offX:"{offX}",offY:"{offY}",
+                            distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}",forceBlock:{str(only_img).lower()}}};
+                  var inl=_trim(spec.inline); // 兼容 InDesign 2020
+                  log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
+
+                  if(inl==="0"||/^false$/i.test(inl)){{
+                    log("[DBG] dispatch -> addFloatingImage");
+                    var rect=addFloatingImage(tf,story,page,spec);
+                    if(rect&&rect.isValid) log("[IMG] ok (float): " + spec.src);
+                  }} else {{
+                    log("[DBG] dispatch -> addImageAtV2");
+                    var rect=addImageAtV2(ip,spec);
+                    if(rect&&rect.isValid) log("[IMG] ok (inline): " + spec.src);
+                  }}
+                }} else {{
+                  log("[IMG] missing: {src}");
+                }}
+              }} catch(e) {{
+                log("[IMG][EXC] " + e);
+              }}
+            }})();''')
             continue
         elif m_xmlt:
             try:
@@ -3398,19 +3394,22 @@ def write_jsx(jsx_path, paragraphs):
                         row.append("\n".join([x for x in parts if x]))
                     rows_data.append(row)
                 cols = max([len(r) for r in rows_data]) if rows_data else 0
-                table_obj = {"rows": len(rows_data), "cols": cols, "data": rows_data}
-                append_table_block(add_lines, table_obj)
+                add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
                 continue
             except Exception:
                 pass
         elif m_xmli:
-            # ���������� <img ...> �������ԭ�� XML/HTML Ƭ�Σ�
+            add_lines.append("__ensureLayoutDefault();")
+            # 处理整段是 <img ...> 的情况（原生 XML/HTML 片段）
             import xml.etree.ElementTree as ET
+
+            def _esc(s: str) -> str:
+                return (s or "").replace("\\", "\\\\").replace('"', '\\"')
 
             try:
                 root = ET.fromstring(text)
                 # 兼容 src/href/xlink:href
-                src = _esc_js_value(
+                src = _esc(
                     root.get("src", "") or root.get("href", "") or root.get("{http://www.w3.org/1999/xlink}href", ""))
 
                 # 尺寸与排版属性（都允空字符串，JS 端自行解释）
@@ -3418,59 +3417,21 @@ def write_jsx(jsx_path, paragraphs):
                 h = root.get("h", "") or root.get("height", "") or ""
                 align = root.get("align", "center")
                 inline = root.get("inline", "") or ""
-                w = root.get("w", "") or root.get("width", "") or ""
-                h = root.get("h", "") or root.get("height", "") or ""
-                align = root.get("align", "") or root.get("placement", "") or ""
+                wrap = root.get("wrap", "") or ""
                 posH = root.get("posH", "") or ""
                 posV = root.get("posV", "") or ""
                 offX = root.get("offX", "") or ""
                 offY = root.get("offY", "") or ""
                 distT = root.get("distT", "") or ""
                 distB = root.get("distB", "") or ""
+                distL = root.get("distL", "") or ""
+                distR = root.get("distR", "") or ""
                 sb = root.get("spaceBefore", "6")
                 sa = root.get("spaceAfter", "6")
-                cap = _esc_js_value(root.get("caption", "") or "")
-                w = _esc_js_value(w)
-                h = _esc_js_value(h)
-                align = _esc_js_value(align or "center")
-                posH = _esc_js_value(posH)
-                posV = _esc_js_value(posV)
-                offX = _esc_js_value(offX)
-                offY = _esc_js_value(offY)
-                distT = _esc_js_value(distT)
-                distB = _esc_js_value(distB)
-                distL = _esc_js_value(distL)
-                distR = _esc_js_value(distR)
-                inline_attr = root.get("inline", "") or ""
-                wrap_attr = root.get("wrap", "") or ""
-                inline_attr = _esc_js_value(inline_attr)
-                wrap_attr = _esc_js_value(wrap_attr)
+                cap = _esc(root.get("caption", "") or "")
             except Exception:
                 # 解析失败则回退为普通段落处理
                 continue
-
-            append_xml_image(
-                add_lines,
-                src_log=src,
-                src=src,
-                w=w,
-                h=h,
-                align=align,
-                inline=inline_attr,
-                wrap=wrap_attr,
-                posH=posH,
-                posV=posV,
-                offX=offX,
-                offY=offY,
-                distT=distT,
-                distB=distB,
-                distL=distL,
-                distR=distR,
-                sb=root.get("spaceBefore", "6"),
-                sa=root.get("spaceAfter", "6"),
-                caption=cap,
-            )
-            continue
 
             add_lines.append(f'''(function(){{
         log("[PY][m_xmli] {src}");
@@ -3502,8 +3463,9 @@ def write_jsx(jsx_path, paragraphs):
         }})();''')
             continue
 
-        # Ĭ�ϣ����� addParaWithNotes��������Ҳ��ʶ������ IMG/TABLE��
-        append_text_block(add_lines, sty, esc)
+        # 默认：仍走 addParaWithNotes（它现在也能识别行内 IMG/TABLE）
+        add_lines.append("__ensureLayoutDefault();")
+        add_lines.append(f'addParaWithNotes(story, "{sty}", "{esc}");')
 
     style_lines = build_style_lines(levels_used)
 
@@ -3633,29 +3595,55 @@ def run_indesign_macos(jsx_path):
 
 
 def main():
-    parser = build_cli_parser()
+    parser = argparse.ArgumentParser(
+        description="DOCX → XML → JSX → InDesign 自动排版工具"
+    )
+    parser.add_argument(
+        "docx",
+        nargs="?",
+        help="待转换的 DOCX 文件（默认使用脚本目录下的 1.docx）",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("heading", "regex", "hybrid"),
+        default="heading",
+        help="DOCXOutlineExporter 的解析模式（默认 heading）",
+    )
+    parser.add_argument(
+        "--skip-docx",
+        action="store_true",
+        help="跳过 DOCX→XML 流程，直接使用现有 XML（需保证 XML 存在）",
+    )
+    parser.add_argument(
+        "--xml-path",
+        help="显式指定 XML 输入/输出路径（默认 formatted_output.xml）",
+    )
+    parser.add_argument(
+        "--no-run",
+        action="store_true",
+        help="只生成 XML/JSX，不调用 InDesign",
+    )
     args = parser.parse_args()
-
-    input_file = os.path.abspath(args.docx)
-    mode = args.mode
 
     global XML_PATH
     if args.xml_path:
         XML_PATH = os.path.abspath(args.xml_path)
-    else:
-        XML_PATH = os.path.join(OUT_DIR, "formatted_output.xml")
 
     if args.skip_docx:
         if not os.path.exists(XML_PATH):
-            print(f"[ERR] --skip-docx 指定但未找到 XML 文件: {XML_PATH}")
+            print(f"[ERR] --skip-docx 指定但未找到 XML：{XML_PATH}")
             return
-        print(f"[INFO] 跳过 DOCX → XML，直接使用: {XML_PATH}")
+        print(f"[INFO] 跳过 DOCX → XML，直接使用：{XML_PATH}")
     else:
-        exporter = DOCXOutlineExporter(input_file, mode=mode)
+        input_file = os.path.abspath(args.docx or "1.docx")
+        if not os.path.exists(input_file):
+            print(f"[ERR] 找不到 DOCX：{input_file}")
+            return
+        exporter = DOCXOutlineExporter(input_file, mode=args.mode)
         exporter.process(XML_PATH)
 
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
-    print(f"[INFO] 解析了 {len(paragraphs)} 段；示例前三段: {paragraphs[:3]}")
+    print(f"[INFO] 解析了 {len(paragraphs)} 段；示例： {paragraphs[:3]}")
 
     write_jsx(JSX_PATH, paragraphs)
 
@@ -3673,6 +3661,7 @@ def main():
     print("IDML:", IDML_OUT_PATH)
     if ran:
         print("InDesign 已执行 JSX。若设置 AUTO_EXPORT_IDML=True，将在脚本目录生成 output.idml。")
+
 
 
 if __name__ == "__main__":
