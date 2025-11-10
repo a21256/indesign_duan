@@ -296,6 +296,8 @@ class DOCXOutlineExporter:
         self.default_section_state = self._resolve_default_section_state()
         self._body_iter_items: List[Tuple[str, int, Dict[str, Any]]] = []
         self._build_body_iter_index()
+        self._doc_paragraphs = list(self.doc.paragraphs)
+        self._doc_tables = list(self.doc.tables)
 
     @staticmethod
     def _paragraph_align_token(paragraph) -> str:
@@ -1172,9 +1174,9 @@ class DOCXOutlineExporter:
         """Yield ('p'/'tbl', object, section_state) in document order."""
         for kind, index, state in self._body_iter_items:
             if kind == 'p':
-                yield ('p', self.doc.paragraphs[index], self._copy_section_state(state))
+                yield ('p', self._doc_paragraphs[index], self._copy_section_state(state))
             elif kind == 'tbl':
-                yield ('tbl', self.doc.tables[index], self._copy_section_state(state))
+                yield ('tbl', self._doc_tables[index], self._copy_section_state(state))
 
     def _build_tree_heading_mode(self):
         logger.info("Building hierarchy (heading mode)...")

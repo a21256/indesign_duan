@@ -250,6 +250,7 @@ def escape_js(s: str) -> str:
 # ========== JSX 模板（新增 IMG/TABLE 处理函数与正则） ==========
 JSX_TEMPLATE = r"""function smartWrapStr(s){
     try{
+      var flushAllowed = true;
         if(!s) return s;
         return String(s).replace(/[A-Za-z0-9_\/#[\.:%\-\+=]{30,}/g, function(tok){
             var out = [];
@@ -1030,6 +1031,8 @@ function addFloatingImage(tf, story, page, spec){
 
     var wPt=_toPtLocal(spec&&spec.w), hPt=_toPtLocal(spec&&spec.h);
     var posH=String((spec&&spec.posH)||"center").toLowerCase();
+    var alignMode=String((spec&&spec.align)||"").toLowerCase();
+    if (!alignMode){ alignMode = posH || "center"; }
     var wrap=String((spec&&spec.wrap)||"none").toLowerCase();
     var spB=_toPtLocal(spec&&spec.spaceBefore)||0;
     var spA=_toPtLocal(spec&&spec.spaceAfter); if (spA===0) spA = 2;
@@ -1043,7 +1046,12 @@ function addFloatingImage(tf, story, page, spec){
       var prevIsCR=false; try{ prevIsCR=(prev&&String(prev.contents)==="\r"); }catch(_){}
       if(!prevIsCR){ endIP.contents="\r"; try{ st.recompose(); }catch(__){} }
     }catch(_){}
-    var ip = tf.insertionPoints[-1];
+      var ip = tf.insertionPoints[-1];
+      try{
+        var ipIdx = "NA";
+        if (ip && ip.isValid) ipIdx = ip.index;
+        log("[IMGFLOAT6][DBG] dispatch ip.index=" + ipIdx);
+      }catch(_){}
     if (!ip || !ip.isValid) { log("[IMGFLOAT6][ERR] invalid ip"); return null; }
     var anchorIndex = ip.index;
 
@@ -1093,11 +1101,22 @@ function addFloatingImage(tf, story, page, spec){
       try { if (rect.parentTextFrames && rect.parentTextFrames.length) holder = rect.parentTextFrames[0]; } catch(_){}
       if ((!holder || !holder.isValid) && tf && tf.isValid) holder = tf;
 
-      var hb = holder ? holder.geometricBounds : null;
-      var inset = holder ? holder.textFramePreferences.insetSpacing : null;
-      var li = (inset && inset.length>=2)? inset[1] : 0;
-      var ri = (inset && inset.length>=4)? inset[3] : 0;
-      var innerW = (hb ? (hb[3]-hb[1]) : 0) - li - ri;
+      var innerInfo = _holderInnerBounds(holder);
+      var innerW = innerInfo.innerW;
+      var innerH = innerInfo.innerH;
+      try{
+        log("[IMGFLOAT6][DBG] holderInner id=" + (holder && holder.isValid ? holder.id : "NA")
+            + " innerW=" + innerW.toFixed(2) + " innerH=" + innerH.toFixed(2));
+      }catch(_){}
+      if (innerW <= 0){
+        try{
+          var hb = holder ? holder.geometricBounds : null;
+          var inset = holder ? holder.textFramePreferences.insetSpacing : null;
+          var li = (inset && inset.length>=2)? inset[1] : 0;
+          var ri = (inset && inset.length>=4)? inset[3] : 0;
+          innerW = (hb ? (hb[3]-hb[1]) : 0) - li - ri;
+        }catch(_){}
+      }
 
 
       // 优先使用单栏宽度（多栏情况下用 textColumnFixedWidth，保证与 Word 类似的列宽约束）
@@ -1227,6 +1246,9 @@ if (!gb){
       var targetW = curW;
       if (wPt>0){
         targetW = wPt;
+        if (innerW>0){
+          targetW = Math.min(targetW, innerW);
+        }
       } else if (innerW>0){
         targetW = Math.min(curW, innerW);
       }
@@ -1241,6 +1263,36 @@ if (!gb){
       } else {
         targetH = targetW / (ratio || 1);
       }
+
+      var targetRatio = targetW / Math.max(1e-6, targetH);
+      if (innerH > 0 && targetH > innerH){
+        targetH = innerH;
+        targetW = targetH * targetRatio;
+      }
+      if (innerW > 0 && targetW > innerW){
+        targetW = innerW;
+        targetH = targetW / Math.max(1e-6, targetRatio);
+      }
+      try{
+        var pageInnerH = 0;
+        if (page && page.isValid){
+          var pb = page.bounds;
+          var mp = page.marginPreferences;
+          if (pb && pb.length === 4){
+            var topMargin = (mp && mp.top) ? parseFloat(mp.top) || 0 : 0;
+            var bottomMargin = (mp && mp.bottom) ? parseFloat(mp.bottom) || 0 : 0;
+            pageInnerH = (pb[2] - pb[0]) - topMargin - bottomMargin;
+          }
+        }
+        if (pageInnerH > 0 && targetH > pageInnerH){
+          targetH = pageInnerH;
+          targetW = targetH * targetRatio;
+        }
+      }catch(_){}
+      try{
+        log("[IMGFLOAT6][DBG] targetClamp W=" + targetW.toFixed(2) + " H=" + targetH.toFixed(2)
+            + " pageInnerH=" + (pageInnerH || 0).toFixed(2) + " ratio=" + targetRatio.toFixed(2));
+      }catch(_){}
 
       try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
       var _graphic = null;
@@ -1337,6 +1389,14 @@ if (!gb){
         }
       }catch(__host){}
 
+      try{
+        var alignInfo = _alignFloatingRect(rect, holder, innerW, alignMode);
+        if (alignInfo){
+          log("[IMGFLOAT6][ALIGN] align="+alignInfo.align+" offset="+alignInfo.offset.toFixed(2)
+              + " innerW="+(alignInfo.innerW||0)+" holder="+(alignInfo.holder?alignInfo.holder.id:'NA'));
+        }
+      }catch(_){}
+
       try { var _gb2 = rect.geometricBounds; var _w2 = (_gb2[3]-_gb2[1]).toFixed(2), _h2 = (_gb2[2]-_gb2[0]).toFixed(2);
             log("[IMGFLOAT6][POST] gb="+_gb2+" W="+_w2+" H="+_h2+" innerW="+(innerW||0)); } catch(_){
         try{
@@ -1352,6 +1412,12 @@ if (!gb){
       log("[IMGFLOAT6] size W=" + (targetW||0).toFixed(2)
           + " H=" + (targetH||0).toFixed(2)
           + " innerW=" + (innerW||0).toFixed(2));
+      var finalGb = null;
+      try{ finalGb = rect.geometricBounds; }catch(_){}
+      if (!finalGb || finalGb.length !== 4){
+        flushAllowed = false;
+        try{ log("[IMGFLOAT6][WARN] gb invalid before flushOverflow"); }catch(_){}
+      }
     } catch(eSz){ log("[IMGFLOAT6][WARN] size "+eSz); }
 
     try{
@@ -1388,7 +1454,7 @@ if (!gb){
     try {
       if (st && st.isValid) st.recompose();
       if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
-      if (typeof flushOverflow === "function") {
+      if (typeof flushOverflow === "function" && flushAllowed) {
         var fl = flushOverflow(story, page, tf);
         if (fl && fl.frame && fl.page) {
           page  = fl.page;
@@ -1402,6 +1468,23 @@ if (!gb){
               + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
               + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
         }catch(_){}
+      } else if (!flushAllowed) {
+        try{ log("[IMGFLOAT6][WARN] skip flushOverflow; gb invalid"); }catch(_){}
+        try{
+          var fallbackTF = (page && page.isValid && page.textFrames && page.textFrames.length)
+                            ? page.textFrames[page.textFrames.length-1] : null;
+          if (fallbackTF && fallbackTF.isValid){
+            tf = fallbackTF;
+            curTextFrame = fallbackTF;
+            story = fallbackTF.parentStory;
+            try{
+              log("[IMGFLOAT6][DBG] fallback tf=" + tf.id + " page=" + (page?page.name:"NA"));
+              var fallbackIP = tf.insertionPoints[-1];
+              log("[IMGFLOAT6][DBG] fallback ip.index=" + (fallbackIP && fallbackIP.isValid ? fallbackIP.index : "NA")
+                  + " storyLen=" + (story ? story.characters.length : "NA"));
+            }catch(_){}
+          }
+        }catch(_){}
       }
     } catch(eFlush){ log("[WARN] flush after image: " + eFlush); }
 
@@ -1411,6 +1494,47 @@ if (!gb){
     log("[IMGFLOAT6][ERR] "+e);
     return null;
   }
+}
+
+function _alignFloatingRect(rect, holder, innerW, alignMode){
+  if (!rect || !holder || !holder.isValid || innerW <= 0) return null;
+  var gb = rect.geometricBounds;
+  if (!gb || gb.length !== 4) return null;
+  var targetW = gb[3] - gb[1];
+  if (targetW <= 0) return null;
+  var inset = holder.textFramePreferences && holder.textFramePreferences.insetSpacing;
+  var leftBase = (holder.geometricBounds && holder.geometricBounds.length === 4) ? holder.geometricBounds[1] : 0;
+  if (inset && inset.length >= 2) leftBase += inset[1];
+  var space = Math.max(0, innerW - targetW);
+  var offset = 0;
+  if (alignMode === "right") offset = space;
+  else if (alignMode === "center") offset = space / 2;
+  var newLeft = leftBase + offset;
+  rect.geometricBounds = [gb[0], newLeft, gb[2], newLeft + targetW];
+  return {holder: holder, innerW: innerW, align: alignMode, offset: offset};
+}
+
+function _holderInnerBounds(holder){
+  var innerW = 0;
+  var innerH = 0;
+  try{
+    if (!holder || !holder.isValid) return {innerW:0, innerH:0};
+    var hb = holder.geometricBounds;
+    var inset = holder.textFramePreferences && holder.textFramePreferences.insetSpacing;
+    var leftInset = (inset && inset.length>=2)? inset[1] : 0;
+    var rightInset = (inset && inset.length>=4)? inset[3] : 0;
+    var topInset = (inset && inset.length>=1)? inset[0] : 0;
+    var bottomInset = (inset && inset.length>=3)? inset[2] : 0;
+    if (hb && hb.length===4){
+      innerW = Math.max(0, hb[3]-hb[1] - leftInset - rightInset);
+      innerH = Math.max(0, hb[2]-hb[0] - topInset - bottomInset);
+    }
+    if (innerH <= 0 && holder.parentPage && holder.parentPage.isValid){
+      var pageBounds = holder.parentPage.bounds;
+      innerH = Math.max(innerH, (pageBounds[2]-pageBounds[0]) - topInset - bottomInset);
+    }
+  }catch(_){}
+  return {innerW:innerW, innerH:innerH};
 }
 
 
@@ -2832,6 +2956,12 @@ if (!gb){
                       // △ 根据 XML：inline="1" → 内联锚定；inline="0" → 浮动定位
                       var inl = _trim(spec.inline);
                       log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
+                  try{
+                    var _preIP = (tf && tf.isValid) ? tf.insertionPoints[-1] : null;
+                    log("[IMG-STACK] pre ip=" + (_preIP && _preIP.isValid?_preIP.index:"NA")
+                        + " tf=" + (tf&&tf.isValid?tf.id:"NA")
+                        + " page=" + (page?page.name:"NA"));
+                  }catch(_){ }
                       try{
                         if (inl==="0" || /^false$/i.test(inl)){
                           // 浮动：使用刚加入的 addFloatingImage（遵循 posH/posV/offX/offY/wrap/dist*）
@@ -3252,13 +3382,34 @@ def build_toc_entries(levels_used):
     return ""
 
 
-def write_jsx(jsx_path, paragraphs):
+def write_jsx(jsx_path, paragraphs, skip_images=False):
     add_lines = []
     levels_used = set()
 
     add_lines.append(
         "function onNewLevel1(){ var pkt = startNewChapter(story, page, tf); story=pkt.story; page=pkt.page; tf=pkt.frame; }")
     add_lines.append("firstChapterSeen = false;")
+
+    img_pattern = re.compile(r'\[\[IMG\s+[^\]]+\]\]', re.I)
+    if skip_images:
+        paragraphs = [
+            (style, img_pattern.sub(" ", text))
+            for style, text in paragraphs
+        ]
+    expanded_paragraphs = []
+    for style, text in paragraphs:
+        start = 0
+        for match in img_pattern.finditer(text):
+            pre = text[start:match.start()]
+            if pre:
+                expanded_paragraphs.append((style, pre))
+            expanded_paragraphs.append((style, match.group(0)))
+            start = match.end()
+        tail = text[start:]
+        if tail:
+            expanded_paragraphs.append((style, tail))
+    if expanded_paragraphs:
+        paragraphs = expanded_paragraphs
 
     for style, text in paragraphs:
         sty = style
@@ -3301,7 +3452,7 @@ def write_jsx(jsx_path, paragraphs):
             data = obj.get("data", [])
             add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
             continue
-        elif m_img:
+        elif m_img and not skip_images:
             # 解析 [[IMG ...]] 的属性为 kv
             add_lines.append("__ensureLayoutDefault();")
             kv = dict(re.findall(r'(\w+)=["\'“”]([^"\'”]*)["\'”]', m_img.group(1)))
@@ -3343,7 +3494,6 @@ def write_jsx(jsx_path, paragraphs):
 
                 // 2) 锚点
                 var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
-
                 // 3) 路径
                 var f=_normPath("{src}");
                 log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
@@ -3351,8 +3501,8 @@ def write_jsx(jsx_path, paragraphs):
                 if(f&&f.exists){{
                   var spec={{src:f.fsName,w:"{w}",h:"{h}",align:"{align}",spaceBefore:{sb},spaceAfter:{sa},caption:"{cap}",
                             inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",offX:"{offX}",offY:"{offY}",
-                            distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}",forceBlock:{str(only_img).lower()}}};
-                  var inl=_trim(spec.inline); // 兼容 InDesign 2020
+                            distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}",forceBlock:{str(only_img).lower()} }};
+                  var inl=_trim(spec.inline); // \u517c\u5bb9 InDesign 2020
                   log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
 
                   if(inl==="0"||/^false$/i.test(inl)){{
@@ -3372,7 +3522,7 @@ def write_jsx(jsx_path, paragraphs):
               }}
             }})();''')
             continue
-        elif m_xmlt:
+        elif m_xmlt and not skip_images:
             try:
                 root = ET.fromstring(text)
                 rows_data = []
@@ -3398,7 +3548,7 @@ def write_jsx(jsx_path, paragraphs):
                 continue
             except Exception:
                 pass
-        elif m_xmli:
+        elif m_xmli and not skip_images:
             add_lines.append("__ensureLayoutDefault();")
             # 处理整段是 <img ...> 的情况（原生 XML/HTML 片段）
             import xml.etree.ElementTree as ET
@@ -3623,6 +3773,11 @@ def main():
         action="store_true",
         help="只生成 XML/JSX，不调用 InDesign",
     )
+    parser.add_argument(
+        "--no-images",
+        action="store_true",
+        help="skip inserting images when generating JSX",
+    )
     args = parser.parse_args()
 
     global XML_PATH
@@ -3645,7 +3800,7 @@ def main():
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
     print(f"[INFO] 解析了 {len(paragraphs)} 段；示例： {paragraphs[:3]}")
 
-    write_jsx(JSX_PATH, paragraphs)
+    write_jsx(JSX_PATH, paragraphs, skip_images=args.no_images)
 
     ran = False
     if not args.no_run:

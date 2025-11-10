@@ -162,6 +162,7 @@ def main(argv=None):
     parser.add_argument("--template", "-t", dest="template", default=None, help="覆盖 TEMPLATE_PATH（模板 .idml 的路径）")
     parser.add_argument("--out", "-o", dest="out", default=None, help="覆盖 IDML_OUT_PATH（导出的 .idml 路径）")
     parser.add_argument("input", nargs="?", help="Input .docx path")
+    parser.add_argument("--no-images", action="store_true", help="skip embedding images when generating JSX")
     args = parser.parse_args(argv)
 
     # —— 在输入密码之前：先校验 input 和 实际生效的 TEMPLATE_PATH ——
@@ -207,9 +208,10 @@ def main(argv=None):
     # 2) 解析 XML -> 段落
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
     print(f"[INFO] 解析到 {len(paragraphs)} 段；示例前3段: {paragraphs[:3]}")
+    print(f"[DEBUG] skip_images flag= {args.no_images}")
 
     # 3) 生成 JSX（模板 + 每 Level1 新 story + TOC + 脚注/尾注 + i/b/u + 日志 + 脚注/尾注正文样式）
-    write_jsx(JSX_PATH, paragraphs)
+    write_jsx(JSX_PATH, paragraphs, skip_images=args.no_images)
 
     # 4) 调 InDesign
     ran = False
