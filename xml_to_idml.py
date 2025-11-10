@@ -1072,6 +1072,95 @@ function addFloatingImage(tf, story, page, spec){
     log("[IMGFLOAT6] resolved file="+(f?f.fsName:"NA"));
     if(!f || !f.exists){ log("[IMGFLOAT6][ERR] file missing: "+(spec&&spec.src)); return null; }
 
+    function _lowerFlag(v){
+      var s = String(v||"");
+      return s ? s.toLowerCase() : "";
+    }
+
+    function _isPageAnchored(posHref, posVref){
+      var h = _lowerFlag(posHref);
+      var v = _lowerFlag(posVref);
+      var pageRefs = { "page":true, "margin":true, "column":true };
+      return !!(pageRefs[h] && (pageRefs[v] || v==="paragraph"));
+    }
+
+    function _placeOnPage(pageObj, stObj, anchorIdx, fileObj){
+      if (!pageObj || !pageObj.isValid){
+        log("[IMGFLOAT6][ERR] page invalid for page-level image");
+        return null;
+      }
+      var pb = pageObj.bounds || [0,0,0,0];
+      var mp = pageObj.marginPreferences || {};
+      var pageTop = pb[0], pageLeft = pb[1], pageBottom = pb[2], pageRight = pb[3];
+      var marginTop = parseFloat(mp.top)||0;
+      var marginBottom = parseFloat(mp.bottom)||0;
+      var marginLeft = parseFloat(mp.left)||0;
+      var marginRight = parseFloat(mp.right)||0;
+
+      var posHrefRaw = _lowerFlag(spec && spec.posHref);
+      var posVrefRaw = _lowerFlag(spec && spec.posVref);
+      var offXP = _toPtLocal(spec && spec.offX) || 0;
+      var offYP = _toPtLocal(spec && spec.offY) || 0;
+      var targetW = wPt>0 ? wPt : (pageRight - pageLeft - (posHrefRaw==="margin"? (marginLeft+marginRight):0));
+      var targetH = hPt>0 ? hPt : (pageBottom - pageTop - (posVrefRaw==="margin"? (marginTop+marginBottom):0));
+
+      var baseX = pageLeft;
+      if (posHrefRaw==="margin" || posHrefRaw==="column") baseX = pageLeft + marginLeft;
+      var baseY = pageTop;
+      if (posVrefRaw==="margin" || posVrefRaw==="paragraph") baseY = pageTop + marginTop;
+
+      var left = baseX + offXP;
+      var top = baseY + offYP;
+      var maxRight = (posHrefRaw==="margin" || posHrefRaw==="column") ? (pageRight - marginRight) : pageRight;
+      var maxBottom = (posVrefRaw==="margin" || posVrefRaw==="paragraph") ? (pageBottom - marginBottom) : pageBottom;
+
+      if (left < pageLeft) left = pageLeft;
+      if (top < pageTop) top = pageTop;
+      if (targetW > (maxRight - left)) targetW = Math.max(10, maxRight - left);
+      if (targetH > (maxBottom - top)) targetH = Math.max(10, maxBottom - top);
+      var right = left + targetW;
+      var bottom = top + targetH;
+
+      var rect = pageObj.rectangles.add();
+      try{ rect.strokeWeight = 0; rect.fillOpacity = 100; }catch(_){}
+      rect.geometricBounds = [top, left, bottom, right];
+      var placed = null;
+      try{
+        placed = rect.place(fileObj);
+      }catch(ePlacePage){
+        log("[IMGFLOAT6][ERR] page place failed: "+ePlacePage);
+        try{ rect.remove(); }catch(__){}
+        return null;
+      }
+      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)){
+        try{ rect.remove(); }catch(__){}
+        log("[IMGFLOAT6][ERR] page place invalid result");
+        return null;
+      }
+      try{ rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); }catch(_){}
+      try{ rect.textWrapPreferences.textWrapMode = TextWrapModes.NONE; }catch(_){}
+      try{
+        log("[IMGFLOAT6][PAGE] gb="+rect.geometricBounds+" w="+targetW.toFixed(2)+" h="+targetH.toFixed(2)
+            +" offX="+offXP.toFixed(2)+" offY="+offYP.toFixed(2)+" page="+(pageObj.name||"NA"));
+      }catch(_){}
+      try{ rect.label = "PAGE-FLOAT"; }catch(_){}
+
+      // 在 story 中依旧插入段落分隔，避免下一段落堆叠
+      try{
+        var aft1 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
+          ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+1)]
+          : null;
+        if (aft1 && aft1.isValid) aft1.contents = "\r";
+        var aft2 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
+          ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+2)]
+          : null;
+        if (aft2 && aft2.isValid) aft2.contents = "\u200B";
+        try{ stObj.recompose(); }catch(__re){}
+      }catch(_){}
+
+      return rect;
+    }
+
     var wPt=_toPtLocal(spec&&spec.w), hPt=_toPtLocal(spec&&spec.h);
     var posH=String((spec&&spec.posH)||"center").toLowerCase();
     var alignMode=String((spec&&spec.align)||"").toLowerCase();
@@ -1097,6 +1186,25 @@ function addFloatingImage(tf, story, page, spec){
       }catch(_){}
     if (!ip || !ip.isValid) { log("[IMGFLOAT6][ERR] invalid ip"); return null; }
     var anchorIndex = ip.index;
+    var posHrefRaw = _lowerFlag(spec && spec.posHref);
+    var posVrefRaw = _lowerFlag(spec && spec.posVref);
+    var posVRaw = _lowerFlag(spec && spec.posV);
+    try{
+      log("[IMGFLOAT6][DBG] anchorFlags posHref="+posHrefRaw+" posVref="+posVrefRaw+" posV="+posVRaw+" inline="+(spec&&spec.inline));
+    }catch(_){}
+    var isPageAnchor = _isPageAnchored(posHrefRaw, posVrefRaw);
+    try{
+      log("[IMGFLOAT6][DBG] isPageAnchor="+isPageAnchor);
+    }catch(_){}
+
+    if (isPageAnchor){
+      var pageRect = _placeOnPage(page, st, anchorIndex, f);
+      if (pageRect){
+        try{ __LAST_IMG_ANCHOR_IDX = anchorIndex; }catch(_){}
+        return pageRect;
+      }
+      // 若页面放置失败，继续走原浮动逻辑
+    }
 
       var placed = null;
       try { placed = ip.place(f); } catch(ePl){ log("[IMGFLOAT6][ERR] place failed(ip): " + ePl); return null; }
@@ -2923,6 +3031,12 @@ function _holderInnerBounds(holder){
                       + (typeof __LAST_IMG_ANCHOR_IDX==='number'?__LAST_IMG_ANCHOR_IDX:'NA'));
                 }catch(_){}
                 kv.replace(/(\w+)=['"“”]([^'"”]*)['"”]/g, function(_,k,v){ spec[k]=v; return _; });
+                try{
+                  var _keys = [];
+                  for (var _k in spec){ if (spec.hasOwnProperty(_k)) _keys.push(_k); }
+                  log('[IMGDBG] parsed spec keys='+_keys.join(','));
+                  log('[IMGDBG] parsed posHref='+ (spec.posHref||'') +' posVref='+ (spec.posVref||'') +' posV='+ (spec.posV||''));
+                }catch(_){}
 
                 if (!spec.align) spec.align = "center";
                 // 调紧默认前后距，便于两图紧凑排布；可被 XML 显式覆盖
@@ -3528,6 +3642,8 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
             wrap = kv.get("wrap", "") or ""
             posH = kv.get("posH", "") or ""
             posV = kv.get("posV", "") or ""
+            posHref = kv.get("posHref", "") or ""
+            posVref = kv.get("posVref", "") or ""
             offX = kv.get("offX", "") or ""
             offY = kv.get("offY", "") or ""
             distT = kv.get("distT", "") or ""
@@ -3560,7 +3676,7 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
 
                 if(f&&f.exists){{
                   var spec={{src:f.fsName,w:"{w}",h:"{h}",align:"{align}",spaceBefore:{sb},spaceAfter:{sa},caption:"{cap}",
-                            inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",offX:"{offX}",offY:"{offY}",
+                             inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",posHref:"{posHref}",posVref:"{posVref}",offX:"{offX}",offY:"{offY}",
                             distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}",forceBlock:{str(only_img).lower()} }};
                   var inl=_trim(spec.inline); // \u517c\u5bb9 InDesign 2020
                   log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
