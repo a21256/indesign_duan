@@ -1197,9 +1197,44 @@ function addFloatingImage(tf, story, page, spec){
       log("[IMGFLOAT6][DBG] isPageAnchor="+isPageAnchor);
     }catch(_){}
 
+    function _ensureNextPageFrame(basePage){
+      try{
+        if (!basePage || !basePage.isValid || typeof __createLayoutFrame !== "function") return null;
+        var pkt = __createLayoutFrame(__CURRENT_LAYOUT, tf, {afterPage: basePage, forceBreak: true});
+        if (pkt && pkt.frame && pkt.page){
+          page  = pkt.page;
+          tf    = pkt.frame;
+          story = tf.parentStory;
+          curTextFrame = tf;
+          try{
+            log("[IMGFLOAT6][PAGE] newFrame=" + tf.id + " page=" + (page?page.name:"NA"));
+          }catch(_){}
+          return pkt;
+        }
+      }catch(_){}
+      return null;
+    }
+
     if (isPageAnchor){
-      var pageRect = _placeOnPage(page, st, anchorIndex, f);
+      var targetPage = page;
+      try{
+        if (!targetPage || !targetPage.isValid){
+          var docPages = app.activeDocument.pages;
+          if (docPages.length){
+            targetPage = docPages[0];
+          }
+        }
+        if (!targetPage || !targetPage.isValid){
+          targetPage = (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid) ? tf.parentPage : null;
+        }
+      }catch(_){}
+      var pageRect = _placeOnPage(targetPage, st, anchorIndex, f);
       if (pageRect){
+        try{
+          var thisPage = (pageRect.parentPage && pageRect.parentPage.isValid) ? pageRect.parentPage : targetPage;
+          if (thisPage && thisPage.isValid) page = thisPage;
+        }catch(_){}
+        _ensureNextPageFrame(page);
         try{ __LAST_IMG_ANCHOR_IDX = anchorIndex; }catch(_){}
         return pageRect;
       }
