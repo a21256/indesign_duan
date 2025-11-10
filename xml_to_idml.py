@@ -1023,6 +1023,49 @@ function addFloatingImage(tf, story, page, spec){
     if (s==="") return 0;
     var n = parseFloat(s); return isNaN(n)?0:n*0.75;
   }
+  function _cloneSpec(base){
+    var out = {};
+    if (!base || typeof base !== "object") return out;
+    for (var key in base){
+      try{ out[key] = base[key]; }catch(_){}
+    }
+    return out;
+  }
+  function _fallbackToClassic(reason, anchorIndex, rectRef){
+    try{ log("[IMGFLOAT6][FALLBACK] " + reason); }catch(_){}
+    try{
+      if (rectRef && rectRef.isValid){
+        rectRef.remove();
+      }
+    }catch(_){}
+    var ipFallback = null;
+    try{
+      if (tf && tf.isValid && tf.insertionPoints && tf.insertionPoints.length){
+        ipFallback = tf.insertionPoints[-1];
+      }
+    }catch(_){}
+    if ((!ipFallback || !ipFallback.isValid) && story && story.isValid){
+      try{
+        var safeIdx = (typeof anchorIndex === "number")
+          ? Math.max(0, Math.min(anchorIndex, story.insertionPoints.length-1))
+          : story.insertionPoints.length-1;
+        ipFallback = story.insertionPoints[safeIdx];
+      }catch(_){}
+    }
+    if (!ipFallback || !ipFallback.isValid){
+      try{
+        if (story && story.isValid && story.insertionPoints.length){
+          ipFallback = story.insertionPoints[-1];
+        }
+      }catch(_){}
+    }
+    var fallbackSpec = _cloneSpec(spec);
+    fallbackSpec.forceBlock = true;
+    fallbackSpec.inline = "0";
+    fallbackSpec.wrap = fallbackSpec.wrap || "none";
+    fallbackSpec.__floatFallback = (fallbackSpec.__floatFallback || 0) + 1;
+    return addImageAtV2(ipFallback, fallbackSpec);
+  }
   try{
     if (!tf || !tf.isValid) { log("[IMGFLOAT6][ERR] tf invalid"); return null; }
     var f = _normPath(spec && spec.src);
@@ -1075,8 +1118,12 @@ function addFloatingImage(tf, story, page, spec){
     if (!rect || !rect.isValid) { log("[IMGFLOAT6][ERR] no rectangle after place"); return null; }
 
     try {
-      rect.anchoredObjectSettings.anchoredPosition = AnchorPosition.ABOVE_LINE;
-      rect.anchoredObjectSettings.anchorPoint      = AnchorPoint.TOP_LEFT_ANCHOR;
+      var _aos = rect.anchoredObjectSettings;
+      if (_aos && _aos.isValid){
+        _aos.anchoredPosition = AnchorPosition.ANCHORED;
+        _aos.anchorPoint      = AnchorPoint.TOP_LEFT_ANCHOR;
+        try{ _aos.lockPosition = false; }catch(_){}
+      }
     } catch(_){}
     try { rect.textWrapPreferences.textWrapMode = TextWrapModes.NONE; } catch(_){}
     try{ rect.fittingOptions.autoFit=false; rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
@@ -1246,9 +1293,7 @@ if (!gb){
       var targetW = curW;
       if (wPt>0){
         targetW = wPt;
-        if (innerW>0){
-          targetW = Math.min(targetW, innerW);
-        }
+        if (innerW>0) targetW = Math.min(targetW, innerW);
       } else if (innerW>0){
         targetW = Math.min(curW, innerW);
       }
@@ -1257,9 +1302,7 @@ if (!gb){
         targetH = hPt;
       } else if (hPt>0){
         targetH = hPt;
-        if (wPt<=0){
-          targetW = targetH * (ratio || 1);
-        }
+        if (wPt<=0) targetW = targetH * (ratio || 1);
       } else {
         targetH = targetW / (ratio || 1);
       }
@@ -1273,26 +1316,29 @@ if (!gb){
         targetW = innerW;
         targetH = targetW / Math.max(1e-6, targetRatio);
       }
+
+      var pageInnerH = 0;
       try{
-        var pageInnerH = 0;
         if (page && page.isValid){
           var pb = page.bounds;
           var mp = page.marginPreferences;
           if (pb && pb.length === 4){
             var topMargin = (mp && mp.top) ? parseFloat(mp.top) || 0 : 0;
             var bottomMargin = (mp && mp.bottom) ? parseFloat(mp.bottom) || 0 : 0;
-            pageInnerH = (pb[2] - pb[0]) - topMargin - bottomMargin;
+            pageInnerH = (pb[2]-pb[0]) - topMargin - bottomMargin;
           }
         }
         if (pageInnerH > 0 && targetH > pageInnerH){
           targetH = pageInnerH;
           targetW = targetH * targetRatio;
         }
-      }catch(_){}
+      }catch(_pageClamp){}
       try{
-        log("[IMGFLOAT6][DBG] targetClamp W=" + targetW.toFixed(2) + " H=" + targetH.toFixed(2)
-            + " pageInnerH=" + (pageInnerH || 0).toFixed(2) + " ratio=" + targetRatio.toFixed(2));
-      }catch(_){}
+        log("[IMGFLOAT6][DBG] targetClamp W=" + targetW.toFixed(2)
+            + " H=" + targetH.toFixed(2)
+            + " pageInnerH=" + pageInnerH.toFixed(2)
+            + " ratio=" + targetRatio.toFixed(2));
+      }catch(_targetLog){}
 
       try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
       var _graphic = null;
@@ -1305,13 +1351,38 @@ if (!gb){
         try{ _graphic.absoluteVerticalScale = 100; }catch(__){}
       }
       var _boundsApplied = false;
+      var _boundsErr = null;
       if (gb){
         try{
           rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
           _boundsApplied = true;
-        }catch(_){}
+        }catch(eBounds){
+          _boundsErr = eBounds;
+        }
       }
       if (!_boundsApplied){
+        try{
+          var _holderGB = holder && holder.isValid ? holder.geometricBounds : null;
+          if (_holderGB && _holderGB.length === 4){
+            var topBase = _holderGB[0] + spB;
+            var leftInset = (holder.textFramePreferences && holder.textFramePreferences.insetSpacing && holder.textFramePreferences.insetSpacing.length>=2)
+                              ? holder.textFramePreferences.insetSpacing[1] : 0;
+            var leftBase = _holderGB[1] + leftInset;
+            try{
+              rect.geometricBounds = [topBase, leftBase, topBase + targetH, leftBase + targetW];
+              _boundsApplied = true;
+            }catch(__gbManual){
+              _boundsErr = __gbManual;
+            }
+          }
+        }catch(__manualBounds){}
+      }
+      if (!_boundsApplied){
+        if (_boundsErr){
+          try{
+            log("[IMGFLOAT6][ERR] setBounds failed: " + _boundsErr);
+          }catch(_){}
+        }
         try{
           var _aos = rect.anchoredObjectSettings;
           if (_aos && _aos.isValid){
@@ -1321,6 +1392,10 @@ if (!gb){
             _boundsApplied = true;
           }
         }catch(_){}
+      }
+      if (_boundsApplied){
+        try{ st.recompose(); }catch(_){}
+        try{ app.waitForRedraw(); }catch(_){}
       }
       if (!_boundsApplied){
         try{
@@ -1415,8 +1490,7 @@ if (!gb){
       var finalGb = null;
       try{ finalGb = rect.geometricBounds; }catch(_){}
       if (!finalGb || finalGb.length !== 4){
-        flushAllowed = false;
-        try{ log("[IMGFLOAT6][WARN] gb invalid before flushOverflow"); }catch(_){}
+        return _fallbackToClassic("geometricBounds invalid", anchorIndex, rect);
       }
     } catch(eSz){ log("[IMGFLOAT6][WARN] size "+eSz); }
 
@@ -1454,7 +1528,7 @@ if (!gb){
     try {
       if (st && st.isValid) st.recompose();
       if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
-      if (typeof flushOverflow === "function" && flushAllowed) {
+      if (typeof flushOverflow === "function") {
         var fl = flushOverflow(story, page, tf);
         if (fl && fl.frame && fl.page) {
           page  = fl.page;
@@ -1467,23 +1541,6 @@ if (!gb){
               + " page=" + (page?page.name:"NA")
               + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
               + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
-        }catch(_){}
-      } else if (!flushAllowed) {
-        try{ log("[IMGFLOAT6][WARN] skip flushOverflow; gb invalid"); }catch(_){}
-        try{
-          var fallbackTF = (page && page.isValid && page.textFrames && page.textFrames.length)
-                            ? page.textFrames[page.textFrames.length-1] : null;
-          if (fallbackTF && fallbackTF.isValid){
-            tf = fallbackTF;
-            curTextFrame = fallbackTF;
-            story = fallbackTF.parentStory;
-            try{
-              log("[IMGFLOAT6][DBG] fallback tf=" + tf.id + " page=" + (page?page.name:"NA"));
-              var fallbackIP = tf.insertionPoints[-1];
-              log("[IMGFLOAT6][DBG] fallback ip.index=" + (fallbackIP && fallbackIP.isValid ? fallbackIP.index : "NA")
-                  + " storyLen=" + (story ? story.characters.length : "NA"));
-            }catch(_){}
-          }
         }catch(_){}
       }
     } catch(eFlush){ log("[WARN] flush after image: " + eFlush); }
@@ -3192,7 +3249,7 @@ function _holderInnerBounds(holder){
     function flushOverflow(currentStory, lastPage, lastFrame) {
         // 说明：原先用 story.characters.length 判断“是否前进”，会误判为卡住（字符总数不随分页变化）。
         // 最小修复：移除早停判定；只要 still overset 就继续加页并接链，直到不 overset 或达到 MAX_PAGES。
-        var MAX_PAGES = 1000;
+        var MAX_PAGES = 20;
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
             var pkt = __createLayoutFrame(__CURRENT_LAYOUT, lastFrame, {afterPage:lastPage, forceBreak:false});
             if (!pkt || !pkt.frame || !pkt.page) { break; }
@@ -3202,6 +3259,9 @@ function _holderInnerBounds(holder){
             try { currentStory.recompose(); } catch(_) {}
             try { app.activeDocument.recompose(); } catch(_) {}
             $.sleep(10);
+        }
+        if (currentStory && currentStory.overflows) {
+            try { log("[WARN] flushOverflow guard hit; overset still true"); } catch(_){}
         }
         return { page: lastPage, frame: lastFrame };
     }
