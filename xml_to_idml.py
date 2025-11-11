@@ -1180,7 +1180,20 @@ function addFloatingImage(tf, story, page, spec){
       var prevIsCR=false; try{ prevIsCR=(prev&&String(prev.contents)==="\r"); }catch(_){}
       if(!prevIsCR){ endIP.contents="\r"; try{ st.recompose(); }catch(__){} }
     }catch(_){}
-      var ip = tf.insertionPoints[-1];
+      var ip = null;
+      try{
+        if (tf && tf.isValid){
+          if (typeof _safeIP === "function"){
+            ip = _safeIP(tf);
+          }
+          if (!ip || !ip.isValid){
+            ip = tf.insertionPoints[-1];
+          }
+        }
+      }catch(_){}
+      if ((!ip || !ip.isValid) && st && st.isValid){
+        try{ ip = st.insertionPoints[-1]; }catch(__){}
+      }
       try{
         var ipIdx = "NA";
         if (ip && ip.isValid) ipIdx = ip.index;
@@ -1211,6 +1224,10 @@ function addFloatingImage(tf, story, page, spec){
           try{
             log("[IMGFLOAT6][PAGE] newFrame=" + tf.id + " page=" + (page?page.name:"NA"));
           }catch(_){}
+          try{
+            __FLOAT_CTX.lastTf = tf;
+            __FLOAT_CTX.lastPage = page;
+          }catch(_){}
           return pkt;
         }
       }catch(_){}
@@ -1236,7 +1253,20 @@ function addFloatingImage(tf, story, page, spec){
           var thisPage = (pageRect.parentPage && pageRect.parentPage.isValid) ? pageRect.parentPage : targetPage;
           if (thisPage && thisPage.isValid) page = thisPage;
         }catch(_){}
-        _ensureNextPageFrame(page);
+        var nextPkt = _ensureNextPageFrame(page);
+        if (nextPkt && nextPkt.frame && nextPkt.page){
+          page = nextPkt.page;
+          tf = nextPkt.frame;
+          story = tf.parentStory;
+          curTextFrame = tf;
+          try{
+            ip = tf.insertionPoints[-1];
+          }catch(_){}
+        }
+        try{
+          __FLOAT_CTX.lastTf = tf;
+          __FLOAT_CTX.lastPage = page;
+        }catch(_){}
         try{ __LAST_IMG_ANCHOR_IDX = anchorIndex; }catch(_){}
         return pageRect;
       }
@@ -3649,6 +3679,18 @@ class ImageSpec:
                     log("[DBG] dispatch -> addFloatingImage");
                     var rect=addFloatingImage(tf,story,page,spec);
                     if(rect&&rect.isValid) log("[IMG] ok (float): " + spec.src);
+                    try{{
+                      if (__FLOAT_CTX && __FLOAT_CTX.lastTf && __FLOAT_CTX.lastTf.isValid){{
+                        tf = __FLOAT_CTX.lastTf;
+                        story = tf.parentStory;
+                        if(__FLOAT_CTX.lastPage && __FLOAT_CTX.lastPage.isValid){{
+                          page = __FLOAT_CTX.lastPage;
+                        }} else {{
+                          page = tf.parentPage;
+                        }}
+                      }}
+                    }}catch(_){{
+                    }}
                   }} else {{
                     log("[DBG] dispatch -> addImageAtV2");
                     var rect=addImageAtV2(ip,spec);
@@ -3709,16 +3751,26 @@ def _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images):
             (style, img_pattern.sub(" ", text))
             for style, text in paragraphs
         ]
+        return paragraphs
+
     expanded = []
     for style, text in paragraphs:
-        start = 0
-        for match in img_pattern.finditer(text):
-            pre = text[start:match.start()]
+        matches = list(IMG_PLACEHOLDER_ANY_RE.finditer(text))
+        if not matches:
+            expanded.append((style, text))
+            continue
+        cursor = 0
+        trimmed = text.strip()
+        for idx, match in enumerate(matches):
+            pre = text[cursor:match.start()]
             if pre:
                 expanded.append((style, pre))
-            expanded.append((style, match.group(0)))
-            start = match.end()
-        tail = text[start:]
+            attr_section = match.group(1)
+            only_img = (trimmed == match.group(0)) and len(matches) == 1
+            spec = _image_spec_from_attrs(attr_section, force_block=only_img)
+            expanded.append((style, spec))
+            cursor = match.end()
+        tail = text[cursor:]
         if tail:
             expanded.append((style, tail))
     return expanded or paragraphs
@@ -3747,6 +3799,11 @@ def _match_img_marker(text):
     return attr_match.group(1), only_img
 
 
+def _image_spec_from_attrs(attr_text, force_block=False):
+    kv = dict(re.findall(IMG_KV_PATTERN, attr_text))
+    return ImageSpec.from_mapping(kv, force_block=force_block)
+
+
 def _handle_table_marker(text, add_lines):
     m_tbl = re.match(r'^\s*\[\[TABLE\s+(\{[\s\S]*\})\s*\]\]\s*$', text)
     if not m_tbl:
@@ -3769,8 +3826,7 @@ def _handle_img_marker(text, skip_images, add_lines):
     match, only_img = _match_img_marker(text)
     if not match:
         return False
-    kv = dict(re.findall(IMG_KV_PATTERN, match))
-    spec = ImageSpec.from_mapping(kv, force_block=only_img)
+    spec = _image_spec_from_attrs(match, force_block=only_img)
     add_lines.append("__ensureLayoutDefault();")
     add_lines.append(spec.to_js_block())
     return True
@@ -3871,7 +3927,12 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     img_pattern = re.compile(r'\[\[IMG\s+[^\]]+\]\]', re.I)
     paragraphs = _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images)
 
-    for style, text in paragraphs:
+    for style, chunk in paragraphs:
+        if isinstance(chunk, ImageSpec):
+            add_lines.append("__ensureLayoutDefault();")
+            add_lines.append(chunk.to_js_block())
+            continue
+        text = chunk
         sty = _normalize_style_name(style, levels_used)
         esc = escape_js(text)
 
