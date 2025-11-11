@@ -874,7 +874,6 @@ function iso() {
           _anch.anchorPoint = _anchorPoint;
         }
       } catch(_){}
-      try { rect.textWrapPreferences.textWrapMode = TextWrapModes.NONE; } catch(_){}
 
         // 6) 尺寸：优先使用 XML 的 w/h；w 受列内宽 innerW 限制；无 w/h 时按列宽
         try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
@@ -1066,6 +1065,7 @@ function addFloatingImage(tf, story, page, spec){
     fallbackSpec.__floatFallback = (fallbackSpec.__floatFallback || 0) + 1;
     return addImageAtV2(ipFallback, fallbackSpec);
   }
+
   try{
     if (!tf || !tf.isValid) { log("[IMGFLOAT6][ERR] tf invalid"); return null; }
     var f = _normPath(spec && spec.src);
@@ -1080,8 +1080,11 @@ function addFloatingImage(tf, story, page, spec){
     function _isPageAnchored(posHref, posVref){
       var h = _lowerFlag(posHref);
       var v = _lowerFlag(posVref);
-      var pageRefs = { "page":true, "margin":true, "column":true };
-      return !!(pageRefs[h] && (pageRefs[v] || v==="paragraph"));
+      var pageHRefs = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
+      var pageVRefs = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
+      if (pageHRefs[h]) return true;
+      if (pageVRefs[v]) return true;
+      return false;
     }
 
     function _placeOnPage(pageObj, stObj, anchorIdx, fileObj){
@@ -1263,7 +1266,7 @@ function addFloatingImage(tf, story, page, spec){
     try {
       var _aos = rect.anchoredObjectSettings;
       if (_aos && _aos.isValid){
-        _aos.anchoredPosition = AnchorPosition.ANCHORED;
+        _aos.anchoredPosition = AnchorPosition.ABOVE_LINE;
         _aos.anchorPoint      = AnchorPoint.TOP_LEFT_ANCHOR;
         try{ _aos.lockPosition = false; }catch(_){}
       }
