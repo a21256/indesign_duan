@@ -3594,105 +3594,81 @@ def build_toc_entries(levels_used):
     return ""
 
 
-def write_jsx(jsx_path, paragraphs, skip_images=False):
-    add_lines = []
-    levels_used = set()
+IMG_PLACEHOLDER_FULL_RE = re.compile(r'^\s*(\[\[IMG\s+.+?\]\])\s*$', re.I)
+IMG_PLACEHOLDER_ANY_RE = re.compile(r'\[\[IMG\s+(.+?)\]\]', re.I)
+IMG_KV_PATTERN = r'(\w+)=["\'\u201c\u201d]([^"\'\u201c\u201d]*)["\'\u201c\u201d]'
 
-    add_lines.append(
-        "function onNewLevel1(){ var pkt = startNewChapter(story, page, tf); story=pkt.story; page=pkt.page; tf=pkt.frame; }")
-    add_lines.append("firstChapterSeen = false;")
 
-    img_pattern = re.compile(r'\[\[IMG\s+[^\]]+\]\]', re.I)
+def _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images):
+    """Normalize paragraphs list: optionally drop images and split texts around image markers."""
     if skip_images:
         paragraphs = [
             (style, img_pattern.sub(" ", text))
             for style, text in paragraphs
         ]
-    expanded_paragraphs = []
+    expanded = []
     for style, text in paragraphs:
         start = 0
         for match in img_pattern.finditer(text):
             pre = text[start:match.start()]
             if pre:
-                expanded_paragraphs.append((style, pre))
-            expanded_paragraphs.append((style, match.group(0)))
+                expanded.append((style, pre))
+            expanded.append((style, match.group(0)))
             start = match.end()
         tail = text[start:]
         if tail:
-            expanded_paragraphs.append((style, tail))
-    if expanded_paragraphs:
-        paragraphs = expanded_paragraphs
+            expanded.append((style, tail))
+    return expanded or paragraphs
 
-    for style, text in paragraphs:
-        sty = style
-        if sty.lower().startswith("level"):
-            try:
-                n = int(sty[5:])
-                levels_used.add(n)
-                sty = f"Level{n}"
-            except:
-                pass
-        elif sty.lower() == "body":
-            sty = "Body"
 
-        esc = escape_js(text)
+def _normalize_style_name(style, levels_used):
+    sty = style
+    lower = sty.lower()
+    if lower.startswith("level"):
+        try:
+            n = int(sty[5:])
+            levels_used.add(n)
+            sty = f"Level{n}"
+        except Exception:
+            pass
+    elif lower == "body":
+        sty = "Body"
+    return sty
 
-        # === 新增：当整段就是 TABLE/IMG 或 原生 <table>/<img> 时，直落 ===
-        m_tbl = re.match(r'^\s*\[\[TABLE\s+(\{[\s\S]*\})\s*\]\]\s*$', text)
-        m_img = re.match(r'^\s*\[\[IMG\s+([^\]]+)\]\]\s*$', text)
-        m_xmlt = re.match(r'^\s*<table\b[\s\S]*</table>\s*$', text, flags=re.I)
-        m_xmli = re.match(r'^\s*<img\b[^>]*>\s*$', text, flags=re.I)
 
-        if sty == "Level1":
-            add_lines.append(
-                "if (firstChapterSeen) { var __fl = flushOverflow(story, page, tf); story = __fl.frame.parentStory; page = __fl.page; tf = __fl.frame; onNewLevel1(); } else { firstChapterSeen = true; }")
+def _match_img_marker(text):
+    match = IMG_PLACEHOLDER_FULL_RE.match(text)
+    if match:
+        return match, True
+    return IMG_PLACEHOLDER_ANY_RE.search(text), False
 
-        only_img = False
-        m_img = re.match(r'^\s*(\[\[IMG\s+.+?\]\])\s*$', text, flags=re.I)
-        if not m_img:
-            m_img = re.search(r'\[\[IMG\s+(.+?)\]\]', text, re.I)
-        else:
-            only_img = True
 
-        if m_tbl:
-            try:
-                obj = json.loads(m_tbl.group(1))
-            except Exception:
-                obj = eval("(" + m_tbl.group(1) + ")")
-            rows = int(obj.get("rows", 0));
-            cols = int(obj.get("cols", 0));
-            data = obj.get("data", [])
-            add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
-            continue
-        elif m_img and not skip_images:
-            # 解析 [[IMG ...]] 的属性为 kv
-            add_lines.append("__ensureLayoutDefault();")
-            kv = dict(re.findall(r'(\w+)=["\'“”]([^"\'”]*)["\'”]', m_img.group(1)))
+def _build_img_js_block(kv, only_img):
+    def _esc(val):
+        return (val or "").replace("\\", "\\\\").replace('"', '\\"')
 
-            def _esc(s: str) -> str:
-                return (s or "").replace("\\", "\\\\").replace('"', '\\"')
+    src = _esc(kv.get("src", ""))
+    w = kv.get("w", "") or ""
+    h = kv.get("h", "") or ""
+    align = kv.get("align", "center")
+    inline = kv.get("inline", "") or ""
+    wrap = kv.get("wrap", "") or ""
+    posH = kv.get("posH", "") or ""
+    posV = kv.get("posV", "") or ""
+    posHref = kv.get("posHref", "") or ""
+    posVref = kv.get("posVref", "") or ""
+    offX = kv.get("offX", "") or ""
+    offY = kv.get("offY", "") or ""
+    distT = kv.get("distT", "") or ""
+    distB = kv.get("distB", "") or ""
+    distL = kv.get("distL", "") or ""
+    distR = kv.get("distR", "") or ""
+    sb = kv.get("spaceBefore", "6")
+    sa = kv.get("spaceAfter", "6")
+    cap = _esc(kv.get("caption", "") or "")
 
-            src = _esc(kv.get("src", ""))
-            w = kv.get("w", "") or ""
-            h = kv.get("h", "") or ""
-            align = kv.get("align", "center")
-            inline = kv.get("inline", "") or ""
-            wrap = kv.get("wrap", "") or ""
-            posH = kv.get("posH", "") or ""
-            posV = kv.get("posV", "") or ""
-            posHref = kv.get("posHref", "") or ""
-            posVref = kv.get("posVref", "") or ""
-            offX = kv.get("offX", "") or ""
-            offY = kv.get("offY", "") or ""
-            distT = kv.get("distT", "") or ""
-            distB = kv.get("distB", "") or ""
-            distL = kv.get("distL", "") or ""
-            distR = kv.get("distR", "") or ""
-            sb = kv.get("spaceBefore", "6")
-            sa = kv.get("spaceAfter", "6")
-            cap = _esc(kv.get("caption", "") or "")
-
-            add_lines.append(f'''(function(){{
+    force_block = str(only_img).lower()
+    return f'''(function(){{
               log("[PY][m_img] {src} inline={inline}");
               try {{
                 // 0) 环境检查
@@ -3701,7 +3677,7 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
                     + " typeof _normPath=" + (typeof _normPath));
                 log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
 
-                // 1) 溢出兜底
+                // 1) 排版溢出
                 try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
                   if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
                 }}
@@ -3715,8 +3691,8 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
                 if(f&&f.exists){{
                   var spec={{src:f.fsName,w:"{w}",h:"{h}",align:"{align}",spaceBefore:{sb},spaceAfter:{sa},caption:"{cap}",
                              inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",posHref:"{posHref}",posVref:"{posVref}",offX:"{offX}",offY:"{offY}",
-                            distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}",forceBlock:{str(only_img).lower()} }};
-                  var inl=_trim(spec.inline); // \u517c\u5bb9 InDesign 2020
+                            distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}",forceBlock:{force_block} }};
+                  var inl=_trim(spec.inline); // 兼容 InDesign 2020
                   log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
 
                   if(inl==="0"||/^false$/i.test(inl)){{
@@ -3734,70 +3710,105 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
               }} catch(e) {{
                 log("[IMG][EXC] " + e);
               }}
-            }})();''')
-            continue
-        elif m_xmlt and not skip_images:
-            try:
-                root = ET.fromstring(text)
-                rows_data = []
-                for tr in root.findall('.//tr'):
-                    row = []
-                    for td in tr.findall('.//td'):
-                        parts = []
-                        if td.text and td.text.strip(): parts.append(td.text.strip())
-                        for ch in list(td):
-                            tag = _strip_ns(ch.tag)
-                            if tag == "p":
-                                parts.append(''.join(ch.itertext()).strip())
-                            elif tag == "img":
-                                s = ch.get("src", "") or "";
-                                w = ch.get("w", "") or "";
-                                h = ch.get("h", "") or ""
-                                parts.append('[[IMG src="%s" w="%s" h="%s"]]' % (s, w, h))
-                            if ch.tail and ch.tail.strip(): parts.append(ch.tail.strip())
-                        row.append("\n".join([x for x in parts if x]))
-                    rows_data.append(row)
-                cols = max([len(r) for r in rows_data]) if rows_data else 0
-                add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
-                continue
-            except Exception:
-                pass
-        elif m_xmli and not skip_images:
-            add_lines.append("__ensureLayoutDefault();")
-            # 处理整段是 <img ...> 的情况（原生 XML/HTML 片段）
-            import xml.etree.ElementTree as ET
+            }})();'''
 
-            def _esc(s: str) -> str:
-                return (s or "").replace("\\", "\\\\").replace('"', '\\"')
 
-            try:
-                root = ET.fromstring(text)
-                # 兼容 src/href/xlink:href
-                src = _esc(
-                    root.get("src", "") or root.get("href", "") or root.get("{http://www.w3.org/1999/xlink}href", ""))
+def _handle_table_marker(text, add_lines):
+    m_tbl = re.match(r'^\s*\[\[TABLE\s+(\{[\s\S]*\})\s*\]\]\s*$', text)
+    if not m_tbl:
+        return False
+    try:
+        obj = json.loads(m_tbl.group(1))
+    except Exception:
+        obj = eval("(" + m_tbl.group(1) + ")")
+    rows = int(obj.get("rows", 0))
+    cols = int(obj.get("cols", 0))
+    data = obj.get("data", [])
+    # rows/cols/data 保留在此，便于调试时断点查看
+    add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
+    return True
 
-                # 尺寸与排版属性（都允空字符串，JS 端自行解释）
-                w = root.get("w", "") or root.get("width", "") or ""
-                h = root.get("h", "") or root.get("height", "") or ""
-                align = root.get("align", "center")
-                inline = root.get("inline", "") or ""
-                wrap = root.get("wrap", "") or ""
-                posH = root.get("posH", "") or ""
-                posV = root.get("posV", "") or ""
-                offX = root.get("offX", "") or ""
-                offY = root.get("offY", "") or ""
-                distT = root.get("distT", "") or ""
-                distB = root.get("distB", "") or ""
-                distL = root.get("distL", "") or ""
-                distR = root.get("distR", "") or ""
-                sb = root.get("spaceBefore", "6")
-                sa = root.get("spaceAfter", "6")
-                cap = _esc(root.get("caption", "") or "")
-            except Exception:
-                # 解析失败则回退为普通段落处理
-                continue
 
-            add_lines.append(f'''(function(){{
+def _handle_img_marker(text, skip_images, add_lines):
+    if skip_images:
+        return False
+    match, only_img = _match_img_marker(text)
+    if not match:
+        return False
+    kv = dict(re.findall(IMG_KV_PATTERN, match.group(1)))
+    add_lines.append("__ensureLayoutDefault();")
+    add_lines.append(_build_img_js_block(kv, only_img))
+    return True
+
+
+def _handle_html_table(text, skip_images, add_lines):
+    if skip_images or not re.match(r'^\s*<table\b[\s\S]*</table>\s*$', text, flags=re.I):
+        return False
+    try:
+        root = ET.fromstring(text)
+    except Exception:
+        return False
+    rows_data = []
+    for tr in root.findall('.//tr'):
+        row = []
+        for td in tr.findall('.//td'):
+            parts = []
+            if td.text and td.text.strip():
+                parts.append(td.text.strip())
+            for ch in list(td):
+                tag = _strip_ns(ch.tag)
+                if tag == "p":
+                    parts.append(''.join(ch.itertext()).strip())
+                elif tag == "img":
+                    s = ch.get("src", "") or ""
+                    w = ch.get("w", "") or ""
+                    h = ch.get("h", "") or ""
+                    parts.append('[[IMG src="%s" w="%s" h="%s"]]' % (s, w, h))
+                if ch.tail and ch.tail.strip():
+                    parts.append(ch.tail.strip())
+            row.append("\n".join([x for x in parts if x]))
+        rows_data.append(row)
+    cols = max([len(r) for r in rows_data]) if rows_data else 0
+    obj = {"rows": len(rows_data), "cols": cols, "data": rows_data}
+    add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
+    return True
+
+
+def _build_html_img_js(text):
+    if not re.match(r'^\s*<img\b[^>]*>\s*$', text, flags=re.I):
+        return None
+
+    def _esc(s: str) -> str:
+        return (s or "").replace("\\", "\\\\").replace('"', '\\"')
+
+    try:
+        root = ET.fromstring(text)
+    except Exception:
+        return None
+
+    src = _esc(
+        root.get("src", "")
+        or root.get("href", "")
+        or root.get("{http://www.w3.org/1999/xlink}href", "")
+    )
+    w = root.get("w", "") or root.get("width", "") or ""
+    h = root.get("h", "") or root.get("height", "") or ""
+    align = root.get("align", "center")
+    inline = root.get("inline", "") or ""
+    wrap = root.get("wrap", "") or ""
+    posH = root.get("posH", "") or ""
+    posV = root.get("posV", "") or ""
+    offX = root.get("offX", "") or ""
+    offY = root.get("offY", "") or ""
+    distT = root.get("distT", "") or ""
+    distB = root.get("distB", "") or ""
+    distL = root.get("distL", "") or ""
+    distR = root.get("distR", "") or ""
+    sb = root.get("spaceBefore", "6")
+    sa = root.get("spaceAfter", "6")
+    cap = _esc(root.get("caption", "") or "")
+
+    return f'''(function(){{
         log("[PY][m_xmli] {src}");
         try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
         if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
@@ -3824,12 +3835,52 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
         }} else {{
           log("[IMG] missing: {src}");
         }}
-        }})();''')
+        }})();'''
+
+
+def _handle_html_image(text, skip_images, add_lines):
+    if skip_images:
+        return False
+    block = _build_html_img_js(text)
+    if not block:
+        return False
+    add_lines.append("__ensureLayoutDefault();")
+    add_lines.append(block)
+    return True
+
+
+def _append_default_paragraph(add_lines, sty, esc):
+    add_lines.append("__ensureLayoutDefault();")
+    add_lines.append(f'addParaWithNotes(story, "{sty}", "{esc}");')
+
+
+def write_jsx(jsx_path, paragraphs, skip_images=False):
+    add_lines = []
+    levels_used = set()
+
+    add_lines.append("function onNewLevel1(){ var pkt = startNewChapter(story, page, tf); story=pkt.story; page=pkt.page; tf=pkt.frame; }")
+    add_lines.append("firstChapterSeen = false;")
+
+    img_pattern = re.compile(r'\[\[IMG\s+[^\]]+\]\]', re.I)
+    paragraphs = _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images)
+
+    for style, text in paragraphs:
+        sty = _normalize_style_name(style, levels_used)
+        esc = escape_js(text)
+
+        if sty == "Level1":
+            add_lines.append("if (firstChapterSeen) { var __fl = flushOverflow(story, page, tf); story = __fl.frame.parentStory; page = __fl.page; tf = __fl.frame; onNewLevel1(); } else { firstChapterSeen = true; }")
+
+        if _handle_table_marker(text, add_lines):
+            continue
+        if _handle_img_marker(text, skip_images, add_lines):
+            continue
+        if _handle_html_table(text, skip_images, add_lines):
+            continue
+        if _handle_html_image(text, skip_images, add_lines):
             continue
 
-        # 默认：仍走 addParaWithNotes（它现在也能识别行内 IMG/TABLE）
-        add_lines.append("__ensureLayoutDefault();")
-        add_lines.append(f'addParaWithNotes(story, "{sty}", "{esc}");')
+        _append_default_paragraph(add_lines, sty, esc)
 
     style_lines = build_style_lines(levels_used)
 
