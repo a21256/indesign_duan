@@ -5,6 +5,8 @@ import xml.etree.ElementTree as ET
 from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 import json
 import time
+from dataclasses import dataclass, field
+from typing import Dict
 
 # ========== 路径与配置 ==========
 OUT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -1080,11 +1082,8 @@ function addFloatingImage(tf, story, page, spec){
     function _isPageAnchored(posHref, posVref){
       var h = _lowerFlag(posHref);
       var v = _lowerFlag(posVref);
-      var pageHRefs = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
-      var pageVRefs = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
-      if (pageHRefs[h]) return true;
-      if (pageVRefs[v]) return true;
-      return false;
+      var pageRefs = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
+      return !!(pageRefs[h] && pageRefs[v]);
     }
 
     function _placeOnPage(pageObj, stObj, anchorIdx, fileObj){
@@ -3599,6 +3598,110 @@ IMG_PLACEHOLDER_ANY_RE = re.compile(r'\[\[IMG\s+(.+?)\]\]', re.I)
 IMG_KV_PATTERN = r'(\w+)=["\'\u201c\u201d]([^"\'\u201c\u201d]*)["\'\u201c\u201d]'
 
 
+def _js_escape_simple(val: str) -> str:
+    return (val or "").replace("\\", "\\\\").replace('"', '\\"')
+
+
+@dataclass
+class ImageSpec:
+    attrs: Dict[str, str] = field(default_factory=dict)
+    force_block: bool = False
+
+    @classmethod
+    def from_mapping(cls, mapping: Dict[str, str], *, force_block: bool = False):
+        clean = {k: (v or "") for k, v in mapping.items()}
+        return cls(attrs=clean, force_block=force_block)
+
+    def get(self, key: str, default: str = "") -> str:
+        value = self.attrs.get(key, "")
+        return value if value not in (None, "") else default
+
+    def to_js_block(self) -> str:
+        src_for_log = self.get("src")
+        inline_for_log = self.get("inline")
+        spec_js = self._build_spec_js_literal()
+        return f'''(function(){{
+              log("[PY][m_img] {src_for_log} inline={inline_for_log}");
+              try {{
+                // 0) 环境检查
+                log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
+                    + " typeof addImageAtV2=" + (typeof addImageAtV2)
+                    + " typeof _normPath=" + (typeof _normPath));
+                log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
+
+                // 1) 排版溢出
+                try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
+                  if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
+                }}
+
+                // 2) 锚点
+                var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
+                // 3) 路径
+                var f=_normPath("{_js_escape_simple(src_for_log)}");
+                log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
+
+                if(f&&f.exists){{
+                  var spec={spec_js};
+                  var inl=_trim(spec.inline); // 兼容 InDesign 2020
+                  log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
+
+                  if(inl==="0"||/^false$/i.test(inl)){{
+                    log("[DBG] dispatch -> addFloatingImage");
+                    var rect=addFloatingImage(tf,story,page,spec);
+                    if(rect&&rect.isValid) log("[IMG] ok (float): " + spec.src);
+                  }} else {{
+                    log("[DBG] dispatch -> addImageAtV2");
+                    var rect=addImageAtV2(ip,spec);
+                    if(rect&&rect.isValid) log("[IMG] ok (inline): " + spec.src);
+                  }}
+                }} else {{
+                  log("[IMG] missing: {src_for_log}");
+                }}
+              }} catch(e) {{
+                log("[IMG][EXC] " + e);
+              }}
+            }})();'''
+
+    def _build_spec_js_literal(self) -> str:
+        align_val = self.attrs.get("align")
+        if align_val is None:
+            align_val = "center"
+
+        ordered_keys = [
+            ("src", self.get("src")),
+            ("w", self.get("w")),
+            ("h", self.get("h")),
+            ("pxw", self.get("pxw")),
+            ("pxh", self.get("pxh")),
+            ("align", align_val),
+            ("inline", self.get("inline")),
+            ("wrap", self.get("wrap")),
+            ("posH", self.get("posH")),
+            ("posHref", self.get("posHref")),
+            ("posV", self.get("posV")),
+            ("posVref", self.get("posVref")),
+            ("rotation", self.get("rotation")),
+            ("flipH", self.get("flipH")),
+            ("flipV", self.get("flipV")),
+            ("offX", self.get("offX")),
+            ("offY", self.get("offY")),
+            ("distT", self.get("distT")),
+            ("distB", self.get("distB")),
+            ("distL", self.get("distL")),
+            ("distR", self.get("distR")),
+            ("cropT", self.get("cropT")),
+            ("cropB", self.get("cropB")),
+            ("cropL", self.get("cropL")),
+            ("cropR", self.get("cropR")),
+            ("spaceBefore", self.get("spaceBefore", "6")),
+            ("spaceAfter", self.get("spaceAfter", "6")),
+            ("caption", self.get("caption")),
+        ]
+        parts = [f'{k}:"{_js_escape_simple(v)}"' for k, v in ordered_keys]
+        parts.append(f"forceBlock:{str(self.force_block).lower()}")
+        return "{%s}" % ",".join(parts)
+
+
 def _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images):
     """Normalize paragraphs list: optionally drop images and split texts around image markers."""
     if skip_images:
@@ -3637,80 +3740,11 @@ def _normalize_style_name(style, levels_used):
 
 
 def _match_img_marker(text):
-    match = IMG_PLACEHOLDER_FULL_RE.match(text)
-    if match:
-        return match, True
-    return IMG_PLACEHOLDER_ANY_RE.search(text), False
-
-
-def _build_img_js_block(kv, only_img):
-    def _esc(val):
-        return (val or "").replace("\\", "\\\\").replace('"', '\\"')
-
-    src = _esc(kv.get("src", ""))
-    w = kv.get("w", "") or ""
-    h = kv.get("h", "") or ""
-    align = kv.get("align", "center")
-    inline = kv.get("inline", "") or ""
-    wrap = kv.get("wrap", "") or ""
-    posH = kv.get("posH", "") or ""
-    posV = kv.get("posV", "") or ""
-    posHref = kv.get("posHref", "") or ""
-    posVref = kv.get("posVref", "") or ""
-    offX = kv.get("offX", "") or ""
-    offY = kv.get("offY", "") or ""
-    distT = kv.get("distT", "") or ""
-    distB = kv.get("distB", "") or ""
-    distL = kv.get("distL", "") or ""
-    distR = kv.get("distR", "") or ""
-    sb = kv.get("spaceBefore", "6")
-    sa = kv.get("spaceAfter", "6")
-    cap = _esc(kv.get("caption", "") or "")
-
-    force_block = str(only_img).lower()
-    return f'''(function(){{
-              log("[PY][m_img] {src} inline={inline}");
-              try {{
-                // 0) 环境检查
-                log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
-                    + " typeof addImageAtV2=" + (typeof addImageAtV2)
-                    + " typeof _normPath=" + (typeof _normPath));
-                log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
-
-                // 1) 排版溢出
-                try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
-                  if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
-                }}
-
-                // 2) 锚点
-                var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
-                // 3) 路径
-                var f=_normPath("{src}");
-                log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
-
-                if(f&&f.exists){{
-                  var spec={{src:f.fsName,w:"{w}",h:"{h}",align:"{align}",spaceBefore:{sb},spaceAfter:{sa},caption:"{cap}",
-                             inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",posHref:"{posHref}",posVref:"{posVref}",offX:"{offX}",offY:"{offY}",
-                            distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}",forceBlock:{force_block} }};
-                  var inl=_trim(spec.inline); // 兼容 InDesign 2020
-                  log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
-
-                  if(inl==="0"||/^false$/i.test(inl)){{
-                    log("[DBG] dispatch -> addFloatingImage");
-                    var rect=addFloatingImage(tf,story,page,spec);
-                    if(rect&&rect.isValid) log("[IMG] ok (float): " + spec.src);
-                  }} else {{
-                    log("[DBG] dispatch -> addImageAtV2");
-                    var rect=addImageAtV2(ip,spec);
-                    if(rect&&rect.isValid) log("[IMG] ok (inline): " + spec.src);
-                  }}
-                }} else {{
-                  log("[IMG] missing: {src}");
-                }}
-              }} catch(e) {{
-                log("[IMG][EXC] " + e);
-              }}
-            }})();'''
+    attr_match = IMG_PLACEHOLDER_ANY_RE.search(text)
+    if not attr_match:
+        return None, False
+    only_img = bool(IMG_PLACEHOLDER_FULL_RE.match(text))
+    return attr_match.group(1), only_img
 
 
 def _handle_table_marker(text, add_lines):
@@ -3735,9 +3769,10 @@ def _handle_img_marker(text, skip_images, add_lines):
     match, only_img = _match_img_marker(text)
     if not match:
         return False
-    kv = dict(re.findall(IMG_KV_PATTERN, match.group(1)))
+    kv = dict(re.findall(IMG_KV_PATTERN, match))
+    spec = ImageSpec.from_mapping(kv, force_block=only_img)
     add_lines.append("__ensureLayoutDefault();")
-    add_lines.append(_build_img_js_block(kv, only_img))
+    add_lines.append(spec.to_js_block())
     return True
 
 
@@ -3774,78 +3809,50 @@ def _handle_html_table(text, skip_images, add_lines):
     return True
 
 
-def _build_html_img_js(text):
+def _build_html_image_spec(text):
     if not re.match(r'^\s*<img\b[^>]*>\s*$', text, flags=re.I):
         return None
-
-    def _esc(s: str) -> str:
-        return (s or "").replace("\\", "\\\\").replace('"', '\\"')
-
     try:
         root = ET.fromstring(text)
     except Exception:
         return None
 
-    src = _esc(
+    src = (
         root.get("src", "")
         or root.get("href", "")
         or root.get("{http://www.w3.org/1999/xlink}href", "")
     )
-    w = root.get("w", "") or root.get("width", "") or ""
-    h = root.get("h", "") or root.get("height", "") or ""
-    align = root.get("align", "center")
-    inline = root.get("inline", "") or ""
-    wrap = root.get("wrap", "") or ""
-    posH = root.get("posH", "") or ""
-    posV = root.get("posV", "") or ""
-    offX = root.get("offX", "") or ""
-    offY = root.get("offY", "") or ""
-    distT = root.get("distT", "") or ""
-    distB = root.get("distB", "") or ""
-    distL = root.get("distL", "") or ""
-    distR = root.get("distR", "") or ""
-    sb = root.get("spaceBefore", "6")
-    sa = root.get("spaceAfter", "6")
-    cap = _esc(root.get("caption", "") or "")
-
-    return f'''(function(){{
-        log("[PY][m_xmli] {src}");
-        try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
-        if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
-        }}
-        var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
-        try{{
-          var para=ip.paragraphs[0]; var p0=(para&&para.isValid)?para.insertionPoints[0]:null;
-          var h0=(p0&&p0.isValid&&p0.parentTextFrames&&p0.parentTextFrames.length)?p0.parentTextFrames[0]:null;
-          if(h0&&h0.isValid&&tf&&tf.isValid&&h0.id!==tf.id){{ ip.contents="\\r"; try{{story.recompose();}}catch(__){{}} ip=tf.insertionPoints[-1]; }}
-        }}catch(__){{}}
-        var f=_normPath("{src}");
-        if(f&&f.exists){{
-          var spec={{src:f.fsName,w:"{w}",h:"{h}",align:"{align}",spaceBefore:{sb},spaceAfter:{sa},caption:"{cap}",
-                    inline:"{inline}",wrap:"{wrap}",posH:"{posH}",posV:"{posV}",offX:"{offX}",offY:"{offY}",
-                    distT:"{distT}",distB:"{distB}",distL:"{distL}",distR:"{distR}"}};
-          var inl=_trim(spec.inline);
-          if(inl==="0"||/^false$/i.test(inl)){{
-            var rect=addFloatingImage(tf,story,page,spec);
-            if(rect&&rect.isValid) log("[IMG] ok (float): "+spec.src);
-          }} else {{
-            var rect=addImageAtV2(ip,spec);
-            if(rect&&rect.isValid) log("[IMG] ok (inline): "+spec.src);
-          }}
-        }} else {{
-          log("[IMG] missing: {src}");
-        }}
-        }})();'''
-
+    attrs = {
+        "src": src,
+        "w": root.get("w", "") or root.get("width", "") or "",
+        "h": root.get("h", "") or root.get("height", "") or "",
+        "align": root.get("align", "center"),
+        "inline": root.get("inline", "") or "",
+        "wrap": root.get("wrap", "") or "",
+        "posH": root.get("posH", "") or "",
+        "posV": root.get("posV", "") or "",
+        "posHref": root.get("posHref", "") or "",
+        "posVref": root.get("posVref", "") or "",
+        "offX": root.get("offX", "") or "",
+        "offY": root.get("offY", "") or "",
+        "distT": root.get("distT", "") or "",
+        "distB": root.get("distB", "") or "",
+        "distL": root.get("distL", "") or "",
+        "distR": root.get("distR", "") or "",
+        "spaceBefore": root.get("spaceBefore", "6"),
+        "spaceAfter": root.get("spaceAfter", "6"),
+        "caption": root.get("caption", "") or "",
+    }
+    return ImageSpec.from_mapping(attrs)
 
 def _handle_html_image(text, skip_images, add_lines):
     if skip_images:
         return False
-    block = _build_html_img_js(text)
-    if not block:
+    spec = _build_html_image_spec(text)
+    if not spec:
         return False
     add_lines.append("__ensureLayoutDefault();")
-    add_lines.append(block)
+    add_lines.append(spec.to_js_block())
     return True
 
 
