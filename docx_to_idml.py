@@ -20,6 +20,10 @@ import getpass
 import base64
 import hashlib
 
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 import xml_to_idml as X
 from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 from xml_to_idml import XML_PATH, extract_paragraphs_with_levels, write_jsx, JSX_PATH

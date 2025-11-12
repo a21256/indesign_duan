@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 DOCX -> XML exporter (v13, style-switchable build)
 Fixed structural/indentation errors and added stable table/image export.
@@ -55,14 +55,20 @@ NSMAP = {"w": W_NS}
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 WP_NS= "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
-NSMAP_ALL = {"w": W_NS, "a": A_NS, "r": R_NS, "wp": WP_NS}
+WPS_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+WPG_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+V_NS = "urn:schemas-microsoft-com:vml"
+NSMAP_ALL = {"w": W_NS, "a": A_NS, "r": R_NS, "wp": WP_NS, "wps": WPS_NS, "wpg": WPG_NS, "v": V_NS}
 NS = NSMAP_ALL
 XP_RUN_BLIPS = etree.XPath(".//w:drawing//a:blip", namespaces=NSMAP_ALL)
 XP_RUN_EXTENT = etree.XPath(
     ".//w:drawing//wp:inline/wp:extent | .//w:drawing//wp:anchor/wp:extent",
     namespaces=NSMAP_ALL
 )
-# 版式与定位
+# Text boxes (DrawingML & VML)
+XP_RUN_TEXTBOX = etree.XPath(".//w:drawing//wps:txbx", namespaces=NSMAP_ALL)
+XP_RUN_TEXTBOX_VML = etree.XPath(".//w:pict//v:textbox", namespaces=NSMAP_ALL)
+# 鐗堝紡涓庡畾浣?
 XP_RUN_ANCHOR = etree.XPath(".//w:drawing//wp:anchor", namespaces=NSMAP_ALL)
 XP_RUN_INLINE = etree.XPath(".//w:drawing//wp:inline", namespaces=NSMAP_ALL)
 XP_WRAP_ANY  = etree.XPath(".//wp:anchor/*[starts-with(local-name(), 'wrap')]", namespaces=NSMAP_ALL)
@@ -75,16 +81,18 @@ XP_RUN_TEXTS = etree.XPath(".//w:t", namespaces=NSMAP)
 XP_RUN_TABS  = etree.XPath(".//w:tab", namespaces=NSMAP)
 XP_RUN_FOOTREF = etree.XPath(".//w:footnoteReference", namespaces=NSMAP)
 XP_RUN_ENDREF  = etree.XPath(".//w:endnoteReference", namespaces=NSMAP)
+XP_RUN_PAGEBREAK = etree.XPath(".//w:br[@w:type='page']", namespaces=NSMAP)
+XP_RUN_LAST_PAGEBREAK = etree.XPath(".//w:lastRenderedPageBreak", namespaces=NSMAP)
 
 # --------- Regex patterns (order = priority) ---------
 REGEX_ORDER: List[Tuple[str, Optional[str]]] = [
-    ("fixed", r'^第[\d一二三四五六七八九十百]+章[ 　\t]*'),
-    ("fixed", r'^第[\d一二三四五六七八九十百]+节[ 　\t]*'),
-    ("fixed", r'^第[\d一二三四五六七八九十百]+条[ 　\t]*'),
+    ("fixed", r'^绗琜\d涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+绔燵 銆€\t]*'),
+    ("fixed", r'^绗琜\d涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+鑺俒 銆€\t]*'),
+    ("fixed", r'^绗琜\d涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+鏉 銆€\t]*'),
     ("numeric_dotted", None),
     ("fixed", r'^[（(]\s*\d+\s*[)）]'),
     ("fixed", r'^\d+\s*[)）]'),
-    ("fixed", r'^[一二三四五六七八九十百]+、\s*'),
+    ("fixed", r'^[涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+銆乗s*'),
 ]
 COMPILED_FIXED: List[Optional[re.Pattern]] = []
 NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)[\.．]?\s*')
@@ -298,6 +306,37 @@ class DOCXOutlineExporter:
         self._build_body_iter_index()
         self._doc_paragraphs = list(self.doc.paragraphs)
         self._doc_tables = list(self.doc.tables)
+        self._frame_seq = 0
+        self._word_page_width_pt, self._word_page_height_pt = self._resolve_word_page_size()
+        self._word_page_seq = 1
+
+    def _resolve_word_page_size(self) -> Tuple[float, float]:
+        try:
+            sect = self.doc.sections[0]
+            width = getattr(sect, "page_width", None)
+            height = getattr(sect, "page_height", None)
+            def _to_pt(val):
+                try:
+                    if val is None:
+                        return 0.0
+                    if hasattr(val, "pt"):
+                        return float(val.pt)
+                    return float(val) / 20.0
+                except Exception:
+                    return 0.0
+            wpt = _to_pt(width)
+            hpt = _to_pt(height)
+            return wpt, hpt
+        except Exception:
+            return 0.0, 0.0
+
+    def _word_page_size_attrs(self) -> Dict[str, str]:
+        attrs = {}
+        if self._word_page_width_pt:
+            attrs["wordPageWidth"] = f"{self._word_page_width_pt:.2f}pt"
+        if self._word_page_height_pt:
+            attrs["wordPageHeight"] = f"{self._word_page_height_pt:.2f}pt"
+        return attrs
 
     @staticmethod
     def _paragraph_align_token(paragraph) -> str:
@@ -328,6 +367,329 @@ class DOCXOutlineExporter:
             elif node.tag == f"{{{W_NS}}}tab":
                 chunks.append("\t")
         return "".join(chunks)
+
+    def _next_frame_id(self) -> str:
+        self._frame_seq += 1
+        return f"frame_{self._frame_seq:04d}"
+
+    @staticmethod
+    def _find_ancestor_anchor(node):
+        cur = node
+        while cur is not None:
+            qname = etree.QName(cur)
+            if qname.namespace == WP_NS and qname.localname in ("anchor", "inline"):
+                return cur
+            cur = cur.getparent()
+        return None
+
+    @staticmethod
+    def _collect_anchor_attrs(anchor_el):
+        data = {
+            "wrap": "",
+            "wrapSide": "",
+            "wrapText": "",
+            "posH": "",
+            "posHref": "",
+            "posV": "",
+            "posVref": "",
+            "offX": "",
+            "offY": "",
+            "distT": "",
+            "distB": "",
+            "distL": "",
+            "distR": "",
+            "relativeHeight": "",
+            "behindDoc": "",
+            "allowOverlap": "",
+            "layoutInCell": "",
+            "hidden": "",
+            "locked": "",
+            "simplePosX": "",
+            "simplePosY": "",
+            "effectL": "",
+            "effectT": "",
+            "effectR": "",
+            "effectB": "",
+            "sizeRelH": "",
+            "sizeRelHref": "",
+            "sizeRelV": "",
+            "sizeRelVref": "",
+            "docPrId": "",
+            "docPrName": "",
+            "anchorId": "",
+            "anchorEditId": "",
+        }
+        if anchor_el is None:
+            return data
+
+        def _emu(val):
+            return f"{_emu_to_pt(val):.2f}pt" if _emu_to_pt(val) is not None else ""
+
+        data["relativeHeight"] = anchor_el.get("relativeHeight", "")
+        data["behindDoc"] = anchor_el.get("behindDoc", "")
+        data["allowOverlap"] = anchor_el.get("allowOverlap", "")
+        data["layoutInCell"] = anchor_el.get("layoutInCell", "")
+        data["hidden"] = anchor_el.get("hidden", "")
+        data["locked"] = anchor_el.get("locked", "")
+        WP14 = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+        data["anchorId"] = anchor_el.get(f"{{{WP14}}}anchorId", "")
+        data["anchorEditId"] = anchor_el.get(f"{{{WP14}}}editId", "")
+
+        wrap_nodes = [child for child in anchor_el if etree.QName(child).localname.startswith("wrap")]
+        if wrap_nodes:
+            wnode = wrap_nodes[0]
+            data["wrap"] = etree.QName(wnode).localname
+            data["wrapSide"] = wnode.get("wrapSide", "") or wnode.get(f"{{{WP_NS}}}wrapSide", "")
+            data["wrapText"] = wnode.get("wrapText", "") or wnode.get(f"{{{WP_NS}}}wrapText", "")
+
+        posH = anchor_el.find("wp:positionH", namespaces=NSMAP_ALL)
+        if posH is not None:
+            data["posHref"] = posH.get("relativeFrom", "") or posH.get(f"{{{WP_NS}}}relativeFrom", "")
+            align = posH.find("wp:align", namespaces=NSMAP_ALL)
+            if align is not None and align.text:
+                data["posH"] = align.text
+            posOffset = posH.find("wp:posOffset", namespaces=NSMAP_ALL)
+            if posOffset is not None and posOffset.text:
+                data["offX"] = _emu(posOffset.text)
+
+        posV = anchor_el.find("wp:positionV", namespaces=NSMAP_ALL)
+        if posV is not None:
+            data["posVref"] = posV.get("relativeFrom", "") or posV.get(f"{{{WP_NS}}}relativeFrom", "")
+            align = posV.find("wp:align", namespaces=NSMAP_ALL)
+            if align is not None and align.text:
+                data["posV"] = align.text
+            posOffset = posV.find("wp:posOffset", namespaces=NSMAP_ALL)
+            if posOffset is not None and posOffset.text:
+                data["offY"] = _emu(posOffset.text)
+
+        for attr, key in (("distT", "distT"), ("distB", "distB"), ("distL", "distL"), ("distR", "distR")):
+            val = anchor_el.get(attr)
+            if val is not None:
+                data[key] = _emu(val)
+
+        simple = anchor_el.find("wp:simplePos", namespaces=NSMAP_ALL)
+        if simple is not None:
+            sx = simple.get("x")
+            sy = simple.get("y")
+            if sx:
+                data["simplePosX"] = _emu(sx)
+            if sy:
+                data["simplePosY"] = _emu(sy)
+
+        effect = anchor_el.find("wp:effectExtent", namespaces=NSMAP_ALL)
+        if effect is not None:
+            for attr, key in (("l", "effectL"), ("t", "effectT"), ("r", "effectR"), ("b", "effectB")):
+                val = effect.get(attr)
+                if val is not None:
+                    data[key] = _emu(val)
+
+        size_rel_h = anchor_el.find("wp:sizeRelH", namespaces=NSMAP_ALL)
+        if size_rel_h is not None:
+            data["sizeRelHref"] = size_rel_h.get("relativeFrom", "")
+            pct = size_rel_h.find("wp:pct", namespaces=NSMAP_ALL)
+            if pct is not None and pct.text:
+                try:
+                    data["sizeRelH"] = f"{float(pct.text)/1000:.2f}%"
+                except Exception:
+                    data["sizeRelH"] = pct.text
+
+        size_rel_v = anchor_el.find("wp:sizeRelV", namespaces=NSMAP_ALL)
+        if size_rel_v is not None:
+            data["sizeRelVref"] = size_rel_v.get("relativeFrom", "")
+            pct = size_rel_v.find("wp:pct", namespaces=NSMAP_ALL)
+            if pct is not None and pct.text:
+                try:
+                    data["sizeRelV"] = f"{float(pct.text)/1000:.2f}%"
+                except Exception:
+                    data["sizeRelV"] = pct.text
+
+        doc_pr = anchor_el.find("wp:docPr", namespaces=NSMAP_ALL)
+        if doc_pr is not None:
+            data["docPrId"] = doc_pr.get("id", "")
+            data["docPrName"] = doc_pr.get("name", "")
+
+        return data
+
+    @staticmethod
+    def _collect_txbx_plain_text(txbx_node) -> str:
+        lines: List[str] = []
+        for p in txbx_node.findall(".//w:p", namespaces=NSMAP_ALL):
+            parts: List[str] = []
+            for node in p.iter():
+                qname = etree.QName(node)
+                if qname.namespace != W_NS:
+                    continue
+                if qname.localname == "t":
+                    parts.append(node.text or "")
+                elif qname.localname == "tab":
+                    parts.append("\t")
+                elif qname.localname == "br":
+                    parts.append("\n")
+            lines.append("".join(parts))
+        return "\n".join(lines).strip("\n")
+
+    @staticmethod
+    def _pt_str_to_float(val: Optional[str]) -> Optional[float]:
+        if not val:
+            return None
+        sval = str(val).strip()
+        if sval.endswith("pt"):
+            sval = sval[:-2]
+        try:
+            return float(sval)
+        except Exception:
+            return None
+
+    def _collect_txbx_offsets(self, txbx_node):
+        """
+        Accumulate local offsets/sizes from nested DrawingML transforms so we can place each
+        textbox relative to its group/anchor.
+        """
+        total_x = 0.0
+        total_y = 0.0
+        width = None
+        height = None
+
+        def _apply_xfrm(xfrm, take_size):
+            nonlocal total_x, total_y, width, height
+            if xfrm is None:
+                return
+            off = xfrm.find("a:off", namespaces=NSMAP_ALL)
+            if off is not None:
+                ox = _emu_to_pt(off.get("x"))
+                oy = _emu_to_pt(off.get("y"))
+                if ox is not None:
+                    total_x += ox
+                if oy is not None:
+                    total_y += oy
+            if take_size:
+                ext = xfrm.find("a:ext", namespaces=NSMAP_ALL)
+                if ext is not None:
+                    if width is None:
+                        wpt = _emu_to_pt(ext.get("cx"))
+                        if wpt is not None:
+                            width = wpt
+                    if height is None:
+                        hpt = _emu_to_pt(ext.get("cy"))
+                        if hpt is not None:
+                            height = hpt
+
+        node = txbx_node.getparent()
+        first_wsp_processed = False
+        while node is not None:
+            q = etree.QName(node)
+            if q.namespace == WPS_NS and q.localname == "wsp":
+                xfrm = node.find("wps:spPr/a:xfrm", namespaces=NSMAP_ALL)
+                _apply_xfrm(xfrm, take_size=not first_wsp_processed)
+                first_wsp_processed = True
+            elif q.namespace == "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" and q.localname == "wgp":
+                xfrm = node.find("wpg:grpSpPr/a:xfrm", namespaces=NSMAP_ALL)
+                _apply_xfrm(xfrm, take_size=False)
+            node = node.getparent()
+
+        return total_x, total_y, width, height
+
+    def _serialize_textbox_node(self, txbx_node) -> Optional[str]:
+        anchor = self._find_ancestor_anchor(txbx_node)
+        attrs = self._collect_anchor_attrs(anchor)
+        local_off_x, local_off_y, local_width, local_height = self._collect_txbx_offsets(txbx_node)
+
+        def _combine_offset(attr_name, local_val):
+            base = self._pt_str_to_float(attrs.get(attr_name))
+            base = base if base is not None else 0.0
+            combined = base + (local_val or 0.0)
+            attrs[attr_name] = f"{combined:.2f}pt"
+
+        _combine_offset("offX", local_off_x)
+        _combine_offset("offY", local_off_y)
+
+        width = ""
+        height = ""
+        if local_width is not None:
+            width = f"{local_width:.2f}pt"
+        if local_height is not None:
+            height = f"{local_height:.2f}pt"
+        if not width or not height:
+            if anchor is not None:
+                extent = anchor.find("wp:extent", namespaces=NSMAP_ALL)
+                if extent is not None:
+                    cx = extent.get("cx")
+                    cy = extent.get("cy")
+                    val = _emu_to_pt(cx)
+                    if val is not None and not width:
+                        width = f"{val:.2f}pt"
+                    val = _emu_to_pt(cy)
+                    if val is not None and not height:
+                        height = f"{val:.2f}pt"
+        parent = txbx_node.getparent()
+        if parent is not None:
+            body_pr = parent.find("wps:bodyPr", namespaces=NSMAP_ALL)
+            if body_pr is not None:
+                for src, dst in (("lIns", "bodyInsetL"), ("tIns", "bodyInsetT"),
+                                 ("rIns", "bodyInsetR"), ("bIns", "bodyInsetB")):
+                    val = body_pr.get(src)
+                    if val is not None:
+                        pt = _emu_to_pt(val)
+                        attrs[dst] = f"{pt:.2f}pt" if pt is not None else val
+                for src, dst in (("wrap", "bodyWrap"), ("upright", "bodyUpright"),
+                                 ("numCol", "bodyNumCol"), ("spcCol", "bodyColSpace"),
+                                 ("rtlCol", "bodyRtlCol")):
+                    val = body_pr.get(src)
+                    if val is not None:
+                        attrs[dst] = val
+        attrs["w"] = width
+        attrs["h"] = height
+        attrs["id"] = self._next_frame_id()
+        attrs["pageHint"] = attrs.get("anchorId") or attrs.get("docPrId") or attrs.get("docPrName") or ""
+        attrs["wordPageSeq"] = str(self._word_page_seq)
+        attrs.update(self._word_page_size_attrs())
+        text = self._collect_txbx_plain_text(txbx_node).replace("]]", "」」")
+        attr_str = " ".join(f'{k}="{MyDOCNode._escape_attr(str(v))}"' for k,v in attrs.items() if v)
+        return f"[[FRAME {attr_str}]]{text}[[/FRAME]]"
+
+    def _extract_textboxes_from_run(self, run_element) -> List[str]:
+        markers: List[str] = []
+        try:
+            nodes = XP_RUN_TEXTBOX(run_element) or []
+        except Exception:
+            nodes = []
+        for node in nodes:
+            marker = self._serialize_textbox_node(node)
+            if marker:
+                markers.append(marker)
+        # Legacy VML textboxes can be added here if needed
+        return markers
+
+    @staticmethod
+    def _frame_payload_from_marker(marker: str) -> str:
+        try:
+            start = marker.index("]]") + 2
+            end = marker.rindex("[[/FRAME]]")
+            return marker[start:end]
+        except ValueError:
+            return ""
+
+    @staticmethod
+    def _is_shadow_text_after_frames(text: str, frame_fragments: List[str]) -> bool:
+        """
+        Detects duplicated inline text that Word keeps in the paragraph alongside anchored
+        textboxes (typically the concatenation of all textbox digits). We only treat it as shadow
+        text when it exactly matches the frame payloads (ignoring whitespace) or when it is purely
+        whitespace/tabs.
+        """
+        if not text:
+            return False
+        if not frame_fragments:
+            return False
+        normalized = "".join(text.split())
+        if not normalized:
+            return True
+        frames_joined = "".join(frame_fragments)
+        frame_norm = "".join(frames_joined.split())
+        if not frame_norm:
+            return False
+        # skip only when it is a full duplicate of textbox payloads (avoid dropping short tokens)
+        return normalized == frame_norm and len(normalized) >= 3
 
     @staticmethod
     def _parse_notes_xml(xml_bytes: bytes) -> Dict[str, str]:
@@ -756,8 +1118,18 @@ class DOCXOutlineExporter:
             chunks.append(label)
 
         # Traverse runs: inline images and text/notes/tabs
+        para_has_frames = False
+        frame_fragments: List[str] = []
         for run in paragraph.runs:
             r_el = run._element
+            has_page_break = False
+            try:
+                if XP_RUN_LAST_PAGEBREAK(r_el):
+                    has_page_break = True
+                elif XP_RUN_PAGEBREAK(r_el):
+                    has_page_break = True
+            except Exception:
+                has_page_break = False
 
             # ---------- IMAGES (high-fidelity [[IMG ...]] placeholder) ----------
             try:
@@ -813,82 +1185,72 @@ class DOCXOutlineExporter:
                     # inline / anchor, wrap, posH/posV, offsets, distances
                     inline_el = XP_RUN_INLINE(r_el) or []
                     anchor_el = XP_RUN_ANCHOR(r_el) or []
+                    anchor_node = anchor_el[0] if anchor_el else None
+                    anchor_attrs = self._collect_anchor_attrs(anchor_node)
                     is_inline = bool(inline_el) and not bool(anchor_el)
 
-                    wrap = ""
-                    posH = posV = ""
-                    posHref = posVref = ""
-                    offX = offY = ""
-                    distT = distB = distL = distR = ""
+                    wrap = anchor_attrs.get("wrap", "")
+                    wrapSide = anchor_attrs.get("wrapSide", "")
+                    wrapText = anchor_attrs.get("wrapText", "")
+                    posH = anchor_attrs.get("posH", "")
+                    posHref = anchor_attrs.get("posHref", "")
+                    posV = anchor_attrs.get("posV", "")
+                    posVref = anchor_attrs.get("posVref", "")
+                    offX = anchor_attrs.get("offX", "")
+                    offY = anchor_attrs.get("offY", "")
+                    distT = anchor_attrs.get("distT", "") or "0pt"
+                    distB = anchor_attrs.get("distB", "") or "0pt"
+                    distL = anchor_attrs.get("distL", "") or "0pt"
+                    distR = anchor_attrs.get("distR", "") or "0pt"
+                    relativeHeight = anchor_attrs.get("relativeHeight", "")
+                    behindDoc = anchor_attrs.get("behindDoc", "")
+                    allowOverlap = anchor_attrs.get("allowOverlap", "")
+                    layoutInCell = anchor_attrs.get("layoutInCell", "")
+                    hidden = anchor_attrs.get("hidden", "")
+                    locked = anchor_attrs.get("locked", "")
+                    simplePosX = anchor_attrs.get("simplePosX", "")
+                    simplePosY = anchor_attrs.get("simplePosY", "")
+                    effectL = anchor_attrs.get("effectL", "")
+                    effectT = anchor_attrs.get("effectT", "")
+                    effectR = anchor_attrs.get("effectR", "")
+                    effectB = anchor_attrs.get("effectB", "")
+                    sizeRelH = anchor_attrs.get("sizeRelH", "")
+                    sizeRelHref = anchor_attrs.get("sizeRelHref", "")
+                    sizeRelV = anchor_attrs.get("sizeRelV", "")
+                    sizeRelVref = anchor_attrs.get("sizeRelVref", "")
+                    docPrId = anchor_attrs.get("docPrId", "")
+                    docPrName = anchor_attrs.get("docPrName", "")
+                    anchorId = anchor_attrs.get("anchorId", "")
+                    anchorEditId = anchor_attrs.get("anchorEditId", "")
                     rotation = ""
                     flipH = ""
                     flipV = ""
                     cropT = cropB = cropL = cropR = ""
                     try:
-                        if anchor_el:
-                            # wrap: square / tight / through / none...
-                            wnodes = XP_WRAP_ANY(r_el) or []
-                            if wnodes:
-                                wrap = wnodes[0].tag.split('}')[-1]  # e.g. "wrapSquare"
-
-                            # positionH / positionV: align or posOffset
-                            phs = XP_POS_H(r_el) or []
-                            pvs = XP_POS_V(r_el) or []
-                            if phs:
-                                al = phs[0].find("wp:align", NSMAP_ALL)
-                                of = phs[0].find("wp:posOffset", NSMAP_ALL)
-                                posHref = phs[0].get(f"{{{WP_NS}}}relativeFrom") or phs[0].get("relativeFrom") or ""
-                                if al is not None and al.text:
-                                    posH = al.text
-                                if of is not None and of.text:
-                                    offX = f"{float(of.text) / 12700.0:.2f}pt"
-                            if pvs:
-                                al = pvs[0].find("wp:align", NSMAP_ALL)
-                                of = pvs[0].find("wp:posOffset", NSMAP_ALL)
-                                posVref = pvs[0].get(f"{{{WP_NS}}}relativeFrom") or pvs[0].get("relativeFrom") or ""
-                                if al is not None and al.text:
-                                    posV = al.text
-                                if of is not None and of.text:
-                                    offY = f"{float(of.text) / 12700.0:.2f}pt"
-
-                            # anchor distances to text/page (if present)
-                            a0 = anchor_el[0]
-                            for key_xml, var_name in (("distT", "distT"), ("distB", "distB"),
-                                                      ("distL", "distL"), ("distR", "distR")):
-                                v = a0.get(f"{{{WP_NS}}}{key_xml}")
-                                if v is not None:
-                                    try:
-                                        locals()[var_name] = f"{float(v) / 12700.0:.2f}pt"
-                                    except Exception:
-                                        pass
-                        # rotation / flip / crop
-                        try:
-                            xfrm = r_el.find(".//a:xfrm", NSMAP_ALL)
-                            if xfrm is not None:
-                                rot_val = xfrm.get("rot")
-                                if rot_val:
-                                    rotation = f"{int(rot_val)/60000.0:.2f}"
-                                flipH = xfrm.get("flipH") or ""
-                                flipV = xfrm.get("flipV") or ""
-                        except Exception:
-                            pass
-                        try:
-                            crop = r_el.find(".//a:blipFill/a:srcRect", NSMAP_ALL)
-                            if crop is not None:
-                                def _pct(attr):
-                                    val = crop.get(attr)
-                                    if val is None:
-                                        return ""
-                                    try:
-                                        return f"{float(val)/10000.0:.2f}%"
-                                    except Exception:
-                                        return ""
-                                cropT = _pct("t")
-                                cropB = _pct("b")
-                                cropL = _pct("l")
-                                cropR = _pct("r")
-                        except Exception:
-                            pass
+                        xfrm = r_el.find(".//a:xfrm", NSMAP_ALL)
+                        if xfrm is not None:
+                            rot_val = xfrm.get("rot")
+                            if rot_val:
+                                rotation = f"{int(rot_val)/60000.0:.2f}"
+                            flipH = xfrm.get("flipH") or ""
+                            flipV = xfrm.get("flipV") or ""
+                    except Exception:
+                        pass
+                    try:
+                        crop = r_el.find(".//a:blipFill/a:srcRect", NSMAP_ALL)
+                        if crop is not None:
+                            def _pct(attr):
+                                val = crop.get(attr)
+                                if val is None:
+                                    return ""
+                                try:
+                                    return f"{float(val)/10000.0:.2f}%"
+                                except Exception:
+                                    return ""
+                            cropT = _pct("t")
+                            cropB = _pct("b")
+                            cropL = _pct("l")
+                            cropR = _pct("r")
                     except Exception:
                         pass
 
@@ -900,36 +1262,95 @@ class DOCXOutlineExporter:
                         if im is not None and getattr(im, "px_width", None) and getattr(im, "px_height", None):
                             pxw = str(int(im.px_width))
                             pxh = str(int(im.px_height))
-                        # fallback: if px not available, leave blank (IDML端按 w/h pt 处理即可)
+                        # fallback: if px not available, leave blank (IDML绔寜 w/h pt 澶勭悊鍗冲彲)
                     except Exception:
                         pass
 
                     if (not posV) and offY:
-                        posV = "paragraph"  # 让 offY 有参照
-                    out_path = out_path.replace("\\", "/")  # 统一为正斜杠
+                        posV = "paragraph"  # 璁?offY 鏈夊弬鐓?
+                    out_path = out_path.replace("\\", "/")  # 缁熶竴涓烘鏂滄潬
 
-                    # 若距离为空就写 0pt，避免下游判空
-                    for k in ("distT", "distB", "distL", "distR"):
-                        if locals()[k] == "":
-                            locals()[k] = "0pt"
 
                     inline_flag = "1" if is_inline else "0"
 
-                    chunks.append(
+                    img_tpl = (
                         '[[IMG src="{src}" w="{w}" h="{h}" pxw="{pxw}" pxh="{pxh}" '
-                        'align="{align}" inline="{inline_}" wrap="{wrap}" posH="{posH}" posHref="{posHref}" '
-                        'posV="{posV}" posVref="{posVref}" rotation="{rotation}" flipH="{flipH}" flipV="{flipV}" '
-                        'offX="{offX}" offY="{offY}" distT="{distT}" distB="{distB}" '
-                        'distL="{distL}" distR="{distR}" cropT="{cropT}" cropB="{cropB}" cropL="{cropL}" cropR="{cropR}"]]'
-                            .format(
-                            src=out_path, w=wpt, h=hpt, pxw=pxw, pxh=pxh, align=para_align,
-                            inline_=inline_flag, wrap=wrap, posH=posH, posHref=posHref,
-                            posV=posV, posVref=posVref, rotation=rotation, flipH=flipH, flipV=flipV,
-                            offX=offX, offY=offY, distT=distT, distB=distB, distL=distL, distR=distR,
-                            cropT=cropT, cropB=cropB, cropL=cropL, cropR=cropR
-                        )
+                        'align="{align}" inline="{inline_}" wrap="{wrap}" wrapSide="{wrapSide}" wrapText="{wrapText}" '
+                        'posH="{posH}" posHref="{posHref}" posV="{posV}" posVref="{posVref}" rotation="{rotation}" '
+                        'flipH="{flipH}" flipV="{flipV}" offX="{offX}" offY="{offY}" distT="{distT}" distB="{distB}" '
+                        'distL="{distL}" distR="{distR}" cropT="{cropT}" cropB="{cropB}" cropL="{cropL}" cropR="{cropR}" '
+                        'relativeHeight="{relativeHeight}" behindDoc="{behindDoc}" allowOverlap="{allowOverlap}" '
+                        'layoutInCell="{layoutInCell}" hidden="{hidden}" locked="{locked}" simplePosX="{simplePosX}" '
+                        'simplePosY="{simplePosY}" effectL="{effectL}" effectT="{effectT}" effectR="{effectR}" effectB="{effectB}" '
+                        'sizeRelH="{sizeRelH}" sizeRelHref="{sizeRelHref}" sizeRelV="{sizeRelV}" sizeRelVref="{sizeRelVref}" '
+                        'docPrId="{docPrId}" docPrName="{docPrName}" anchorId="{anchorId}" anchorEditId="{anchorEditId}" '
+                        'wordPageWidth="{wordPageWidth}" wordPageHeight="{wordPageHeight}" wordPageSeq="{wordPageSeq}"]]'
                     )
+                    fmt_vals = dict(
+                        src=out_path,
+                        w=wpt,
+                        h=hpt,
+                        pxw=pxw,
+                        pxh=pxh,
+                        align=para_align,
+                        inline_=inline_flag,
+                        wrap=wrap,
+                        wrapSide=wrapSide,
+                        wrapText=wrapText,
+                        posH=posH,
+                        posHref=posHref,
+                        posV=posV,
+                        posVref=posVref,
+                        rotation=rotation,
+                        flipH=flipH,
+                        flipV=flipV,
+                        offX=offX,
+                        offY=offY,
+                        distT=distT,
+                        distB=distB,
+                        distL=distL,
+                        distR=distR,
+                        cropT=cropT,
+                        cropB=cropB,
+                        cropL=cropL,
+                        cropR=cropR,
+                        relativeHeight=relativeHeight,
+                        behindDoc=behindDoc,
+                        allowOverlap=allowOverlap,
+                        layoutInCell=layoutInCell,
+                        hidden=hidden,
+                        locked=locked,
+                        simplePosX=simplePosX,
+                        simplePosY=simplePosY,
+                        effectL=effectL,
+                        effectT=effectT,
+                        effectR=effectR,
+                        effectB=effectB,
+                        sizeRelH=sizeRelH,
+                        sizeRelHref=sizeRelHref,
+                        sizeRelV=sizeRelV,
+                        sizeRelVref=sizeRelVref,
+                        docPrId=docPrId,
+                        docPrName=docPrName,
+                        anchorId=anchorId,
+                        anchorEditId=anchorEditId,
+                        wordPageWidth="",
+                        wordPageHeight="",
+                        wordPageSeq="",
+                    )
+                    fmt_vals.update(self._word_page_size_attrs())
+                    fmt_vals["wordPageSeq"] = str(self._word_page_seq)
+                    chunks.append(img_tpl.format(**fmt_vals))
 
+            frame_markers = self._extract_textboxes_from_run(r_el)
+            if frame_markers:
+                chunks.extend(frame_markers)
+                for marker in frame_markers:
+                    payload = self._frame_payload_from_marker(marker)
+                    if payload:
+                        frame_fragments.append(payload)
+                para_has_frames = True
+                continue
             # ---------- text + notes + tabs ----------
             parts_run = []
             for t in XP_RUN_TEXTS(r_el):
@@ -945,114 +1366,130 @@ class DOCXOutlineExporter:
                 parts_run.append("\t")
             run_text = "".join(parts_run)
             if run_text:
-                                # --- INLINE STYLE WRAP (from STYLE_FLAGS) ---
+                if para_has_frames and self._is_shadow_text_after_frames(run_text, frame_fragments):
+                    continue
+                # --- INLINE STYLE WRAP (from STYLE_FLAGS) ---
+                try:
+                    # Detect run styles robustly
+                    ital = getattr(run, "italic", None)
+                    bold = getattr(run, "bold", None)
+                    under = getattr(run, "underline", None)
+                    fobj = getattr(run, "font", None)
+                    if ital is None and fobj is not None:
+                        ital = getattr(fobj, "italic", None)
+                    if bold is None and fobj is not None:
+                        bold = getattr(fobj, "bold", None)
+                    if under is None and fobj is not None:
+                        under = getattr(fobj, "underline", None)
+
+                    # Fallback to raw rPr
+                    try:
+                        rpr = r_el.find(".//w:rPr", NSMAP)
+                    except Exception:
+                        rpr = None
+
+                    def rpr_has(tag):
+                        if rpr is None:
+                            return False
+                        el = rpr.find(tag, NSMAP)
+                        if el is None:
+                            return False
+                        val = el.get(f"{{{W_NS}}}val")
+                        return (val in (None, "", "1", "true", "True")) or (
+                            tag == 'w:u' and val not in ("none", "0", "false")
+                        )
+
+                    # superscript / subscript
+                    supers = getattr(fobj, "superscript", False) if fobj is not None else False
+                    sub = getattr(fobj, "subscript", False) if fobj is not None else False
+                    if not supers and not sub and rpr is not None:
+                        va = rpr.find("w:vertAlign", NSMAP)
+                        if va is not None:
+                            v = va.get(f"{{{W_NS}}}val")
+                            supers = (v == "superscript")
+                            sub = (v == "subscript")
+
+                    # font family / size / color
+                    font_name = None
+                    font_size = None
+                    color_hex = None
+                    tracking = None
+
+                    try:
+                        if fobj is not None and getattr(fobj, "name", None):
+                            font_name = str(fobj.name)
+                        elif rpr is not None:
+                            rf = rpr.find("w:rFonts", NSMAP)
+                            if rf is not None:
+                                font_name = rf.get(f"{{{W_NS}}}ascii") or rf.get(f"{{{W_NS}}}hAnsi")
+                    except Exception:
+                        pass
+
+                    try:
+                        if fobj is not None and getattr(fobj, "size", None):
                             try:
-                                # Detect run styles robustly
-                                ital = getattr(run, "italic", None)
-                                bold = getattr(run, "bold", None)
-                                under = getattr(run, "underline", None)
-                                fobj = getattr(run, "font", None)
-                                if ital is None and fobj is not None: ital = getattr(fobj, "italic", None)
-                                if bold is None and fobj is not None: bold = getattr(fobj, "bold", None)
-                                if under is None and fobj is not None: under = getattr(fobj, "underline", None)
-
-                                # Fallback to raw rPr
-                                try:
-                                    rpr = r_el.find(".//w:rPr", NSMAP)
-                                except Exception:
-                                    rpr = None
-
-                                def rpr_has(tag):
-                                    if rpr is None: return False
-                                    el = rpr.find(tag, NSMAP)
-                                    if el is None: return False
-                                    val = el.get(f"{{{W_NS}}}val")
-                                    return (val in (None, "", "1", "true", "True")) or (tag=='w:u' and val not in ("none","0","false"))
-
-                                # superscript / subscript
-                                supers = getattr(fobj, "superscript", False) if fobj is not None else False
-                                sub    = getattr(fobj, "subscript", False)    if fobj is not None else False
-                                if not supers and not sub and rpr is not None:
-                                    va = rpr.find("w:vertAlign", NSMAP)
-                                    if va is not None:
-                                        v = va.get(f"{{{W_NS}}}val")
-                                        supers = (v == "superscript")
-                                        sub    = (v == "subscript")
-
-                                # font family / size / color
-                                font_name = None
-                                font_size = None
-                                color_hex = None
-                                tracking  = None
-
-                                try:
-                                    if fobj is not None and getattr(fobj, "name", None):
-                                        font_name = str(fobj.name)
-                                    elif rpr is not None:
-                                        rf = rpr.find("w:rFonts", NSMAP)
-                                        if rf is not None:
-                                            font_name = rf.get(f"{{{W_NS}}}ascii") or rf.get(f"{{{W_NS}}}hAnsi")
-                                except Exception: pass
-
-                                try:
-                                    if fobj is not None and getattr(fobj, "size", None):
-                                        try:
-                                            font_size = float(fobj.size.pt)
-                                        except Exception:
-                                            font_size = None
-                                    elif rpr is not None:
-                                        sz = rpr.find("w:sz", NSMAP)
-                                        if sz is not None:
-                                            val = sz.get(f"{{{W_NS}}}val")
-                                            if val:
-                                                font_size = float(val)/2.0
-                                except Exception: pass
-
-                                try:
-                                    if rpr is not None:
-                                        c = rpr.find("w:color", NSMAP)
-                                        if c is not None:
-                                            v = c.get(f"{{{W_NS}}}val")
-                                            if v and v.lower() not in ("auto",):
-                                                if len(v) in (6,3):
-                                                    color_hex = "#" + v if not v.startswith("#") else v
-                                except Exception: pass
-
-                                # Apply wrappers based on STYLE_FLAGS
-                                span_attrs = []
-                                if STYLE_FLAGS.get("font", False) and font_name:
-                                    span_attrs.append(f'font="{font_name}"')
-                                if STYLE_FLAGS.get("fontsize", False) and font_size:
-                                    span_attrs.append(f'size="{int(font_size) if float(font_size).is_integer() else font_size}"')
-                                if STYLE_FLAGS.get("color", False) and color_hex:
-                                    span_attrs.append(f'color="{color_hex}"')
-                                if STYLE_FLAGS.get("tracking", False) and tracking:
-                                    span_attrs.append(f'tracking="{tracking}"')
-                                if span_attrs:
-                                    run_text = f"[[SPAN {' '.join(span_attrs)}]]{run_text}[[/SPAN]]"
-
-                                if STYLE_FLAGS.get("superscript", False) and supers:
-                                    run_text = f"[[SUP]]{run_text}[[/SUP]]"
-                                elif STYLE_FLAGS.get("subscript", False) and sub:
-                                    run_text = f"[[SUB]]{run_text}[[/SUB]]"
-
-                                if STYLE_FLAGS.get("underline", False):
-                                    is_u = (under is True) or rpr_has("w:u")
-                                    if is_u:
-                                        run_text = f"[[U]]{run_text}[[/U]]"
-
-                                if STYLE_FLAGS.get("bold", False):
-                                    is_b = (bold is True) or rpr_has("w:b")
-                                    if is_b:
-                                        run_text = f"[[B]]{run_text}[[/B]]"
-
-                                if STYLE_FLAGS.get("italic", True):
-                                    is_i = (ital is True) or rpr_has("w:i")
-                                    if is_i:
-                                        run_text = f"[[I]]{run_text}[[/I]]"
+                                font_size = float(fobj.size.pt)
                             except Exception:
-                                pass
-            chunks.append(run_text)
+                                font_size = None
+                        elif rpr is not None:
+                            sz = rpr.find("w:sz", NSMAP)
+                            if sz is not None:
+                                val = sz.get(f"{{{W_NS}}}val")
+                                if val:
+                                    font_size = float(val) / 2.0
+                    except Exception:
+                        pass
+
+                    try:
+                        if rpr is not None:
+                            c = rpr.find("w:color", NSMAP)
+                            if c is not None:
+                                v = c.get(f"{{{W_NS}}}val")
+                                if v and v.lower() not in ("auto",):
+                                    if len(v) in (6, 3):
+                                        color_hex = "#" + v if not v.startswith("#") else v
+                    except Exception:
+                        pass
+
+                    # Apply wrappers based on STYLE_FLAGS
+                    span_attrs = []
+                    if STYLE_FLAGS.get("font", False) and font_name:
+                        span_attrs.append(f'font="{font_name}"')
+                    if STYLE_FLAGS.get("fontsize", False) and font_size:
+                        span_attrs.append(
+                            f'size="{int(font_size) if float(font_size).is_integer() else font_size}"'
+                        )
+                    if STYLE_FLAGS.get("color", False) and color_hex:
+                        span_attrs.append(f'color="{color_hex}"')
+                    if STYLE_FLAGS.get("tracking", False) and tracking:
+                        span_attrs.append(f'tracking="{tracking}"')
+                    if span_attrs:
+                        run_text = f"[[SPAN {' '.join(span_attrs)}]]{run_text}[[/SPAN]]"
+
+                    if STYLE_FLAGS.get("superscript", False) and supers:
+                        run_text = f"[[SUP]]{run_text}[[/SUP]]"
+                    elif STYLE_FLAGS.get("subscript", False) and sub:
+                        run_text = f"[[SUB]]{run_text}[[/SUB]]"
+
+                    if STYLE_FLAGS.get("underline", False):
+                        is_u = (under is True) or rpr_has("w:u")
+                        if is_u:
+                            run_text = f"[[U]]{run_text}[[/U]]"
+
+                    if STYLE_FLAGS.get("bold", False):
+                        is_b = (bold is True) or rpr_has("w:b")
+                        if is_b:
+                            run_text = f"[[B]]{run_text}[[/B]]"
+
+                    if STYLE_FLAGS.get("italic", True):
+                        is_i = (ital is True) or rpr_has("w:i")
+                        if is_i:
+                            run_text = f"[[I]]{run_text}[[/I]]"
+                except Exception:
+                    pass
+                chunks.append(run_text)
+            if has_page_break:
+                self._word_page_seq += 1
 
         out = "".join(chunks).strip()
 
@@ -1184,7 +1621,7 @@ class DOCXOutlineExporter:
         stack: List[MyDOCNode] = [self.root]
 
         def _tbl_width_pt(tbl_el):
-            # 读取 w:tblW；若为 pct，用 480pt 近似 100%（避免缺页面宽时归一失败）
+            # 璇诲彇 w:tblW锛涜嫢涓?pct锛岀敤 480pt 杩戜技 100%锛堥伩鍏嶇己椤甸潰瀹芥椂褰掍竴澶辫触锛?
             tw = tbl_el.find("./w:tblPr/w:tblW", NSMAP)
             if tw is not None:
                 t = tw.get(f"{{{W_NS}}}type")
@@ -1195,13 +1632,13 @@ class DOCXOutlineExporter:
                         return max(pt, 1.0)
                 if v and t == "pct":
                     try:
-                        return max((float(v) / 50.0) * 4.8, 1.0)  # 100%≈480pt
+                        return max((float(v) / 50.0) * 4.8, 1.0)  # 100%鈮?80pt
                     except Exception:
                         pass
             return 480.0
 
         def _expanded_cols(row_cells):
-            # 计算“考虑 colspan 展开”的列数
+            # 璁＄畻鈥滆€冭檻 colspan 灞曞紑鈥濈殑鍒楁暟
             n = 0
             for cell in row_cells:
                 try:
@@ -1226,7 +1663,7 @@ class DOCXOutlineExporter:
                     level = lvl2 if lvl2 is not None else 0
 
                 if level > 0 and (raw_text or True):
-                    # 调整栈
+                    # 璋冩暣鏍?
                     while len(stack) > level:
                         stack.pop()
                     while len(stack) < level:
@@ -1255,11 +1692,11 @@ class DOCXOutlineExporter:
                             target.body_paragraphs.append(text_with_refs)
 
             elif kind == "tbl":
-                # === 表格导出：保证 cols 与 colWidthsPt 准确 ===
+                # === 琛ㄦ牸瀵煎嚭锛氫繚璇?cols 涓?colWidthsPt 鍑嗙‘ ===
                 tbl_el = obj._element  # w:tbl
                 tableWidthPt = _tbl_width_pt(tbl_el)
 
-                # 1) 表属性
+                # 1) 琛ㄥ睘鎬?
                 headerRows = 1 if tbl_el.find("./w:tblPr/w:tblHeader", NSMAP) is not None else 0
                 jc = tbl_el.find("./w:tblPr/w:jc", NSMAP)
                 tableAlign = (jc.get(f"{{{W_NS}}}val") if jc is not None else None) or "left"
@@ -1272,7 +1709,7 @@ class DOCXOutlineExporter:
                         return None
                     sz = ed.get(f"{{{W_NS}}}sz")
                     try:
-                        return (float(sz) or 4.0) / 8.0  # Word sz=4≈0.5pt
+                        return (float(sz) or 4.0) / 8.0  # Word sz=4鈮?.5pt
                     except Exception:
                         return None
 
@@ -1292,7 +1729,7 @@ class DOCXOutlineExporter:
 
                     cellPadding = {"t": _pad("top"), "l": _pad("left"), "b": _pad("bottom"), "r": _pad("right")}
 
-                # 2) 读取表格内容（含合并/对齐/底纹），先得 rows_data
+                # 2) 璇诲彇琛ㄦ牸鍐呭锛堝惈鍚堝苟/瀵归綈/搴曠汗锛夛紝鍏堝緱 rows_data
                 rows_data: List[List[dict]] = []
                 MAX_ROWS, MAX_COLS, MAX_SPAN = 500, 200, 50
                 all_tr = tbl_el.findall("./w:tr", NSMAP)
@@ -1307,7 +1744,7 @@ class DOCXOutlineExporter:
                             break
                         tcPr = tc.find("./w:tcPr", NSMAP)
 
-                        # 水平/垂直对齐
+                        # 姘村钩/鍨傜洿瀵归綈
                         align = "left"
                         p_first = tc.find("./w:p/w:pPr/w:jc", NSMAP)
                         if p_first is not None and p_first.get(f"{{{W_NS}}}val"):
@@ -1317,7 +1754,7 @@ class DOCXOutlineExporter:
                         if vAli is not None and vAli.get(f"{{{W_NS}}}val"):
                             valign = vAli.get(f"{{{W_NS}}}val")
 
-                        # 底纹
+                        # 搴曠汗
                         shading = None
                         sh = tcPr.find("./w:shd", NSMAP) if tcPr is not None else None
                         if sh is not None and sh.get(f"{{{W_NS}}}fill"):
@@ -1335,13 +1772,13 @@ class DOCXOutlineExporter:
                                 colspan = 1
                         colspan = max(1, min(MAX_SPAN, colspan))
 
-                        # vMerge：restart / continue
+                        # vMerge锛歳estart / continue
                         vmerge = tcPr.find("./w:vMerge", NSMAP) if tcPr is not None else None
                         vval = vmerge.get(f"{{{W_NS}}}val") if vmerge is not None else None
                         is_continue = (vmerge is not None and (vval in (None, "", "continue", "cont", "1")))
                         is_restart = (vmerge is not None and (vval in ("restart", "rest", "0")))
 
-                        # 文本（含换行/脚注尾注）
+                        # 鏂囨湰锛堝惈鎹㈣/鑴氭敞灏炬敞锛?
                         texts = []
                         for p_el in tc.findall(".//w:p", NSMAP):
                             parts = []
@@ -1366,18 +1803,18 @@ class DOCXOutlineExporter:
                             c_vis += 1
                             continue
 
-                                                # 计算 rowspan：按“同一可视列”向下统计 continue（修复误扩展）
+                                                # 璁＄畻 rowspan锛氭寜鈥滃悓涓€鍙鍒椻€濆悜涓嬬粺璁?continue锛堜慨澶嶈鎵╁睍锛?
                         rowspan = 1
                         if is_restart:
-                            # 以“展开后的可视列索引”对齐同列单元格，逐行检查 vMerge 状态
-                            col_index = c_vis  # 当前格在本行的可视列索引（从 0 起）
+                            # 浠モ€滃睍寮€鍚庣殑鍙鍒楃储寮曗€濆榻愬悓鍒楀崟鍏冩牸锛岄€愯妫€鏌?vMerge 鐘舵€?
+                            col_index = c_vis  # 褰撳墠鏍煎湪鏈鐨勫彲瑙嗗垪绱㈠紩锛堜粠 0 璧凤級
                             down = r_idx + 1
                             while down < len(all_tr):
                                 tlist = all_tr[down].findall("./w:tc", NSMAP)
                                 if not tlist:
                                     break
 
-                                # 在该行按 gridSpan 展开后，找到覆盖 col_index 的单元格
+                                # 鍦ㄨ琛屾寜 gridSpan 灞曞紑鍚庯紝鎵惧埌瑕嗙洊 col_index 鐨勫崟鍏冩牸
                                 cur_col = 0
                                 target_tc = None
                                 for n_tc in tlist:
@@ -1397,7 +1834,7 @@ class DOCXOutlineExporter:
                                 if target_tc is None:
                                     break
 
-                                # 仅当“同列单元格”为 continue 时才累计 rowspan；遇到 restart 或无 vMerge 即停止
+                                # 浠呭綋鈥滃悓鍒楀崟鍏冩牸鈥濅负 continue 鏃舵墠绱 rowspan锛涢亣鍒?restart 鎴栨棤 vMerge 鍗冲仠姝?
                                 n_pr = target_tc.find("./w:tcPr", NSMAP)
                                 n_vm = n_pr.find("./w:vMerge", NSMAP) if n_pr is not None else None
                                 if n_vm is None:
@@ -1421,13 +1858,13 @@ class DOCXOutlineExporter:
 
                     rows_data.append(row_cells)
 
-                # 3) 真实列数（考虑 colspan 展开）
+                # 3) 鐪熷疄鍒楁暟锛堣€冭檻 colspan 灞曞紑锛?
                 rows = len(rows_data)
                 cols = 0
                 for r in rows_data:
                     cols = max(cols, _expanded_cols(r))
 
-                # 4) 生成 colWidthsPt
+                # 4) 鐢熸垚 colWidthsPt
                 colWidthsPt: List[float] = []
                 grid_cols = tbl_el.findall("./w:tblGrid/w:gridCol", NSMAP)
                 for gc in grid_cols:
@@ -1437,7 +1874,7 @@ class DOCXOutlineExporter:
                         colWidthsPt.append(round(pt, 2))
 
                 if (not colWidthsPt) or (len(colWidthsPt) != cols):
-                    # 4.1 尝试用首行 tcW（dxa/pct），按 colspan 平均分配到网格列
+                    # 4.1 灏濊瘯鐢ㄩ琛?tcW锛坉xa/pct锛夛紝鎸?colspan 骞冲潎鍒嗛厤鍒扮綉鏍煎垪
                     first_tr = all_tr[0] if all_tr else None
                     widths_acc = [0.0] * max(cols, len(colWidthsPt) or 0 or cols)
                     used_tcW = False
@@ -1446,7 +1883,7 @@ class DOCXOutlineExporter:
                         cur_col = 0
                         for tc in tcs:
                             tcPr = tc.find("./w:tcPr", NSMAP)
-                            # 宽度
+                            # 瀹藉害
                             wpt = None
                             if tcPr is not None:
                                 tcW = tcPr.find("./w:tcW", NSMAP)
@@ -1458,10 +1895,10 @@ class DOCXOutlineExporter:
                                     elif wtype == "pct":
                                         try:
                                             pct = float(wval) / 50.0  # 100% = 5000
-                                            wpt = pct * 4.8  # 近似到 pt
+                                            wpt = pct * 4.8  # 杩戜技鍒?pt
                                         except Exception:
                                             wpt = None
-                            # 跨列
+                            # 璺ㄥ垪
                             gridSpan = tcPr.find("./w:gridSpan", NSMAP) if tcPr is not None else None
                             cs = 1
                             if gridSpan is not None and gridSpan.get(f"{{{W_NS}}}val"):
@@ -1480,11 +1917,11 @@ class DOCXOutlineExporter:
                     if used_tcW:
                         colWidthsPt = [round(max(1.0, v), 2) for v in widths_acc[:cols]]
                     else:
-                        # 4.2 完全拿不到：用表宽等分
+                        # 4.2 瀹屽叏鎷夸笉鍒帮細鐢ㄨ〃瀹界瓑鍒?
                         each = max(1.0, tableWidthPt / float(cols or 1))
                         colWidthsPt = [round(each, 2) for _ in range(cols)]
 
-                # 4.3 截断/补齐，并按表宽归一
+                # 4.3 鎴柇/琛ラ綈锛屽苟鎸夎〃瀹藉綊涓€
                 if len(colWidthsPt) > cols:
                     colWidthsPt = colWidthsPt[:cols]
                 elif len(colWidthsPt) < cols:
@@ -1495,7 +1932,7 @@ class DOCXOutlineExporter:
                 scale = tableWidthPt / s
                 colWidthsPt = [round(max(1.0, w * scale), 2) for w in colWidthsPt]
 
-                # 列比例（供 InDesign 端按框宽缩放）
+                # 鍒楁瘮渚嬶紙渚?InDesign 绔寜妗嗗缂╂斁锛?
                 _sum = sum(colWidthsPt) or 1.0
                 colWidthFrac = [round(w / _sum, 6) for w in colWidthsPt]
                 table_obj = {
@@ -1625,3 +2062,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
+
