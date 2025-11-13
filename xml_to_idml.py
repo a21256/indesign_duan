@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import os, sys, subprocess, re
 import argparse
 import xml.etree.ElementTree as ET
@@ -8,20 +8,20 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict
 
-# ========== 路径与配置 ==========
+# ========== Paths & Configuration ==========
 OUT_DIR = os.path.abspath(os.path.dirname(__file__))
 XML_PATH = os.path.join(OUT_DIR, "formatted_output.xml")
 TEMPLATE_PATH = os.path.join(OUT_DIR, "template.idml")
-IDML_OUT_PATH = os.path.join(OUT_DIR, "output.idml")  # 可选导出
-LOG_PATH = os.path.join(OUT_DIR, "inline_style_debug.log")  # 行内样式&脚注日志
+IDML_OUT_PATH = os.path.join(OUT_DIR, "output.idml")  # Optional export location
+LOG_PATH = os.path.join(OUT_DIR, "inline_style_debug.log")  # Inline style & note log
 
-# 始终覆盖同名脚本（不再生成带时间戳）
+# Always overwrite the same script name (no timestamp)
 JSX_PATH = os.path.join(OUT_DIR, "indesign_autoflow_map_levels.jsx")
 
 AUTO_RUN_WINDOWS = True
 AUTO_RUN_MACOS = True
-AUTO_EXPORT_IDML = True  # 如需脚本结束自动导出 output.idml，改 True
-# 是否把运行日志写入文件：开发=True，商用=False，也可用环境变量 INDESIGN_LOG=0/1 覆盖
+AUTO_EXPORT_IDML = True  # Set True to auto-export output.idml when the script finishes
+# Controls log writing: dev=True, prod=False, env INDESIGN_LOG=0/1 overrides
 LOG_WRITE = True
 
 WIN_PROGIDS = [
@@ -33,7 +33,7 @@ WIN_PROGIDS = [
 ]
 MAC_APP_NAME = "Adobe InDesign 2020"
 
-# 仅作为“模板缺失样式时”的兜底（不会覆盖模板样式）
+# Template fallback only (does not override template styles)
 BODY_PT = 11
 BODY_LEADING = 14
 HEADING_BASE_PT = 18
@@ -43,15 +43,15 @@ HEADING_EXTRA_LEAD = 3
 SPACE_BEFORE_HEAD = 8
 SPACE_AFTER_HEAD = 6
 
-# 脚注标记（正文里的小号上标）仅用于“标记”本身
+# Footnote marker size (tiny superscript in body text)
 FN_MARK_PT = max(7, BODY_PT - 2)
 
-# 脚注正文段落样式找不到时的兜底字号/行距（只影响脚注内容，不影响正文）
+# Footnote paragraph fallback size/leading (only affects note content)
 FN_FALLBACK_PT = max(8, BODY_PT - 2)
 FN_FALLBACK_LEAD = FN_FALLBACK_PT + 2
 
 
-# ========== XML 解析（无限层级 + 引用式脚注/尾注；忽略 <meta>/<prop>/<footnotes>/<endnotes>内容） ==========
+# ========== XML parsing (arbitrary depth + referenced foot/end notes; ignores <meta>/<prop>/<footnotes>/<endnotes>) ==========
 def _strip_ns(tag):
     return tag.split('}', 1)[-1].lower()
 
@@ -80,14 +80,14 @@ def _index_notes(root):
                 if _strip_ns(ch.tag) == "footnote":
                     fid = ch.attrib.get("id") or ch.attrib.get("rid") or ch.attrib.get("ref")
                     if fid:
-                        foot_map[str(fid)] = _collect_all_text(ch).strip().replace("]]", "】】")
+                        foot_map[str(fid)] = _collect_all_text(ch).strip().replace("]]", ">>")
             continue
         if tag == "endnotes":
             for ch in list(n):
                 if _strip_ns(ch.tag) == "endnote":
                     eid = ch.attrib.get("id") or ch.attrib.get("rid") or ch.attrib.get("ref")
                     if eid:
-                        end_map[str(eid)] = _collect_all_text(ch).strip().replace("]]", "】】")
+                        end_map[str(eid)] = _collect_all_text(ch).strip().replace("]]", ">>")
             continue
         stack.extend(list(n))
     return foot_map, end_map
@@ -126,12 +126,12 @@ def _collect_inline_with_notes(elem, foot_map, end_map):
 
         # inline notes
         if tag in ("footnote", "fn"):
-            note = _collect_all_text(c).strip().replace("]]", "】】")
+            note = _collect_all_text(c).strip().replace("]]", ">>")
             parts.append(f"[[FN:{note}]]")
             if c.tail: parts.append(c.tail)
             continue
         if tag in ("endnote", "en"):
-            note = _collect_all_text(c).strip().replace("]]", "】】")
+            note = _collect_all_text(c).strip().replace("]]", ">>")
             parts.append(f"[[EN:{note}]]")
             if c.tail: parts.append(c.tail)
             continue
@@ -151,15 +151,15 @@ def _collect_inline_with_notes(elem, foot_map, end_map):
             if c.tail: parts.append(c.tail)
             continue
 
-        # --- inline images -> 转成 [[IMG ...]] 标记交给 JSX ---
+        # --- inline images -> convert to [[IMG ...]] placeholder for the JSX pipeline ---
         if tag in ("img", "image", "graphic", "figureimage", "inlinegraphic"):
-            # 尽量兼容多种属性命名
+            # Accept multiple attribute naming conventions
             src = c.attrib.get("src") or c.attrib.get("href") or c.attrib.get("xlink:href") or ""
-            # 宽/高可能是 w/width/mm/px，也可能放在 style 里；这里只做最小映射，样式里不解析也不影响排版
+            # Width/height might live in w/width/mm/px or inside style; only map the obvious fields
             w = c.attrib.get("w") or c.attrib.get("width") or ""
             h = c.attrib.get("h") or c.attrib.get("height") or ""
             align = c.attrib.get("align") or c.attrib.get("placement") or ""
-            # 生成 [[IMG ...]]；缺省对齐由 JSX 端处理（默认为 center）
+            # Emit [[IMG ...]]; default alignment is handled inside JSX (center)
             if src:
                 parts.append(f'[[IMG src="{src}" w="{w}" h="{h}" align="{align}"]]')
             if c.tail:
@@ -214,7 +214,7 @@ def extract_paragraphs_with_levels(xml_path):
                 out.append(("Body", elem.tail.strip()))
             return
 
-        # 容器：chapter/section/subsection/levelN
+        # Container tags: chapter / section / subsection / levelN
         new_level = current_level
         if tag == "chapter":
             new_level = 1
@@ -240,7 +240,7 @@ def extract_paragraphs_with_levels(xml_path):
     return out
 
 
-# ========== 为 JSX 注入的字符串转义 ==========
+# ========== String escaping helpers for JSX injection ==========
 def escape_js(s: str) -> str:
     s = s.replace("\\", "\\\\").replace('"', '\\"')
     s = s.replace("\\r\\n", " ").replace("\\r", " ").replace("\\n", " ")
@@ -249,7 +249,7 @@ def escape_js(s: str) -> str:
     return s
 
 
-# ========== JSX 模板（新增 IMG/TABLE 处理函数与正则） ==========
+# ========== JSX template (includes IMG/TABLE helpers and regex) ==========
 JSX_TEMPLATE = r"""function smartWrapStr(s){
     try{
       var flushAllowed = true;
@@ -263,7 +263,7 @@ JSX_TEMPLATE = r"""function smartWrapStr(s){
 }
 
 
-// ExtendScript 没有 Date#toISOString，自己拼一个
+// ExtendScript lacks Date#toISOString, so build one
 function iso() {
   var d = new Date();
   function pad(n){ return (n < 10 ? "0" : "") + n; }
@@ -292,16 +292,16 @@ function iso() {
         app.viewPreferences.verticalMeasurementUnits = MeasurementUnits.POINTS;
     }catch(_){}
 
-    // ====== 日志 ======
+    // ====== Logging ======
     var LOG_FILE   = File("%LOG_PATH%");
-    var LOG_WRITE  = %LOG_WRITE%;   // ← Python 注入的总开关：true/false
+    var LOG_WRITE  = %LOG_WRITE%;   // Master switch injected by Python: true/false
 
     function warn(m){ if (LOG_WRITE) log("[WARN] " + m); }
     function err(m){  if (LOG_WRITE) log("[ERR] "  + m); }
     function log(m){
-      if (!LOG_WRITE) return;                     // ← 关掉写盘
+      if (!LOG_WRITE) return;                     // Skip disk writes
       var stamp = iso()+" "+m;
-      // 1) 尝试写到工程目录日志文件
+      // 1) Try writing to the project log file
       try{
         if (LOG_FILE.parent && !LOG_FILE.parent.exists) LOG_FILE.parent.create();
         LOG_FILE.encoding = "UTF-8";
@@ -371,7 +371,7 @@ function iso() {
     }
 
 
-    // 兼容 InDesign 2020：没有 String#trim
+    // InDesign 2020 compatibility: polyfill String#trim if missing
     if (!String.prototype.trim) {
       String.prototype.trim = function(){ return String(this).replace(/^\s+|\s+$/g, ""); };
     }
@@ -383,8 +383,8 @@ function iso() {
     log("[BOOT] JSX loaded");
     log("[LOG] start");
 
-    // 全局状态：不要挂在 app 上（COM 对象不能扩展），改为脚本内私有变量
-    var __FLOAT_CTX = {};               // 用于 addFloatingImage 的同段堆叠
+    // Global state: keep private instead of attaching to app/COM objects
+    var __FLOAT_CTX = {};               // Tracks addFloatingImage stacking per paragraph
     __FLOAT_CTX.imgAnchors = __FLOAT_CTX.imgAnchors || {};
     function __recordWordSeqPage(wordSeqVal, pageObj){
       try{
@@ -414,7 +414,7 @@ function iso() {
       }catch(_pageSeq){}
       return null;
     }
-    var __LAST_IMG_ANCHOR_IDX = -1;     // 用于 addImageAtV2 的“同锚点”检测
+    var __LAST_IMG_ANCHOR_IDX = -1;     // Detect consecutive addImageAtV2 calls on the same anchor
     var __DEFAULT_LAYOUT = null;
     var __CURRENT_LAYOUT = null;
     var __DEFAULT_INNER_WIDTH = null;
@@ -424,15 +424,15 @@ function iso() {
     var __ALLOW_IMG_EXT_FALLBACK = (typeof $.global.__ALLOW_IMG_EXT_FALLBACK !== "undefined")
                                    ? !!$.global.__ALLOW_IMG_EXT_FALLBACK : true;
 
-    // 放在定义 log() 之后、其它函数之前即可
+    // Safe to run after log() is defined and before other helpers
     if (typeof curTextFrame === "undefined" && typeof tf !== "undefined") {
       var curTextFrame = tf;
     }
 
-    // —— 兼容 InDesign 2020：没有 JSON 对象 —— 
+    // InDesign 2020 compatibility: JSON may be missing
     var _HAS_JSON = (typeof JSON !== "undefined" && JSON && typeof JSON.stringify === "function");
     function _s(obj){
-      // 尽量用 JSON.stringify；没有就手拼
+      // Prefer JSON.stringify; fall back to a simple manual string
       if (_HAS_JSON) {
         try { return JSON.stringify(obj); } catch(_){}
       }
@@ -443,12 +443,12 @@ function iso() {
       } catch(e) { return String(obj); }
     }
 
-    // 在“当前文本框”末尾构造一个就地的安全插入点；仅在不可用时才退回 story 末尾
+    // Build a safe insertion point at the current text frame; fall back to story end when needed
     function _safeIP(tf){
       try{
         if (tf && tf.isValid) {
-          var ip = tf.insertionPoints[-1];   // 就地：当前文本框的末尾
-          // 检测是否可用于锚定；不可用则在该框尾部补一个零宽空格再取一次
+          var ip = tf.insertionPoints[-1];   // Local: the end of the current text frame
+          // Verify the IP can host anchors; otherwise insert a zero-width space and retry
           try { var _t = ip.anchoredObjectSettings; }
           catch(e1){
             try { ip.contents = "\u200B"; } catch(_){}
@@ -457,7 +457,7 @@ function iso() {
           if (ip && ip.isValid) return ip;
         }
       } catch(_){}
-      // 兜底：story 末尾
+      // Fallback: end of the parent story
       try{
         var story = (tf && tf.isValid) ? tf.parentStory : app.activeDocument.stories[0];
         var ip2 = story.insertionPoints[-1];
@@ -665,17 +665,17 @@ function iso() {
       __ensureLayout(__DEFAULT_LAYOUT);
     }
 
-    // ==== 图片路径解析（新增） ====
-    // 这些目录会被依次尝试：脚本目录、脚本目录的 assets、XML 同目录、XML 同目录的 assets
+    // ==== Image path resolution helpers ====
+    // Search order: script dir, script/assets, XML dir, XML/assets
     var IMG_DIRS = %IMG_DIRS_JSON%;
     function _normPath(p){
         if(!p) return null;
         p = String(p).replace(/^\s+|\s+$/g,"").replace(/\\/g,"/");
-        // 直接支持 http(s) & data:，交给 InDesign 自己处理
+        // Allow http(s)/data: and let InDesign handle them
         if (/^(https?:|data:)/i.test(p)) return File(p);
-        // 先尝试原始路径
+        // Try the original path first
         try { var f0 = File(p); if (f0.exists) return f0; } catch(_){}
-        // 仅文件名时，逐目录拼接
+        // If only a file name, probe the directories above
         var baseName = p.split("/").pop();
         function _alts(name){
             var i = name.lastIndexOf(".");
@@ -706,9 +706,9 @@ function iso() {
                 if (f2.exists) return f2;
             }catch(_){}
         }
-        // …函数结尾附近
+        // Final fallback near the function end
         try { p = decodeURI(p); } catch(_){}
-        p = String(p).replace(/\\/g, "/");   // ← 新增：统一为正斜杠
+        p = String(p).replace(/\\/g, "/");   // Normalize to forward slashes
         return File(p);
     }
 
@@ -731,11 +731,11 @@ function iso() {
         var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
       }
 
-      // 1) 校验文件
+      // 1) Validate the file path
       var f = File(spec && spec.src);
       if (!f || !f.exists) { log("[ERR] addImageAtV2: file missing: " + (spec && spec.src)); return null; }
 
-      // 2) story / 安全插入点
+      // 2) Resolve story / safe insertion point
       var st = null;
       try {
         st = (ip && ip.isValid && ip.parentStory && ip.parentStory.isValid) ? ip.parentStory
@@ -749,13 +749,13 @@ function iso() {
       var isInline = !(inlineFlag==="0" || inlineFlag==="false");
       if (spec && spec.forceBlock) isInline = false;
 
-      // 关键：默认用“当前可写文本框 tf 的末尾插入点”，避免落到上一页的 story 尾框
+      // Key: default to the end of the current writable text frame instead of the previous story tail
       var ip2 = (ip && ip.isValid) ? ip
                : ((typeof tf!=="undefined" && tf && tf.isValid && tf.insertionPoints && tf.insertionPoints.length)
                     ? tf.insertionPoints[-1]
                     : st.insertionPoints[-1]);
 
-      // --- FIX: 连续图片落在同一 IP 时，先推进一段，避免叠放 ---
+      // --- FIX: when two images share the same IP, advance one paragraph to avoid stacking ---
       function _logAnchorContext(tag, ipCandidate){
         try{
           var holder = (ipCandidate && ipCandidate.isValid && ipCandidate.parentTextFrames.length)
@@ -786,7 +786,7 @@ function iso() {
       }
 
       if (!isInline) {
-        // --- 保障：每次放图前都新起一段，避免与上一张叠在同一锚点 ---
+        // Ensure each block image starts a new paragraph so anchors do not overlap
         try{
           var ipChk = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1];
           var prev = (ipChk && ipChk.isValid && ipChk.index>0) ? st.insertionPoints[ipChk.index-1] : null;
@@ -799,7 +799,7 @@ function iso() {
           }
         }catch(__){}
 
-        // ---- 关键修正：确保插入点确实在“当前末尾文本框 tf 内”，而不是上一页的尾框 ----
+        // Ensure the insertion point truly sits inside the current trailing text frame, not a prior frame
         try{
           if ((!ip || !ip.isValid) && typeof tf!=="undefined" && tf && tf.isValid) {
             var guard = 0;
@@ -821,7 +821,7 @@ function iso() {
           }
         }catch(__){}
 
-        // ---- 关键修正②：如果 ip2 处的“段落起点”不在当前文本框 tf（即本框是该段续行），
+        // Ensure the paragraph start of ip2 belongs to the current text frame; otherwise split the paragraph
         try{
           if (ip2 && ip2.isValid && typeof tf!=="undefined" && tf && tf.isValid) {
             var para = ip2.paragraphs[0];
@@ -859,7 +859,7 @@ function iso() {
       try { placed = ip2.place(f); } catch(ePlace){ log("[ERR] addImageAtV2: place failed: " + ePlace); return null; }
       if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] addImageAtV2: place returned invalid"); return null; }
 
-      // 4) 取矩形
+      // 4) Resolve the placed rectangle
       var item = placed[0], rect=null, cname="";
       try { cname = String(item.constructor.name); } catch(_){}
       if (cname==="Rectangle") rect = item;
@@ -868,11 +868,11 @@ function iso() {
       }
       if (!rect || !rect.isValid) { log("[ERR] addImageAtV2: no rectangle after place"); return null; }
 
-      // 记录最近一次图片锚点，用于下一次“同位放图”检测
+      // Track the most recent image anchor for subsequent placement checks
       try{
         var aNow = rect.storyOffset;
         if (aNow && aNow.isValid) __LAST_IMG_ANCHOR_IDX = aNow.index;
-        // [日志] 本次已放置图片的锚点 index
+        // Log the anchor index used for this placement
         try { log("[IMG-STACK][placed] anchor.index=" + aNow.index); } catch(__){}
       }catch(_){}
 
@@ -888,7 +888,7 @@ function iso() {
 
       }catch(_){}
 
-      // 5) 锚定：Above-Line（块级，最稳），不启用文绕图
+      // 5) Anchor Above-Line (block-level, most stable) and disable text wrap
       try {
         var _anch = rect.anchoredObjectSettings;
         if (_anch && _anch.isValid !== false) {
@@ -906,7 +906,7 @@ function iso() {
         }
       } catch(_){}
 
-        // 6) 尺寸：优先使用 XML 的 w/h；w 受列内宽 innerW 限制；无 w/h 时按列宽
+        // 6) Sizing: prefer XML w/h; clamp width to inner column; fall back to column width
         try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
         try {
           try { rect.fittingOptions.autoFit=false; } catch(__){}
@@ -917,7 +917,7 @@ function iso() {
           var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
           var ratio = curW / curH;
 
-          // 以“矩形锚点所在文本框”为准求列内宽（同原逻辑）
+          // Column width is based on the text frame that hosts the rectangle anchor
           var innerW = 0, holder = null;
           try {
             var aIP = rect.storyOffset;
@@ -937,7 +937,7 @@ function iso() {
             }
           }catch(__){}
 
-          // 目标宽高：直接用绝对几何边界设定，避免“按初始值缩放”引入倍数偏差
+          // Target bounds: use explicit geometric bounds to avoid cumulative scaling
           var widthLimit = innerW>0 ? innerW : curW;
           var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
           var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio, 1e-6)));
@@ -945,10 +945,10 @@ function iso() {
           try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
           rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
 
-          // 再自适应一次，让内容紧贴新框
+          // Fit contents again so the art hugs the resized frame
           try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(__){}
 
-          // 记录关键数值，便于定位
+          // Log the numbers for troubleshooting
           try {
             log("[IMG] size targetW=" + (targetW||0).toFixed(2)
                 + " innerW=" + (innerW||0).toFixed(2)
@@ -957,7 +957,7 @@ function iso() {
           } catch(__){}
         } catch(_){}
 
-      // 7) 锚点所在段：根据 align 控制段落对齐；块级图再设置段前段后
+      // 7) Adjust the anchor paragraph alignment and spacing
       try{
         var p = rect.storyOffset.paragraphs[0];
         if (p && p.isValid){
@@ -972,19 +972,19 @@ function iso() {
         }
       }catch(_){}
 
-      // 8) 块级图片在锚点后补「段落结束 + 零宽空格」，保证下一步接在新段
+      // 8) Block images append paragraph break + zero-width space so the next step starts clean
       if (!isInline) {
         try{
           var aIP = rect.storyOffset;
           if (aIP && aIP.isValid){
-            // 8.1 先在锚点后补一个段落结束
+            // 8.1 Insert a paragraph break after the anchor
             var aft1 = aIP.parentStory.insertionPoints[aIP.index+1];
             if (aft1 && aft1.isValid){ aft1.contents = "\r"; }
-            // 8.2 再补一个零宽空格，保证 storyEnd 真正来到“新段”末尾
+            // 8.2 Add a zero-width space so storyEnd truly lands at the new paragraph
             var aft2 = aIP.parentStory.insertionPoints[aIP.index+2];
             if (aft2 && aft2.isValid){ aft2.contents = "\u200B"; }
             try{ aIP.parentStory.recompose(); }catch(__){}
-            // 8.3 用新段的插入点反查父文本框，强制把 tf/curTextFrame/story 切到“下一段所在的框”
+            // 8.3 Use the new paragraph insertion point to switch tf/curTextFrame/story to that frame
             try{
               var holderNext = (aft2 && aft2.isValid && aft2.parentTextFrames && aft2.parentTextFrames.length)
                                  ? aft2.parentTextFrames[0] : null;
@@ -998,20 +998,20 @@ function iso() {
         }catch(_){}
 
       }
-      // 9) 立即回排并疏通 overset，避免正文被甩到文末；并把 “当前活动文本框” 切到这张图所在的框
+      // 9) Recompose immediately, clear overset, and move the active text frame to the image frame
       if (!isInline) {
         try {
           if (st && st.isValid) st.recompose();
           if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
           var __pg = (rect && rect.parentPage) ? rect.parentPage : (typeof page!=="undefined"?page:null);
-          // 用矩形锚点反查真正所在的文本框，作为下一个动作的基准
+          // Use the rectangle anchor to locate the actual text frame for the next operation
           var __tf = null;
           try{
             var _a = rect.storyOffset;
             if (_a && _a.isValid && _a.parentTextFrames && _a.parentTextFrames.length)
               __tf = _a.parentTextFrames[0];
           }catch(_){}
-          // 优先使用 8.3 中刚切换过来的 tf，其次才兜底
+          // Prefer the tf switched in step 8.3 before falling back
           if (!__tf && typeof tf!=="undefined") __tf = tf;
           if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
           if (__pg && __tf && typeof flushOverflow === "function") {
@@ -1029,7 +1029,7 @@ function iso() {
                   + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
             }catch(_){}
           }
-          // 再兜底一次：若 flush 没返回新框，也把 curTextFrame 切到图所在框
+          // Final fallback: if flush returns no frame, switch curTextFrame to the rectangle host
           try{
             if ((!curTextFrame || !curTextFrame.isValid) && rect && rect.isValid){
               var a2 = rect.storyOffset;
@@ -1223,7 +1223,7 @@ function addFloatingImage(tf, story, page, spec){
       }catch(_){}
       try{ rect.label = "PAGE-FLOAT"; }catch(_){}
 
-      // 在 story 中依旧插入段落分隔，避免下一段落堆叠
+      // Insert paragraph separators in the story to prevent the next paragraph from stacking
       try{
         var aft1 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
           ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+1)]
@@ -1405,7 +1405,7 @@ function addFloatingImage(tf, story, page, spec){
         try{ __LAST_IMG_ANCHOR_IDX = anchorIndex; }catch(_){}
         return pageRect;
       }
-      // 若页面放置失败，继续走原浮动逻辑
+      // If page placement fails, fall back to the legacy floating logic
     }
 
       var placed = null;
@@ -1476,7 +1476,7 @@ function addFloatingImage(tf, story, page, spec){
       }
 
 
-      // 优先使用单栏宽度（多栏情况下用 textColumnFixedWidth，保证与 Word 类似的列宽约束）
+      // Prefer single-column width (textColumnFixedWidth) to match Word-style constraints
       try {
         var _colW = (holder && holder.isValid) ? holder.textFramePreferences.textColumnFixedWidth : 0;
         var _colN = (holder && holder.isValid) ? holder.textFramePreferences.textColumnCount       : 1;
@@ -2057,14 +2057,25 @@ function addFloatingFrame(tf, story, page, spec){
     }
 
     function _computeBase(metrics){
+      function _useInnerH(ref){
+        return ref === "margin" || ref === "column";
+      }
+      function _useInnerV(ref){
+        return ref === "margin" || ref === "column";
+      }
       var base = {};
-      var useInnerH = !!{"page":true,"pagearea":true,"pageedge":true,"margin":true,"spread":true}[posHrefRaw];
-      var useInnerV = !!{"page":true,"pagearea":true,"pageedge":true,"margin":true,"spread":true}[posVrefRaw] || posVrefRaw==="paragraph";
+      var useInnerH = _useInnerH(posHrefRaw);
+      var useInnerV = _useInnerV(posVrefRaw);
       base.useInnerH = useInnerH;
       base.useInnerV = useInnerV;
       base.baseX = useInnerH ? metrics.innerLeft : metrics.pageLeft;
-      if (posHrefRaw==="column") base.baseX = metrics.pageLeft + metrics.marginLeft;
+      if (posHrefRaw === "column"){
+        base.baseX = metrics.innerLeft;
+      }
       base.baseY = useInnerV ? metrics.innerTop : metrics.pageTop;
+      if (posVrefRaw === "column"){
+        base.baseY = metrics.innerTop;
+      }
       base.maxWidth = useInnerH ? metrics.innerWidth : metrics.pageWidth;
       base.maxHeight = useInnerV ? metrics.innerHeight : metrics.pageHeight;
       return base;
@@ -2399,19 +2410,19 @@ function _holderInnerBounds(holder){
         return ps;
     }
 
-    // === 行内样式应用（保持你原逻辑，只保留下划线） ===
-    // 递归搜索字符样式（支持样式组），大小写与空格/下划线不敏感
+    // === Inline style application (keeps original logic, preserves underline only) ===
+    // Recursively search character styles (including groups); case/spacing/underscore insensitive
     function findCharStyleCI(doc, name){
       function norm(n){ return String(n||"").toLowerCase().replace(/\s+/g,"").replace(/[_-]/g,""); }
       var target = norm(name);
 
-      // 先扫顶层
+      // Pass 1: top-level styles
       var cs = doc.characterStyles;
       for (var i=0;i<cs.length;i++){
         try{ if (norm(cs[i].name) === target) return cs[i]; }catch(_){}
       }
 
-      // 再扫样式组（递归）
+      // Pass 2: recurse into style groups
       function scanGroup(g){
         try{
           var arr = g.characterStyles;
@@ -2429,10 +2440,10 @@ function _holderInnerBounds(holder){
       return null;
     }
 
-    // 懒加载 + 缓存，避免在还没打开文档时访问 activeDocument
+    // Lazy-load with caching so we never touch activeDocument before it exists
     function getCachedCharStyleByList(names){
         try{
-            if (app.documents.length === 0) return null; // 还没打开任何文档就别取
+            if (app.documents.length === 0) return null; // Skip when no document is open yet
             var doc = app.activeDocument;
             if (!doc || !doc.isValid) return null;
             if (!app._csCache) app._csCache = {};
@@ -2460,13 +2471,13 @@ function _holderInnerBounds(holder){
     function setItalicSafe(r){
       try {
         var doc = app.activeDocument;
-        var cs = findCharStyleCI(doc, "斜体") || doc.characterStyles.itemByName("斜体");
+        var cs = findCharStyleCI(doc, "Italic") || doc.characterStyles.itemByName("Italic");
         if (!cs || !cs.isValid) {
-          try { cs = doc.characterStyles.add({name:"斜体"}); } catch(e) { try { cs = doc.characterStyles.itemByName("斜体"); } catch(__){} }
+          try { cs = doc.characterStyles.add({name:"Italic"}); } catch(e) { try { cs = doc.characterStyles.itemByName("Italic"); } catch(__){} }
         }
         if (cs && cs.isValid) {
           try { cs.fontStyle = "Italic"; } catch(_){}
-          try { r.appliedCharacterStyle = cs; return "cs:斜体"; } catch(__){}
+          try { r.appliedCharacterStyle = cs; return "cs:Italic"; } catch(__){}
         }
       } catch(e){}
       try { r.fontStyle = "Italic"; return "fs:Italic"; } catch(_){}
@@ -2477,13 +2488,13 @@ function _holderInnerBounds(holder){
     function setBoldSafe(r){
       try {
         var doc = app.activeDocument;
-        var cs = findCharStyleCI(doc, "粗体") || doc.characterStyles.itemByName("粗体");
+        var cs = findCharStyleCI(doc, "Bold") || doc.characterStyles.itemByName("Bold");
         if (!cs || !cs.isValid) {
-          try { cs = doc.characterStyles.add({name:"粗体"}); } catch(e) { try { cs = doc.characterStyles.itemByName("粗体"); } catch(__){} }
+          try { cs = doc.characterStyles.add({name:"Bold"}); } catch(e) { try { cs = doc.characterStyles.itemByName("Bold"); } catch(__){} }
         }
         if (cs && cs.isValid) {
           try { cs.fontStyle = "Bold"; } catch(_){}
-          try { r.appliedCharacterStyle = cs; return "cs:粗体"; } catch(__){}
+          try { r.appliedCharacterStyle = cs; return "cs:Bold"; } catch(__){}
         }
       } catch(e){}
       try { r.fontStyle = "Bold"; return "fs:Bold"; } catch(_){}
@@ -3647,7 +3658,7 @@ function _holderInnerBounds(holder){
         return en;
     }
 
-    // —— 段落插入：扩展识别 [[IMG ...]] / [[TABLE {...}]] ——
+    // Paragraph insert: now understands [[IMG ...]] / [[TABLE {...}]] markers
     function addParaWithNotes(story, styleName, raw) {
         var s = app.activeDocument.paragraphStyles.itemByName(styleName);
         try { log("[PARA] style=" + styleName + " len=" + String(raw||"").length); } catch(_){}
@@ -3656,7 +3667,7 @@ function _holderInnerBounds(holder){
         var text = String(raw).replace(/^\s+|\s+$/g, "");
         if (text.length === 0) return;
 
-        // ★ 正则扩展：新增 IMG/TABLE（修复 I/B/U 与 IMG/TABLE 的匹配）
+        // Regex matches FNI/FN/EN/I/B/U plus IMG/TABLE placeholders
         var re = /\[\[FNI:(\d+)\]\]|\[\[(FN|EN):(.*?)\]\]|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
         var last = 0, m;
         var st = {i:0, b:0, u:0};
@@ -3690,7 +3701,7 @@ function _holderInnerBounds(holder){
                   log('[IMGDBG] enter [[IMG]] lastIdx='
                       + (typeof __LAST_IMG_ANCHOR_IDX==='number'?__LAST_IMG_ANCHOR_IDX:'NA'));
                 }catch(_){}
-                kv.replace(/(\w+)=['"“”]([^'"”]*)['"”]/g, function(_,k,v){ spec[k]=v; return _; });
+                kv.replace(/(\w+)=['"]([^'"]*)['"]/g, function(_,k,v){ spec[k]=v; return _; });
                 try{
                   var _keys = [];
                   for (var _k in spec){ if (spec.hasOwnProperty(_k)) _keys.push(_k); }
@@ -3699,13 +3710,13 @@ function _holderInnerBounds(holder){
                 }catch(_){}
 
                 if (!spec.align) spec.align = "center";
-                // 调紧默认前后距，便于两图紧凑排布；可被 XML 显式覆盖
+                // Tighter default spacing so adjacent images stay compact; XML can override
                 if (spec.spaceBefore == null) spec.spaceBefore = 0;
                 if (spec.spaceAfter  == null) spec.spaceAfter  = 2;
-                if (!spec.wrap) spec.wrap = "none"; // ← 默认不绕排，避免把后文推到文末
+                if (!spec.wrap) spec.wrap = "none"; // Default: no wrap to avoid pushing later text off the page
 
-                // 关键修正 A：确保插入点在“当前末尾文本框”——先疏通 overset，再取就地安全 IP
-                // —— 诊断日志：放图前记录“末尾插入点所在文本框/页 & overset”信息
+                // Ensure the insertion point sits at the actual trailing frame; flush overset first
+                // Diagnostic log: record frame/page/overset info before placement
                 try{
                   var __ipEnd0 = story.insertionPoints[-1];
                   var __holder0 = (__ipEnd0 && __ipEnd0.isValid && __ipEnd0.parentTextFrames && __ipEnd0.parentTextFrames.length)
@@ -3721,20 +3732,20 @@ function _holderInnerBounds(holder){
                       + " ; storyLen=" + story.characters.length);
                 }catch(_){}
                 try {
-                  // 先尝试疏通（保持原有策略）
+                  // First try the usual flush strategy
                   if (typeof flushOverflow === "function" && typeof tf !== "undefined" && tf && tf.isValid) {
                     var _rs = flushOverflow(story, page, tf);
                     if (_rs && _rs.frame && _rs.page) { page = _rs.page; tf = _rs.frame; story = tf.parentStory; curTextFrame = tf; }
                   }
-                  // 再以“story 末尾”的父文本框为准强制刷新 tf/curTextFrame（避免仍指向上一个框）
-                  // 再以“story 末尾”作为锚点候选，记录一次定位信息
+                  // Refresh tf/curTextFrame based on the story-end frame so pointers stop referencing the old frame
+                  // Also record story-end anchor info for troubleshooting
                   try{
                       var _ipEnd = story.insertionPoints[-1];
                       var _holder = (_ipEnd && _ipEnd.isValid && _ipEnd.parentTextFrames && _ipEnd.parentTextFrames.length)
                                       ? _ipEnd.parentTextFrames[0] : null;
                       if (_holder && _holder.isValid) {
-                        tf = _holder;                     // ← 强制把“当前活动文本框”切到 story 实际末尾的文本框
-                        curTextFrame = _holder;           // ← 同步全局引用，后续 _safeIP/列宽计算都用这个
+                        tf = _holder;                     // Force the current text frame to the story-end frame
+                        curTextFrame = _holder;           // Keep globals in sync for _safeIP/column width logic
                         try { page = _holder.parentPage; } catch(_){}
                       }
                       try{
@@ -3758,13 +3769,13 @@ function _holderInnerBounds(holder){
                         + " ; curTF=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.id:"NA"));
                   }catch(__){}
                 } catch(_){}
-                // 若当前不在段首（上一字符不是回车），补一个段落结束，保证每张图独占一段
+                // If we're not at a paragraph start, append a break so each image owns its own paragraph
                 try {
                   var lastChar = (story.characters.length>0) ? String(story.characters[-1].contents||"") : "";
                   if (lastChar !== "\r") story.insertionPoints[-1].contents = "\r";
                 } catch(__){}
 
-                // 插入点：就用上面刷新后的 tf 的末尾；兜底再回退 story 尾（仅加日志）
+                // Use the refreshed tf end as the insertion point; fall back to story end (logging only)
                 var ipNow = (tf && tf.isValid) ? tf.insertionPoints[-1] : story.insertionPoints[-1];
                 try{
                   var __h = (ipNow && ipNow.isValid && ipNow.parentTextFrames && ipNow.parentTextFrames.length) ? ipNow.parentTextFrames[0] : null;
@@ -3773,18 +3784,18 @@ function _holderInnerBounds(holder){
                       + " ; ip.index=" + (ipNow&&ipNow.isValid?ipNow.index:"NA"));
                 }catch(_){}
 
-                // 规范与校验路径（失败只记一行，不抛）
+                // Normalize & validate the path (log-only on failure)
                 var fsrc = _normPath(spec.src);
                 if (fsrc && fsrc.exists) {
                   spec.src = fsrc.fsName;
-                  // 入口调用加一层必要 try，避免整套流程被图片单点中断
+                  // Wrap entrypoint with try so one bad image does not kill the run
                   try {
-                    // 规范与校验路径（失败只记一行，不抛）
+                    // Re-check the normalized path (log-only on failure)
                     var fsrc = _normPath(spec.src);
                     if (fsrc && fsrc.exists) {
                       spec.src = fsrc.fsName;
 
-                      // △ 根据 XML：inline="1" → 内联锚定；inline="0" → 浮动定位
+                      // From XML: inline="1" => inline anchor, inline="0" => floating placement
                       var inl = _trim(spec.inline);
                       log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
                   try{
@@ -3795,11 +3806,11 @@ function _holderInnerBounds(holder){
                   }catch(_){ }
                       try{
                         if (inl==="0" || /^false$/i.test(inl)){
-                          // 浮动：使用刚加入的 addFloatingImage（遵循 posH/posV/offX/offY/wrap/dist*）
+                          // Floating: use addFloatingImage (posH/posV/offX/offY/wrap/dist*)
                           var rect = addFloatingImage(tf, story, page, spec);
                           if (rect && rect.isValid) log("[IMG] ok (float): " + spec.src);
                         } else {
-                          // 内联：仍走你原先的稳妥链路（addImageAtV2）
+                          // Inline: keep using addImageAtV2
                           var rect = addImageAtV2(ipNow, spec);
                           if (rect && rect.isValid) log("[IMG] ok (inline): " + spec.src);
                         }
@@ -3809,7 +3820,7 @@ function _holderInnerBounds(holder){
                     } else {
                       log("[IMG] missing: " + spec.src);
                     }
-                    // 可选：成功才轻量记一行
+                    // Optional: log success once
                     if (rect && rect.isValid) log("[IMG] ok: " + spec.src);
                   } catch(e) {
                     log("[ERR] addImageAt failed: " + e);
@@ -3819,13 +3830,13 @@ function _holderInnerBounds(holder){
                 }
 
                 try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
-                // 吃掉 [[IMG ...]]，继续
+                // Consume [[IMG ...]] and continue
                 last = re.lastIndex;
                 continue;
             } else if (m[7]) {
                 try {
                     var obj = JSON.parse(m[7]);
-                    // 使用高保真表格构造：按 colWidthsPt 设置列宽、处理合并/覆盖格
+                    // Use the hi-fi table builder (colWidthsPt, merged cells, etc.)
                     addTableHiFi(obj);
                 } catch(e){
                     try { var obj2 = eval("("+m[7]+")"); addTableHiFi(obj2); } catch(__){}
@@ -3857,7 +3868,7 @@ function _holderInnerBounds(holder){
         try {
             story.recompose(); app.activeDocument.recompose();
         } catch(_){}
-        // 避免长段堆积造成中途 overset：每写 N 段疏通一次
+        // Periodically flush to avoid long-run overset
         try {
             if (typeof __paraCounter === "undefined") __paraCounter = 0;
             __paraCounter++;
@@ -3866,17 +3877,17 @@ function _holderInnerBounds(holder){
                 page  = st.page;
                 tf    = st.frame;
                 story = tf.parentStory;
-                curTextFrame = tf;              // ★ 新增：切到新框后更新全局指针
+                curTextFrame = tf;              // Update the global pointer after switching frames
             }
         } catch(_){}
     }
 
-    // 打开模板、清空页面框等（保持你原逻辑）
+    // Open the template and reset page frames (original logic)
     var templateFile = File("%TEMPLATE_PATH%");
-    if (!templateFile.exists) { alert("未找到模板文件 template.idml"); return; }
+    if (!templateFile.exists) { alert("Template file template.idml not found"); return; }
     var doc = app.open(templateFile);
 
-    // 清空页面与母版文本框，保留第一页
+    // Clear page/master text frames but keep the first page
     for (var pi = doc.pages.length - 1; pi >= 0; pi--) {
         var pg = doc.pages[pi];
         for (var tfi = pg.textFrames.length - 1; tfi >= 0; tfi--) {
@@ -3925,7 +3936,7 @@ function _holderInnerBounds(holder){
     __CURRENT_LAYOUT = __cloneLayoutState(__DEFAULT_LAYOUT);
 
 
-    // 简易样式兜底（保持你原逻辑）
+    // Simple style fallback (keeps existing logic)
     function ensureStyle(name, pointSize, leading, spaceBefore, spaceAfter) {
         var ps = doc.paragraphStyles.itemByName(name);
         if (!ps.isValid) {
@@ -4021,8 +4032,8 @@ function _holderInnerBounds(holder){
     }
 
     function flushOverflow(currentStory, lastPage, lastFrame) {
-        // 说明：原先用 story.characters.length 判断“是否前进”，会误判为卡住（字符总数不随分页变化）。
-        // 最小修复：移除早停判定；只要 still overset 就继续加页并接链，直到不 overset 或达到 MAX_PAGES。
+        // Note: story.characters.length does not reflect pagination progress and can falsely report a stall.
+        // Minimal fix: drop the early-stop; keep adding pages until overset clears or MAX_PAGES is reached.
         var MAX_PAGES = 20;
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
             var pkt = __createLayoutFrame(__CURRENT_LAYOUT, lastFrame, {afterPage:lastPage, forceBreak:false});
@@ -4120,7 +4131,7 @@ function _holderInnerBounds(holder){
             page  = st.page;
             tf    = st.frame;
             story = tf.parentStory;
-            curTextFrame = tf;              // ★ 新增：切到新框后更新全局指针
+            curTextFrame = tf;              // Update the global pointer after switching frames
         }
         var np  = doc.pages.add(LocationOptions.AFTER, currentPage);
         var nft = createTextFrameOnPage(np, __CURRENT_LAYOUT);
@@ -4149,14 +4160,13 @@ function _holderInnerBounds(holder){
     __trimTrailingEmptyFrames(story);
     __trimTrailingEmptyPages(doc);
     try { fixAllTables(); } catch(_) {}
-                  // ★ 新增：切到新框后更新全局指针
 
-        // （可选）导出 IDML
+        // Optional IDML export
         if (%AUTO_EXPORT%) {
             try {
                 var outFile = File("%OUT_IDML%");
                 doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
-            } catch(ex) { alert("导出 IDML 失败：" + ex); }
+            } catch(ex) { alert("Failed to export IDML: " + ex); }
         }
         try{
             if (__origScriptUnit !== null) app.scriptPreferences.measurementUnit = __origScriptUnit;
@@ -4212,7 +4222,7 @@ def build_style_lines(levels_used):
 
 
 def build_toc_entries(levels_used):
-    # （保留你之前的 TOC 部分，这里不再额外插入）
+    # TOC handling stays as before; nothing extra inserted here
     return ""
 
 
@@ -4255,26 +4265,26 @@ class ImageSpec:
         return f'''(function(){{
               log("[PY][m_img] {src_for_log} inline={inline_for_log}");
               try {{
-                // 0) 环境检查
+                // 0) Environment checks
                 log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
                     + " typeof addImageAtV2=" + (typeof addImageAtV2)
                     + " typeof _normPath=" + (typeof _normPath));
                 log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
 
-                // 1) 排版溢出
+                // 1) Overset diagnostics
                 try{{ if(typeof flushOverflow==="function"){{ var _rs=flushOverflow(story,page,tf);
                   if(_rs&&_rs.frame&&_rs.page){{ page=_rs.page; tf=_rs.frame; story=tf.parentStory; curTextFrame=tf; }} }} }}catch(_){{
                 }}
 
-                // 2) 锚点
+                // 2) Anchor diagnostics
                 var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
-                // 3) 路径
+                // 3) Path diagnostics
                 var f=_normPath("{_js_escape_simple(src_for_log)}");
                 log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
 
                 if(f&&f.exists){{
                   var spec={spec_js};
-                  var inl=_trim(spec.inline); // 兼容 InDesign 2020
+                  var inl=_trim(spec.inline); // InDesign 2020 compatible flag
                   log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
 
                   if(inl==="0"||/^false$/i.test(inl)){{
@@ -4356,6 +4366,12 @@ class ImageSpec:
             ("wordPageWidth", self.get("wordPageWidth")),
             ("wordPageHeight", self.get("wordPageHeight")),
             ("wordPageSeq", self.get("wordPageSeq")),
+            ("wordMarginTop", self.get("wordMarginTop")),
+            ("wordMarginBottom", self.get("wordMarginBottom")),
+            ("wordMarginLeft", self.get("wordMarginLeft")),
+            ("wordMarginRight", self.get("wordMarginRight")),
+            ("wordInnerWidth", self.get("wordInnerWidth")),
+            ("wordInnerHeight", self.get("wordInnerHeight")),
         ]
         parts = [f'{k}:"{_js_escape_simple(v)}"' for k, v in ordered_keys]
         parts.append(f"forceBlock:{str(self.force_block).lower()}")
@@ -4420,6 +4436,12 @@ class FrameSpec:
             "wordPageWidth",
             "wordPageHeight",
             "wordPageSeq",
+             "wordMarginTop",
+             "wordMarginBottom",
+             "wordMarginLeft",
+             "wordMarginRight",
+             "wordInnerWidth",
+             "wordInnerHeight",
         ]
         parts = [f'{k}:"{_js_escape_simple(self.attrs.get(k, ""))}"' for k in keys]
         parts.append(f'text:"{_js_escape_simple(self.text)}"')
@@ -4636,7 +4658,7 @@ def _handle_table_marker(text, add_lines):
     rows = int(obj.get("rows", 0))
     cols = int(obj.get("cols", 0))
     data = obj.get("data", [])
-    # rows/cols/data 保留在此，便于调试时断点查看
+    # Keep rows/cols/data handy for easier debugging breakpoints
     add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
     return True
 
@@ -4777,14 +4799,14 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
 
     style_lines = build_style_lines(levels_used)
 
-    # 构造图片检索目录（新增）
+    # Build image lookup directories
     img_dirs = [
         OUT_DIR,
         os.path.join(OUT_DIR, "assets"),
         os.path.dirname(XML_PATH) or OUT_DIR,
         os.path.join(os.path.dirname(XML_PATH) or OUT_DIR, "assets"),
     ]
-    # 去重 & 规范化
+    # Deduplicate and normalize
     _seen = set();
     _norm = []
     for d in img_dirs:
@@ -4804,47 +4826,47 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     jsx = jsx.replace("%FN_FALLBACK_PT%", str(FN_FALLBACK_PT))
     jsx = jsx.replace("%FN_FALLBACK_LEAD%", str(FN_FALLBACK_LEAD))
     jsx = jsx.replace("%LOG_PATH%", LOG_PATH.replace("\\", "/"))
-    jsx = jsx.replace("%LOG_WRITE%", "true" if LOG_WRITE else "false")  # ← 新增
+    jsx = jsx.replace("%LOG_WRITE%", "true" if LOG_WRITE else "false")  # Inject log toggle
     jsx = jsx.replace("__STYLE_LINES__", style_lines)
     jsx = jsx.replace("__ADD_LINES__", "\n    ".join(add_lines))
     jsx = jsx.replace("%IMG_DIRS_JSON%", json.dumps(_norm).replace("\\", "\\\\"))
 
     with open(jsx_path, "w", encoding="utf-8") as f:
         f.write(jsx)
-    print("[OK] JSX 写入:", jsx_path)
+    print("[OK] JSX written:", jsx_path)
     if LOG_WRITE:
-        print("[INFO] 日志写入:", LOG_PATH)
-    # 在 write_jsx() 末尾、写完 add_lines 之后临时加一行：
-    print("[DEBUG] JSX 是否包含 addImageAtV2：", any("addImageAtV2(" in ln for ln in add_lines))
+        print("[INFO] Log written:", LOG_PATH)
+    # Temporary instrumentation after appending add_lines
+    print("[DEBUG] JSX includes addImageAtV2:", any("addImageAtV2(" in ln for ln in add_lines))
 
 
-# ========== 调用 InDesign ==========
+# ========== InDesign automation ==========
 def run_indesign_windows(jsx_path):
     try:
         import win32com.client  # pip install pywin32
     except Exception as e:
-        print("[WARN] 未安装 pywin32：", e)
+        print("[WARN] pywin32 not installed:", e)
         return False
 
     app = None
     for pid in WIN_PROGIDS:
         try:
             app = win32com.client.Dispatch(pid)
-            print(f"[OK] 连接 InDesign: {pid}")
+            print(f"[OK] Connected to InDesign: {pid}")
             break
         except Exception:
             app = None
 
     if not app:
-        print("[ERR] 未找到 InDesign COM 接口")
+        print("[ERR] Unable to locate InDesign COM interface")
         return False
 
     try:
         app.DoScript(jsx_path, 1246973031)  # 1246973031 = JavaScript
-        print("[OK] 已执行 JSX")
+        print("[OK] JSX executed")
         return True
     except Exception as e:
-        print("[ERR] DoScript 执行失败：", e)
+        print("[ERR] DoScript failed:", e)
         return False
 
 
@@ -4882,54 +4904,54 @@ def run_indesign_macos(jsx_path):
             activate
             do script (POSIX file "{jsx_escaped}") language javascript
         end tell'''
-        print(f"[macOS] 尝试调用 InDesign: {app_name}")
+        print(f"[macOS] Trying InDesign app: {app_name}")
         try:
             p = subprocess.Popen(["osascript", "-e", osa], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             out, err = p.communicate()
             if p.returncode == 0:
-                print("[OK] osascript 返回 0；已向 InDesign 发送脚本。")
+                print("[OK] osascript returned 0; script dispatched to InDesign.")
                 if out.strip():
                     print("[osascript out]", out.strip())
                 return True
             else:
-                print("[ERR] osascript 返回码:", p.returncode)
+                print("[ERR] osascript return code:", p.returncode)
                 if err.strip():
                     print("[osascript err]", err.strip())
         except Exception as e:
-            print(f"[ERR] 调用 {app_name} 失败：{e}")
+            print(f"[ERR] Failed to launch {app_name}: {e}")
 
-    print("[ERR] 无法调用任何已知的 InDesign 应用名。可设置环境变量 MAC_APP_NAME=你的应用名 再试。")
+    print("[ERR] Unable to call any known InDesign bundle. Set MAC_APP_NAME to your app name and retry.")
     return False
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="DOCX → XML → JSX → InDesign 自动排版工具"
+        description="DOCX -> XML -> JSX -> InDesign automation helper"
     )
     parser.add_argument(
         "docx",
         nargs="?",
-        help="待转换的 DOCX 文件（默认使用脚本目录下的 1.docx）",
+        help="DOCX file to convert (defaults to 1.docx beside this script)",
     )
     parser.add_argument(
         "--mode",
         choices=("heading", "regex", "hybrid"),
         default="heading",
-        help="DOCXOutlineExporter 的解析模式（默认 heading）",
+        help="DOCXOutlineExporter parsing mode (default heading)",
     )
     parser.add_argument(
         "--skip-docx",
         action="store_true",
-        help="跳过 DOCX→XML 流程，直接使用现有 XML（需保证 XML 存在）",
+        help="Skip DOCX->XML conversion and reuse the existing XML (must exist)",
     )
     parser.add_argument(
         "--xml-path",
-        help="显式指定 XML 输入/输出路径（默认 formatted_output.xml）",
+        help="Explicit XML input/output path (default formatted_output.xml)",
     )
     parser.add_argument(
         "--no-run",
         action="store_true",
-        help="只生成 XML/JSX，不调用 InDesign",
+        help="Only generate XML/JSX without calling InDesign",
     )
     parser.add_argument(
         "--no-images",
@@ -4944,19 +4966,19 @@ def main():
 
     if args.skip_docx:
         if not os.path.exists(XML_PATH):
-            print(f"[ERR] --skip-docx 指定但未找到 XML：{XML_PATH}")
+            print(f"[ERR] --skip-docx set but XML not found: {XML_PATH}")
             return
-        print(f"[INFO] 跳过 DOCX → XML，直接使用：{XML_PATH}")
+        print(f"[INFO] Skipping DOCX -> XML, reusing: {XML_PATH}")
     else:
         input_file = os.path.abspath(args.docx or "1.docx")
         if not os.path.exists(input_file):
-            print(f"[ERR] 找不到 DOCX：{input_file}")
+            print(f"[ERR] DOCX not found: {input_file}")
             return
         exporter = DOCXOutlineExporter(input_file, mode=args.mode)
         exporter.process(XML_PATH)
 
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
-    print(f"[INFO] 解析了 {len(paragraphs)} 段；示例： {paragraphs[:3]}")
+    print(f"[INFO] Parsed {len(paragraphs)} paragraphs; sample: {paragraphs[:3]}")
 
     write_jsx(JSX_PATH, paragraphs, skip_images=args.no_images)
 
@@ -4967,13 +4989,13 @@ def main():
         elif AUTO_RUN_MACOS and sys.platform == "darwin":
             ran = run_indesign_macos(JSX_PATH)
 
-    print("\n=== 完成 ===")
+    print("\n=== DONE ===")
     print("XML: ", XML_PATH)
     print("JSX: ", JSX_PATH)
     print("LOG: ", LOG_PATH)
     print("IDML:", IDML_OUT_PATH)
     if ran:
-        print("InDesign 已执行 JSX。若设置 AUTO_EXPORT_IDML=True，将在脚本目录生成 output.idml。")
+        print("InDesign has executed the JSX; AUTO_EXPORT_IDML=True will create output.idml beside the script.")
 
 
 

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 DOCX -> XML exporter (v13, style-switchable build)
 Fixed structural/indentation errors and added stable table/image export.
@@ -68,7 +68,7 @@ XP_RUN_EXTENT = etree.XPath(
 # Text boxes (DrawingML & VML)
 XP_RUN_TEXTBOX = etree.XPath(".//w:drawing//wps:txbx", namespaces=NSMAP_ALL)
 XP_RUN_TEXTBOX_VML = etree.XPath(".//w:pict//v:textbox", namespaces=NSMAP_ALL)
-# 鐗堝紡涓庡畾浣?
+# Floating anchors and positioning
 XP_RUN_ANCHOR = etree.XPath(".//w:drawing//wp:anchor", namespaces=NSMAP_ALL)
 XP_RUN_INLINE = etree.XPath(".//w:drawing//wp:inline", namespaces=NSMAP_ALL)
 XP_WRAP_ANY  = etree.XPath(".//wp:anchor/*[starts-with(local-name(), 'wrap')]", namespaces=NSMAP_ALL)
@@ -86,16 +86,16 @@ XP_RUN_LAST_PAGEBREAK = etree.XPath(".//w:lastRenderedPageBreak", namespaces=NSM
 
 # --------- Regex patterns (order = priority) ---------
 REGEX_ORDER: List[Tuple[str, Optional[str]]] = [
-    ("fixed", r'^绗琜\d涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+绔燵 銆€\t]*'),
-    ("fixed", r'^绗琜\d涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+鑺俒 銆€\t]*'),
-    ("fixed", r'^绗琜\d涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+鏉 銆€\t]*'),
+    ("fixed", r'^\u7b2c[\d\u96f6\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u767e\u5343\u4e24]+\u7ae0[ \t]*'),
+    ("fixed", r'^\u7b2c[\d\u96f6\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u767e\u5343\u4e24]+\u7bc7[ \t]*'),
+    ("fixed", r'^\u7b2c[\d\u96f6\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u767e\u5343\u4e24]+\u8282[ \t]*'),
     ("numeric_dotted", None),
-    ("fixed", r'^[（(]\s*\d+\s*[)）]'),
-    ("fixed", r'^\d+\s*[)）]'),
-    ("fixed", r'^[涓€浜屼笁鍥涗簲鍏竷鍏節鍗佺櫨]+銆乗s*'),
+    ("fixed", r'^[\uff08(]\s*\d+\s*[)\uff09]'),
+    ("fixed", r'^\d+\s*[)\uff09]'),
+    ("fixed", r'^[\u96f6\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\u767e\u5343\u4e24]+[\u3001.\uff0e)]\s*'),
 ]
 COMPILED_FIXED: List[Optional[re.Pattern]] = []
-NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)[\.．]?\s*')
+NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.\uff0e]\d+)*)[\.\uff0e]?\s*')
 
 def _emu_to_pt(val_emu: Optional[str]) -> Optional[float]:
     try:
@@ -282,7 +282,7 @@ class NumericDepthSplitter(Splitter):
         m = NUMERIC_DOTTED.match(line)
         if not m:
             return False
-        segs = re.split(r'[\.．]', m.group(1))
+        segs = re.split(r'[\.\uff0e]', m.group(1))
         return len([s for s in segs if s]) == self.depth
 
 class DOCXOutlineExporter:
@@ -309,6 +309,7 @@ class DOCXOutlineExporter:
         self._frame_seq = 0
         self._word_page_width_pt, self._word_page_height_pt = self._resolve_word_page_size()
         self._word_page_seq = 1
+        self._paragraph_section_state: Dict[int, Dict[str, Any]] = {}
 
     def _resolve_word_page_size(self) -> Tuple[float, float]:
         try:
@@ -330,13 +331,40 @@ class DOCXOutlineExporter:
         except Exception:
             return 0.0, 0.0
 
-    def _word_page_size_attrs(self) -> Dict[str, str]:
-        attrs = {}
-        if self._word_page_width_pt:
-            attrs["wordPageWidth"] = f"{self._word_page_width_pt:.2f}pt"
-        if self._word_page_height_pt:
-            attrs["wordPageHeight"] = f"{self._word_page_height_pt:.2f}pt"
+    def _word_layout_attrs(self, section_state: Optional[Dict[str, Any]]) -> Dict[str, str]:
+        attrs: Dict[str, str] = {}
+        state = section_state or {}
+        width = state.get("pageWidthPt") or self._word_page_width_pt
+        height = state.get("pageHeightPt") or self._word_page_height_pt
+        margins = dict(state.get("pageMarginsPt") or {}) or dict(
+            (self.default_section_state or {}).get("pageMarginsPt") or {}
+        )
+        left = margins.get("left", 0.0) or 0.0
+        right = margins.get("right", 0.0) or 0.0
+        top = margins.get("top", 0.0) or 0.0
+        bottom = margins.get("bottom", 0.0) or 0.0
+        inner_w = max((width or 0.0) - left - right, 1.0) if width else 0.0
+        inner_h = max((height or 0.0) - top - bottom, 1.0) if height else 0.0
+        if width:
+            attrs["wordPageWidth"] = f"{width:.2f}pt"
+        if height:
+            attrs["wordPageHeight"] = f"{height:.2f}pt"
+        attrs["wordMarginLeft"] = f"{left:.2f}pt"
+        attrs["wordMarginRight"] = f"{right:.2f}pt"
+        attrs["wordMarginTop"] = f"{top:.2f}pt"
+        attrs["wordMarginBottom"] = f"{bottom:.2f}pt"
+        if inner_w:
+            attrs["wordInnerWidth"] = f"{inner_w:.2f}pt"
+        if inner_h:
+            attrs["wordInnerHeight"] = f"{inner_h:.2f}pt"
         return attrs
+
+    def _paragraph_section_for(self, paragraph) -> Optional[Dict[str, Any]]:
+        if paragraph is None:
+            return None
+        para_id = id(getattr(paragraph, "_p", paragraph))
+        state = self._paragraph_section_state.get(para_id)
+        return self._copy_section_state(state)
 
     @staticmethod
     def _paragraph_align_token(paragraph) -> str:
@@ -589,7 +617,7 @@ class DOCXOutlineExporter:
 
         return total_x, total_y, width, height
 
-    def _serialize_textbox_node(self, txbx_node) -> Optional[str]:
+    def _serialize_textbox_node(self, txbx_node, section_state: Optional[Dict[str, Any]] = None) -> Optional[str]:
         anchor = self._find_ancestor_anchor(txbx_node)
         attrs = self._collect_anchor_attrs(anchor)
         local_off_x, local_off_y, local_width, local_height = self._collect_txbx_offsets(txbx_node)
@@ -642,19 +670,19 @@ class DOCXOutlineExporter:
         attrs["id"] = self._next_frame_id()
         attrs["pageHint"] = attrs.get("anchorId") or attrs.get("docPrId") or attrs.get("docPrName") or ""
         attrs["wordPageSeq"] = str(self._word_page_seq)
-        attrs.update(self._word_page_size_attrs())
-        text = self._collect_txbx_plain_text(txbx_node).replace("]]", "」」")
+        attrs.update(self._word_layout_attrs(section_state))
+        text = self._collect_txbx_plain_text(txbx_node).replace("]]", "\u300d\u300d")
         attr_str = " ".join(f'{k}="{MyDOCNode._escape_attr(str(v))}"' for k,v in attrs.items() if v)
         return f"[[FRAME {attr_str}]]{text}[[/FRAME]]"
 
-    def _extract_textboxes_from_run(self, run_element) -> List[str]:
+    def _extract_textboxes_from_run(self, run_element, section_state: Optional[Dict[str, Any]] = None) -> List[str]:
         markers: List[str] = []
         try:
             nodes = XP_RUN_TEXTBOX(run_element) or []
         except Exception:
             nodes = []
         for node in nodes:
-            marker = self._serialize_textbox_node(node)
+            marker = self._serialize_textbox_node(node, section_state=section_state)
             if marker:
                 markers.append(marker)
         # Legacy VML textboxes can be added here if needed
@@ -971,7 +999,7 @@ class DOCXOutlineExporter:
         if numFmt == "upperRoman":
             return _int_to_roman(val, upper=True)
         if numFmt == "bullet":
-            return "•"
+            return "?"
         return str(val)
 
     def _build_label_from_lvlText(self, anid: Optional[int], ilvl: int, counters: List[int]) -> str:
@@ -1105,9 +1133,11 @@ class DOCXOutlineExporter:
         return {k:v for k,v in attrs.items() if v}
 
     # ---------- Text with inline refs + numbering + styles ----------
-    def _paragraph_text_with_refs(self, paragraph, include_pstyle: bool = True) -> str:
+    def _paragraph_text_with_refs(self, paragraph, include_pstyle: bool = True, section_state: Optional[Dict[str, Any]] = None) -> str:
         chunks = []
         para_align = self._paragraph_align_token(paragraph)
+        if section_state is None:
+            section_state = self._paragraph_section_for(paragraph)
         # list numbering
         try:
             label = self.list_label_for_paragraph(paragraph)
@@ -1262,13 +1292,13 @@ class DOCXOutlineExporter:
                         if im is not None and getattr(im, "px_width", None) and getattr(im, "px_height", None):
                             pxw = str(int(im.px_width))
                             pxh = str(int(im.px_height))
-                        # fallback: if px not available, leave blank (IDML绔寜 w/h pt 澶勭悊鍗冲彲)
+                        # fallback: if px not available, leave blank (InDesign handles pt sizing)
                     except Exception:
                         pass
 
                     if (not posV) and offY:
-                        posV = "paragraph"  # 璁?offY 鏈夊弬鐓?
-                    out_path = out_path.replace("\\", "/")  # 缁熶竴涓烘鏂滄潬
+                        posV = "paragraph"  # Treat offY-only case as paragraph reference
+                    out_path = out_path.replace("\\", "/")  # Normalize to forward slashes
 
 
                     inline_flag = "1" if is_inline else "0"
@@ -1284,7 +1314,10 @@ class DOCXOutlineExporter:
                         'simplePosY="{simplePosY}" effectL="{effectL}" effectT="{effectT}" effectR="{effectR}" effectB="{effectB}" '
                         'sizeRelH="{sizeRelH}" sizeRelHref="{sizeRelHref}" sizeRelV="{sizeRelV}" sizeRelVref="{sizeRelVref}" '
                         'docPrId="{docPrId}" docPrName="{docPrName}" anchorId="{anchorId}" anchorEditId="{anchorEditId}" '
-                        'wordPageWidth="{wordPageWidth}" wordPageHeight="{wordPageHeight}" wordPageSeq="{wordPageSeq}"]]'
+                        'wordPageWidth="{wordPageWidth}" wordPageHeight="{wordPageHeight}" wordPageSeq="{wordPageSeq}" '
+                        'wordMarginTop="{wordMarginTop}" wordMarginBottom="{wordMarginBottom}" '
+                        'wordMarginLeft="{wordMarginLeft}" wordMarginRight="{wordMarginRight}" '
+                        'wordInnerWidth="{wordInnerWidth}" wordInnerHeight="{wordInnerHeight}"]]'
                     )
                     fmt_vals = dict(
                         src=out_path,
@@ -1338,11 +1371,11 @@ class DOCXOutlineExporter:
                         wordPageHeight="",
                         wordPageSeq="",
                     )
-                    fmt_vals.update(self._word_page_size_attrs())
+                    fmt_vals.update(self._word_layout_attrs(section_state))
                     fmt_vals["wordPageSeq"] = str(self._word_page_seq)
                     chunks.append(img_tpl.format(**fmt_vals))
 
-            frame_markers = self._extract_textboxes_from_run(r_el)
+            frame_markers = self._extract_textboxes_from_run(r_el, section_state=section_state)
             if frame_markers:
                 chunks.extend(frame_markers)
                 for marker in frame_markers:
@@ -1541,7 +1574,7 @@ class DOCXOutlineExporter:
                 elif kind == "numeric_dotted":
                     m = NUMERIC_DOTTED.match(s)
                     if m:
-                        depth = len([seg for seg in re.split(r'[\.．]', m.group(1)) if seg])
+                        depth = len([seg for seg in re.split(r'[\.\uff0e]', m.group(1)) if seg])
                         return NumericDepthSplitter(depth)
         return None
 
@@ -1611,7 +1644,12 @@ class DOCXOutlineExporter:
         """Yield ('p'/'tbl', object, section_state) in document order."""
         for kind, index, state in self._body_iter_items:
             if kind == 'p':
-                yield ('p', self._doc_paragraphs[index], self._copy_section_state(state))
+                paragraph = self._doc_paragraphs[index]
+                state_copy = self._copy_section_state(state)
+                key = getattr(getattr(paragraph, "_p", None), "__hash__", None)
+                para_id = id(getattr(paragraph, "_p", paragraph))
+                self._paragraph_section_state[para_id] = self._copy_section_state(state_copy)
+                yield ('p', paragraph, state_copy)
             elif kind == 'tbl':
                 yield ('tbl', self._doc_tables[index], self._copy_section_state(state))
 
@@ -1621,7 +1659,7 @@ class DOCXOutlineExporter:
         stack: List[MyDOCNode] = [self.root]
 
         def _tbl_width_pt(tbl_el):
-            # 璇诲彇 w:tblW锛涜嫢涓?pct锛岀敤 480pt 杩戜技 100%锛堥伩鍏嶇己椤甸潰瀹芥椂褰掍竴澶辫触锛?
+            # Read w:tblW; if type=pct, default to ~480pt to avoid missing page width
             tw = tbl_el.find("./w:tblPr/w:tblW", NSMAP)
             if tw is not None:
                 t = tw.get(f"{{{W_NS}}}type")
@@ -1632,13 +1670,13 @@ class DOCXOutlineExporter:
                         return max(pt, 1.0)
                 if v and t == "pct":
                     try:
-                        return max((float(v) / 50.0) * 4.8, 1.0)  # 100%鈮?80pt
+                        return max((float(v) / 50.0) * 4.8, 1.0)  # 100% ~= 480pt
                     except Exception:
                         pass
             return 480.0
 
         def _expanded_cols(row_cells):
-            # 璁＄畻鈥滆€冭檻 colspan 灞曞紑鈥濈殑鍒楁暟
+            # Count columns after expanding colspans
             n = 0
             for cell in row_cells:
                 try:
@@ -1663,7 +1701,7 @@ class DOCXOutlineExporter:
                     level = lvl2 if lvl2 is not None else 0
 
                 if level > 0 and (raw_text or True):
-                    # 璋冩暣鏍?
+                    # Adjust heading stack
                     while len(stack) > level:
                         stack.pop()
                     while len(stack) < level:
@@ -1674,7 +1712,7 @@ class DOCXOutlineExporter:
                     parent = stack[level - 1]
                     index = sum(1 for c in parent.children if c.level == level) + 1
                     props = {"style": getattr(p.style, "name", None), "outline_level": level, "mode": "heading"}
-                    heading_text = self._paragraph_text_with_refs(p, include_pstyle=False) or raw_text
+                    heading_text = self._paragraph_text_with_refs(p, include_pstyle=False, section_state=section_state) or raw_text
                     node = MyDOCNode(name=heading_text, level=level, index=index,
                                      parent=parent, element_type="heading", properties=props)
                     parent.add_child(node)
@@ -1685,18 +1723,18 @@ class DOCXOutlineExporter:
                         stack = stack[:level + 1]
                     current = node
                 else:
-                    text_with_refs = self._paragraph_text_with_refs(p, include_pstyle=True)
+                    text_with_refs = self._paragraph_text_with_refs(p, include_pstyle=True, section_state=section_state)
                     if text_with_refs or raw_text:
                         target = current if current is not None else self.root
                         if text_with_refs.strip():
                             target.body_paragraphs.append(text_with_refs)
 
             elif kind == "tbl":
-                # === 琛ㄦ牸瀵煎嚭锛氫繚璇?cols 涓?colWidthsPt 鍑嗙‘ ===
+                # === Table export: keep cols aligned with colWidthsPt ===
                 tbl_el = obj._element  # w:tbl
                 tableWidthPt = _tbl_width_pt(tbl_el)
 
-                # 1) 琛ㄥ睘鎬?
+                # 1) Table properties
                 headerRows = 1 if tbl_el.find("./w:tblPr/w:tblHeader", NSMAP) is not None else 0
                 jc = tbl_el.find("./w:tblPr/w:jc", NSMAP)
                 tableAlign = (jc.get(f"{{{W_NS}}}val") if jc is not None else None) or "left"
@@ -1709,7 +1747,7 @@ class DOCXOutlineExporter:
                         return None
                     sz = ed.get(f"{{{W_NS}}}sz")
                     try:
-                        return (float(sz) or 4.0) / 8.0  # Word sz=4鈮?.5pt
+                        return (float(sz) or 4.0) / 8.0  # Word sz=4 is roughly 0.5pt
                     except Exception:
                         return None
 
@@ -1729,7 +1767,7 @@ class DOCXOutlineExporter:
 
                     cellPadding = {"t": _pad("top"), "l": _pad("left"), "b": _pad("bottom"), "r": _pad("right")}
 
-                # 2) 璇诲彇琛ㄦ牸鍐呭锛堝惈鍚堝苟/瀵归綈/搴曠汗锛夛紝鍏堝緱 rows_data
+                # 2) Read table content (merges/alignment/shading) to build rows_data
                 rows_data: List[List[dict]] = []
                 MAX_ROWS, MAX_COLS, MAX_SPAN = 500, 200, 50
                 all_tr = tbl_el.findall("./w:tr", NSMAP)
@@ -1744,7 +1782,7 @@ class DOCXOutlineExporter:
                             break
                         tcPr = tc.find("./w:tcPr", NSMAP)
 
-                        # 姘村钩/鍨傜洿瀵归綈
+                        # Horizontal / vertical alignment
                         align = "left"
                         p_first = tc.find("./w:p/w:pPr/w:jc", NSMAP)
                         if p_first is not None and p_first.get(f"{{{W_NS}}}val"):
@@ -1754,7 +1792,7 @@ class DOCXOutlineExporter:
                         if vAli is not None and vAli.get(f"{{{W_NS}}}val"):
                             valign = vAli.get(f"{{{W_NS}}}val")
 
-                        # 搴曠汗
+                        # Cell shading
                         shading = None
                         sh = tcPr.find("./w:shd", NSMAP) if tcPr is not None else None
                         if sh is not None and sh.get(f"{{{W_NS}}}fill"):
@@ -1772,13 +1810,13 @@ class DOCXOutlineExporter:
                                 colspan = 1
                         colspan = max(1, min(MAX_SPAN, colspan))
 
-                        # vMerge锛歳estart / continue
+                        # vMerge restart / continue
                         vmerge = tcPr.find("./w:vMerge", NSMAP) if tcPr is not None else None
                         vval = vmerge.get(f"{{{W_NS}}}val") if vmerge is not None else None
                         is_continue = (vmerge is not None and (vval in (None, "", "continue", "cont", "1")))
                         is_restart = (vmerge is not None and (vval in ("restart", "rest", "0")))
 
-                        # 鏂囨湰锛堝惈鎹㈣/鑴氭敞灏炬敞锛?
+                        # Cell text (line breaks, note placeholders)
                         texts = []
                         for p_el in tc.findall(".//w:p", NSMAP):
                             parts = []
@@ -1803,18 +1841,18 @@ class DOCXOutlineExporter:
                             c_vis += 1
                             continue
 
-                                                # 璁＄畻 rowspan锛氭寜鈥滃悓涓€鍙鍒椻€濆悜涓嬬粺璁?continue锛堜慨澶嶈鎵╁睍锛?
+                        # Compute rowspan by checking for continue markers below
                         rowspan = 1
                         if is_restart:
-                            # 浠モ€滃睍寮€鍚庣殑鍙鍒楃储寮曗€濆榻愬悓鍒楀崟鍏冩牸锛岄€愯妫€鏌?vMerge 鐘舵€?
-                            col_index = c_vis  # 褰撳墠鏍煎湪鏈鐨勫彲瑙嗗垪绱㈠紩锛堜粠 0 璧凤級
+                            # Locate the visible column after expansion to confirm vMerge state
+                            col_index = c_vis  # Visible column index within the row (0-based)
                             down = r_idx + 1
                             while down < len(all_tr):
                                 tlist = all_tr[down].findall("./w:tc", NSMAP)
                                 if not tlist:
                                     break
 
-                                # 鍦ㄨ琛屾寜 gridSpan 灞曞紑鍚庯紝鎵惧埌瑕嗙洊 col_index 鐨勫崟鍏冩牸
+                                # Expand gridSpan for that row and find the cell covering col_index
                                 cur_col = 0
                                 target_tc = None
                                 for n_tc in tlist:
@@ -1834,7 +1872,7 @@ class DOCXOutlineExporter:
                                 if target_tc is None:
                                     break
 
-                                # 浠呭綋鈥滃悓鍒楀崟鍏冩牸鈥濅负 continue 鏃舵墠绱 rowspan锛涢亣鍒?restart 鎴栨棤 vMerge 鍗冲仠姝?
+                                # Continue -> extend rowspan; restart/None -> stop
                                 n_pr = target_tc.find("./w:tcPr", NSMAP)
                                 n_vm = n_pr.find("./w:vMerge", NSMAP) if n_pr is not None else None
                                 if n_vm is None:
@@ -1858,13 +1896,13 @@ class DOCXOutlineExporter:
 
                     rows_data.append(row_cells)
 
-                # 3) 鐪熷疄鍒楁暟锛堣€冭檻 colspan 灞曞紑锛?
+                # 3) Actual column count (after expanding colspans)
                 rows = len(rows_data)
                 cols = 0
                 for r in rows_data:
                     cols = max(cols, _expanded_cols(r))
 
-                # 4) 鐢熸垚 colWidthsPt
+                # 4) Compute colWidthsPt
                 colWidthsPt: List[float] = []
                 grid_cols = tbl_el.findall("./w:tblGrid/w:gridCol", NSMAP)
                 for gc in grid_cols:
@@ -1874,7 +1912,7 @@ class DOCXOutlineExporter:
                         colWidthsPt.append(round(pt, 2))
 
                 if (not colWidthsPt) or (len(colWidthsPt) != cols):
-                    # 4.1 灏濊瘯鐢ㄩ琛?tcW锛坉xa/pct锛夛紝鎸?colspan 骞冲潎鍒嗛厤鍒扮綉鏍煎垪
+                    # 4.1 Prefer first-row tcW (dxa/pct) and split across each colspan
                     first_tr = all_tr[0] if all_tr else None
                     widths_acc = [0.0] * max(cols, len(colWidthsPt) or 0 or cols)
                     used_tcW = False
@@ -1883,7 +1921,7 @@ class DOCXOutlineExporter:
                         cur_col = 0
                         for tc in tcs:
                             tcPr = tc.find("./w:tcPr", NSMAP)
-                            # 瀹藉害
+                            # Cell width
                             wpt = None
                             if tcPr is not None:
                                 tcW = tcPr.find("./w:tcW", NSMAP)
@@ -1895,10 +1933,10 @@ class DOCXOutlineExporter:
                                     elif wtype == "pct":
                                         try:
                                             pct = float(wval) / 50.0  # 100% = 5000
-                                            wpt = pct * 4.8  # 杩戜技鍒?pt
+                                            wpt = pct * 4.8  # Approximate pt conversion
                                         except Exception:
                                             wpt = None
-                            # 璺ㄥ垪
+                            # gridSpan
                             gridSpan = tcPr.find("./w:gridSpan", NSMAP) if tcPr is not None else None
                             cs = 1
                             if gridSpan is not None and gridSpan.get(f"{{{W_NS}}}val"):
@@ -1917,11 +1955,11 @@ class DOCXOutlineExporter:
                     if used_tcW:
                         colWidthsPt = [round(max(1.0, v), 2) for v in widths_acc[:cols]]
                     else:
-                        # 4.2 瀹屽叏鎷夸笉鍒帮細鐢ㄨ〃瀹界瓑鍒?
+                        # 4.2 Otherwise split the table width evenly
                         each = max(1.0, tableWidthPt / float(cols or 1))
                         colWidthsPt = [round(each, 2) for _ in range(cols)]
 
-                # 4.3 鎴柇/琛ラ綈锛屽苟鎸夎〃瀹藉綊涓€
+                # 4.3 Trim/pad column widths and rescale to the table width
                 if len(colWidthsPt) > cols:
                     colWidthsPt = colWidthsPt[:cols]
                 elif len(colWidthsPt) < cols:
@@ -1932,7 +1970,7 @@ class DOCXOutlineExporter:
                 scale = tableWidthPt / s
                 colWidthsPt = [round(max(1.0, w * scale), 2) for w in colWidthsPt]
 
-                # 鍒楁瘮渚嬶紙渚?InDesign 绔寜妗嗗缂╂斁锛?
+                # Column width ratios (helpful when scaling InDesign frames)
                 _sum = sum(colWidthsPt) or 1.0
                 colWidthFrac = [round(w / _sum, 6) for w in colWidthsPt]
                 table_obj = {
@@ -2062,4 +2100,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
-
