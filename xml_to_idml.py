@@ -274,6 +274,20 @@ function iso() {
          pad(d.getUTCMinutes()) + ":" +
          pad(d.getUTCSeconds()) + "Z";
 }
+function _wordBaseOffset(ref, marginStart){
+  if (ref == null) return 0;
+  var key = String(ref).toLowerCase();
+  if (key==="margin" || key==="paragraph" || key==="column" || key==="line" || key==="text"){
+    return marginStart || 0;
+  }
+  return 0;
+}
+function _clamp01(val){
+  if (typeof val !== "number" || !isFinite(val)) return null;
+  if (val < 0) val = 0;
+  if (val > 1) val = 1;
+  return val;
+}
 (function () {
     app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
     var __origScriptUnit = null, __origViewH = null, __origViewV = null;
@@ -1870,6 +1884,7 @@ if (!gb){
   }
 }
 
+// Word layout mapping helpers
 function addFloatingFrame(tf, story, page, spec){
   try{
   try{ log("[FRAMEFLOAT] enter id="+(spec&&spec.id)+" textLen="+((spec&&spec.text)||"").length); }catch(_){}
@@ -1895,7 +1910,12 @@ function addFloatingFrame(tf, story, page, spec){
   if ((!anchorIP || !anchorIP.isValid) && story && story.isValid && story.insertionPoints && story.insertionPoints.length){
     try{ anchorIP = story.insertionPoints[-1]; }catch(_){}
   }
-  var hintKey = spec && spec.pageHint;
+  var hintKey = "";
+  try{
+    if (spec && typeof spec === "object"){
+      hintKey = spec.pageHint || spec.id || "";
+    }
+  }catch(_ignoreHint){}
   var anchorCtx = null;
   try{
     if (__FLOAT_CTX && __FLOAT_CTX.imgAnchors && hintKey && __FLOAT_CTX.imgAnchors[hintKey]){
@@ -2023,6 +2043,7 @@ function addFloatingFrame(tf, story, page, spec){
     return null;
   }
   var forceSeqBase = seqPageWasApplied;
+  var __frameLocLog = null;
   function _calcBounds(){
     function _metrics(pageObj){
       var pb = pageObj.bounds || [0,0,0,0];
@@ -2081,8 +2102,91 @@ function addFloatingFrame(tf, story, page, spec){
       return base;
     }
 
+    function _frameContentArea(frameObj){
+      try{
+        if (!frameObj || !frameObj.isValid) return null;
+        var gb = frameObj.geometricBounds;
+        if (!gb || gb.length !== 4) return null;
+        var inset = frameObj.textFramePreferences && frameObj.textFramePreferences.insetSpacing;
+        var insetTop = (inset && inset.length>=1) ? inset[0] : 0;
+        var insetLeft = (inset && inset.length>=2) ? inset[1] : 0;
+        var insetBottom = (inset && inset.length>=3) ? inset[2] : 0;
+        var insetRight = (inset && inset.length>=4) ? inset[3] : 0;
+        var top = gb[0] + insetTop;
+        var left = gb[1] + insetLeft;
+        var bottom = gb[2] - insetBottom;
+        var right = gb[3] - insetRight;
+        if (bottom <= top) bottom = top + 1;
+        if (right <= left) right = left + 1;
+        return {top: top, left: left, bottom: bottom, right: right};
+      }catch(_){}
+      return null;
+    }
+
+    function _resolveHostFrame(targetPageObj){
+      function _valid(f){
+        if (!f || !f.isValid) return false;
+        var gb = null;
+        try{ gb = f.geometricBounds; }catch(_){}
+        if (!gb || gb.length !== 4) return false;
+        try{
+          var pg = f.parentPage;
+          if (!pg || !pg.isValid) return false;
+        }catch(_pgErr){
+          return false;
+        }
+        return true;
+      }
+      function _pageId(f){
+        try{
+          var pg = f.parentPage;
+          if (pg && pg.isValid) return pg.id;
+        }catch(_){}
+        return null;
+      }
+      var targetPageId = null;
+      try{
+        if (targetPageObj && targetPageObj.isValid) targetPageId = targetPageObj.id;
+      }catch(_){}
+      function _contains(arr, item){
+        for (var ii=0; ii<arr.length; ii++){
+          if (arr[ii] === item) return true;
+        }
+        return false;
+      }
+      var candidates = [];
+      if (_valid(tf)) candidates.push(tf);
+      try{
+        if (typeof curTextFrame !== "undefined" && _valid(curTextFrame)){
+          if (!_contains(candidates, curTextFrame)) candidates.push(curTextFrame);
+        }
+      }catch(_){}
+      try{
+        var containers = (story && story.isValid && story.textContainers) ? story.textContainers : null;
+        if (containers && containers.length){
+          for (var ci=0; ci<containers.length; ci++){
+            var c = containers[ci];
+            if (_valid(c) && !_contains(candidates, c)){
+              candidates.push(c);
+            }
+          }
+        }
+      }catch(_){}
+      if (!candidates.length) return null;
+      if (targetPageId != null){
+        for (var i=0;i<candidates.length;i++){
+          if (_pageId(candidates[i]) === targetPageId){
+            return candidates[i];
+          }
+        }
+      }
+      return candidates[0];
+    }
+
     var metrics = _metrics(targetPage);
     var baseVals = _computeBase(metrics);
+    var hostFrame = _resolveHostFrame(targetPage);
+    var hostArea = _frameContentArea(hostFrame);
 
     var anchorX = (anchorCtx && anchorCtx.anchorX != null) ? anchorCtx.anchorX : null;
     var anchorY = (anchorCtx && anchorCtx.anchorY != null) ? anchorCtx.anchorY : null;
@@ -2124,17 +2228,42 @@ function addFloatingFrame(tf, story, page, spec){
 
     var wPt=_toPtLocal(spec && spec.w);
     var hPt=_toPtLocal(spec && spec.h);
-    var offXP=_toPtLocal(spec && spec.offX) || 0;
-    var offYP=_toPtLocal(spec && spec.offY) || 0;
-    var pageRefMap = {"page":true,"pagearea":true,"pageedge":true,"margin":true,"spread":true};
+    var wordPageWidth = _toPtLocal(spec && spec.wordPageWidth);
+    var wordPageHeight = _toPtLocal(spec && spec.wordPageHeight);
+    var wordMarginTop    = _toPtLocal(spec && spec.wordMarginTop);
+    var wordMarginBottom = _toPtLocal(spec && spec.wordMarginBottom);
+    var wordMarginLeft   = _toPtLocal(spec && spec.wordMarginLeft);
+    var wordMarginRight  = _toPtLocal(spec && spec.wordMarginRight);
+    var wordInnerWidthVal  = _toPtLocal(spec && spec.wordInnerWidth);
+    var wordInnerHeightVal = _toPtLocal(spec && spec.wordInnerHeight);
+    var effectiveWordInnerWidth  = (wordInnerWidthVal  && wordInnerWidthVal  > 0) ? wordInnerWidthVal  : null;
+    var effectiveWordInnerHeight = (wordInnerHeightVal && wordInnerHeightVal > 0) ? wordInnerHeightVal : null;
+    if (!effectiveWordInnerWidth && wordPageWidth){
+      var derivedInnerW = wordPageWidth - (wordMarginLeft || 0) - (wordMarginRight || 0);
+      if (derivedInnerW > 0) effectiveWordInnerWidth = derivedInnerW;
+    }
+    if (!effectiveWordInnerHeight && wordPageHeight){
+      var derivedInnerH = wordPageHeight - (wordMarginTop || 0) - (wordMarginBottom || 0);
+      if (derivedInnerH > 0) effectiveWordInnerHeight = derivedInnerH;
+    }
+    var offXPWord=_toPtLocal(spec && spec.offX) || 0;
+    var offYPWord=_toPtLocal(spec && spec.offY) || 0;
+    var offXP=offXPWord;
+    var offYP=offYPWord;
+    function _useInnerRefFrame(ref){
+      return ref === "margin" || ref === "column" || ref === "text";
+    }
     var posHrefCalc = posHrefRaw;
     var posVrefCalc = posVrefRaw;
     if (forceSeqBase){
+      var pageRefMap = {"page":true,"pagearea":true,"pageedge":true,"margin":true,"spread":true};
       if (!pageRefMap[posHrefCalc]) posHrefCalc = "page";
       if (!pageRefMap[posVrefCalc]) posVrefCalc = "page";
     }
-    var srcPageWidth = _toPtLocal(spec && spec.wordPageWidth);
-    var srcPageHeight = _toPtLocal(spec && spec.wordPageHeight);
+    var rawInnerH = _useInnerRefFrame(posHrefRaw);
+    var rawInnerV = _useInnerRefFrame(posVrefRaw);
+    var layoutInnerH = _useInnerRefFrame(posHrefCalc);
+    var layoutInnerV = _useInnerRefFrame(posVrefCalc) || posVrefCalc === "paragraph";
     function _destWidthFor(ref, m){
       if (ref === "margin" || ref === "column") return m.innerWidth;
       return m.pageWidth;
@@ -2143,14 +2272,28 @@ function addFloatingFrame(tf, story, page, spec){
       if (ref === "margin" || ref === "column") return m.innerHeight;
       return m.pageHeight;
     }
-    var destWidth = _destWidthFor(posHrefCalc, metrics);
-    var destHeight = _destHeightFor(posVrefCalc, metrics);
-    if (srcPageWidth && srcPageWidth > 0 && destWidth){
-      offXP = offXP * (destWidth / srcPageWidth);
+    var layoutWidthRef = _destWidthFor(posHrefCalc, metrics);
+    var layoutHeightRef = _destHeightFor(posVrefCalc, metrics);
+    var wordWidthRef = rawInnerH ? (effectiveWordInnerWidth || wordPageWidth) : wordPageWidth;
+    var wordHeightRef = rawInnerV ? (effectiveWordInnerHeight || wordPageHeight) : wordPageHeight;
+    if (wordWidthRef && wordWidthRef > 0 && layoutWidthRef && layoutWidthRef > 0){
+      offXP = offXPWord * (layoutWidthRef / wordWidthRef);
+    } else {
+      offXP = offXPWord;
     }
-    if (srcPageHeight && srcPageHeight > 0 && destHeight){
-      offYP = offYP * (destHeight / srcPageHeight);
+    if (wordHeightRef && wordHeightRef > 0 && layoutHeightRef && layoutHeightRef > 0){
+      offYP = offYPWord * (layoutHeightRef / wordHeightRef);
+    } else {
+      offYP = offYPWord;
     }
+    function _scaleDimension(dim, srcSpan, destSpan){
+      if (!(dim > 0 && srcSpan && destSpan && srcSpan > 0 && destSpan > 0)) return dim;
+      var scale = destSpan / srcSpan;
+      if (!isFinite(scale) || scale <= 0) return dim;
+      return dim * scale;
+    }
+    var wPtScaled = rawInnerH ? _scaleDimension(wPt, wordWidthRef, layoutWidthRef) : wPt;
+    var hPtScaled = rawInnerV ? _scaleDimension(hPt, wordHeightRef, layoutHeightRef) : hPt;
     var anchorXEff = _anchorXForMetrics(metrics);
     var anchorYEff = _anchorYForMetrics(metrics);
 
@@ -2179,8 +2322,8 @@ function addFloatingFrame(tf, story, page, spec){
 
     var maxWidth = Math.max(1, horizArea.right - horizArea.left);
     var maxHeight = Math.max(1, vertArea.bottom - vertArea.top);
-    var targetW = wPt>0 ? Math.min(wPt, maxWidth) : maxWidth;
-    var targetH = hPt>0 ? Math.min(hPt, maxHeight) : maxHeight;
+    var targetW = wPtScaled>0 ? Math.min(wPtScaled, maxWidth) : maxWidth;
+    var targetH = hPtScaled>0 ? Math.min(hPtScaled, maxHeight) : maxHeight;
     if (targetW <= 0) targetW = maxWidth;
     if (targetH <= 0) targetH = maxHeight;
 
@@ -2201,6 +2344,7 @@ function addFloatingFrame(tf, story, page, spec){
         vertArea = _areaBounds(posVrefCalc, metrics);
         baseVals = _computeBase(metrics);
         pageHeight = metrics.pageHeight;
+        _refreshSpanRefs();
         offYP = offYP - pageShift * pageHeight;
         baseX = horizArea.left;
         baseY = vertArea.top;
@@ -2214,10 +2358,80 @@ function addFloatingFrame(tf, story, page, spec){
         }
         maxWidth = Math.max(1, horizArea.right - horizArea.left);
         maxHeight = Math.max(1, vertArea.bottom - vertArea.top);
-        targetW = wPt>0 ? Math.min(wPt, maxWidth) : maxWidth;
-        targetH = hPt>0 ? Math.min(hPt, maxHeight) : maxHeight;
+        targetW = wPtScaled>0 ? Math.min(wPtScaled, maxWidth) : maxWidth;
+        targetH = hPtScaled>0 ? Math.min(hPtScaled, maxHeight) : maxHeight;
         left = baseX + offXP;
         top = baseY + offYP;
+      }
+    }
+
+    var mappedLeft = null;
+    var mappedTop = null;
+    if (layoutInnerH && effectiveWordInnerWidth && effectiveWordInnerWidth > 0){
+      var innerWidthLayout = Math.max(1, metrics.innerWidth);
+      if (innerWidthLayout > 0){
+        var wordInnerStartX = wordMarginLeft || 0;
+        var wordCoordX = _wordBaseOffset(posHrefRaw, wordInnerStartX) + offXPWord;
+        var relX = (wordCoordX - wordInnerStartX) / effectiveWordInnerWidth;
+        var relXClamped = _clamp01(relX);
+        if (relXClamped !== null){
+          mappedLeft = metrics.innerLeft + relXClamped * innerWidthLayout;
+        }
+      }
+    }
+    if (layoutInnerV && effectiveWordInnerHeight && effectiveWordInnerHeight > 0){
+      var innerHeightLayout = Math.max(1, metrics.innerHeight);
+      if (innerHeightLayout > 0){
+        var wordInnerStartY = wordMarginTop || 0;
+        var wordCoordY = _wordBaseOffset(posVrefRaw, wordInnerStartY) + offYPWord;
+        var relY = (wordCoordY - wordInnerStartY) / effectiveWordInnerHeight;
+        var relYClamped = _clamp01(relY);
+        if (relYClamped !== null){
+          mappedTop = metrics.innerTop + relYClamped * innerHeightLayout;
+        }
+      }
+    }
+    if (mappedLeft !== null && isFinite(mappedLeft)) left = mappedLeft;
+    if (mappedTop !== null && isFinite(mappedTop)) top = mappedTop;
+
+    var hostUsedH = false;
+    var hostUsedV = false;
+    if (hostArea && hostFrame && hostFrame.isValid && targetPage && targetPage.isValid){
+      var hostPage = null;
+      try{ hostPage = hostFrame.parentPage; }catch(_hostPg){}
+      if (hostPage && hostPage.isValid && hostPage === targetPage){
+        var hostWidth = Math.max(1, hostArea.right - hostArea.left);
+        var hostHeight = Math.max(1, hostArea.bottom - hostArea.top);
+        var pageWidthSpan = metrics.pageWidth;
+        var pageHeightSpan = metrics.pageHeight;
+        if (!layoutInnerH && !rawInnerH && hostWidth > 0 && pageWidthSpan > 0){
+          var ratioX = (left - metrics.pageLeft) / pageWidthSpan;
+          if (isFinite(ratioX)){
+            if (ratioX < 0) ratioX = 0;
+            if (ratioX > 1) ratioX = 1;
+            left = hostArea.left + ratioX * hostWidth;
+            var hostMaxRight = hostArea.right;
+            if (left + targetW > hostMaxRight){
+              left = Math.max(hostArea.left, hostMaxRight - targetW);
+            }
+            if (left < hostArea.left) left = hostArea.left;
+            hostUsedH = true;
+          }
+        }
+        if (!layoutInnerV && !rawInnerV && hostHeight > 0 && pageHeightSpan > 0){
+          var ratioY = (top - metrics.pageTop) / pageHeightSpan;
+          if (isFinite(ratioY)){
+            if (ratioY < 0) ratioY = 0;
+            if (ratioY > 1) ratioY = 1;
+            top = hostArea.top + ratioY * hostHeight;
+            var hostMaxBottom = hostArea.bottom;
+            if (top + targetH > hostMaxBottom){
+              top = Math.max(hostArea.top, hostMaxBottom - targetH);
+            }
+            if (top < hostArea.top) top = hostArea.top;
+            hostUsedV = true;
+          }
+        }
       }
     }
 
@@ -2236,6 +2450,52 @@ function addFloatingFrame(tf, story, page, spec){
     }
     var right = left + targetW;
     var bottom = top + targetH;
+    var marginSnapshot = "{" +
+      "top:" + ((wordMarginTop!=null)?wordMarginTop:0) + "," +
+      "bottom:" + ((wordMarginBottom!=null)?wordMarginBottom:0) + "," +
+      "left:" + ((wordMarginLeft!=null)?wordMarginLeft:0) + "," +
+      "right:" + ((wordMarginRight!=null)?wordMarginRight:0) +
+      "}";
+    try{
+      __frameLocLog = {
+        allowMapH: layoutInnerH,
+        allowMapV: layoutInnerV,
+        rawInnerH: rawInnerH,
+        rawInnerV: rawInnerV,
+        pageName: (targetPage && targetPage.isValid) ? targetPage.name : "",
+        wordInnerW: effectiveWordInnerWidth,
+        wordInnerH: effectiveWordInnerHeight,
+        wordWidthRef: wordWidthRef,
+        wordHeightRef: wordHeightRef,
+        layoutWidthRef: layoutWidthRef,
+        layoutHeightRef: layoutHeightRef,
+        scaledW: wPtScaled,
+        scaledH: hPtScaled,
+        hostLeft: hostArea ? hostArea.left : null,
+        hostTop: hostArea ? hostArea.top : null,
+        hostRight: hostArea ? hostArea.right : null,
+        hostBottom: hostArea ? hostArea.bottom : null,
+        hostUsedH: hostUsedH,
+        hostUsedV: hostUsedV,
+        mappedLeft: mappedLeft,
+        mappedTop: mappedTop,
+        baseX: baseX,
+        baseY: baseY,
+        offWordX: offXPWord,
+        offWordY: offYPWord,
+        offPtX: offXP,
+        offPtY: offYP,
+        finalLeft: left,
+        finalTop: top,
+        marginStr: marginSnapshot,
+        areaLeft: horizArea.left,
+        areaRight: horizArea.right,
+        areaTop: vertArea.top,
+        areaBottom: vertArea.bottom,
+        areaWidth: maxWidth,
+        areaHeight: maxHeight
+      };
+    }catch(_logPrep){}
     return [top, left, bottom, right];
   }
   var gbFrame = _calcBounds();
@@ -2244,6 +2504,37 @@ function addFloatingFrame(tf, story, page, spec){
     log("[FRAMEFLOAT][DBG] page=" + (targetPage?targetPage.name:"NA") +
         " bounds=" + gbFrame.join(",") + " off=(" + (spec && spec.offX) + "," + (spec && spec.offY) + ")");
   }catch(_){}
+  if (__frameLocLog){
+    var hintId = (spec && spec.id) ? spec.id : (spec && spec.pageHint ? spec.pageHint : "");
+    var frameLocMsg = "[FRAMEFLOAT][LOC] hint=" + (hintId||"")
+        + " allowH=" + (__frameLocLog.allowMapH ? "Y" : "N")
+        + " allowV=" + (__frameLocLog.allowMapV ? "Y" : "N")
+        + " wordInner={" + (__frameLocLog.wordInnerW!=null?__frameLocLog.wordInnerW:"NA")
+        + "," + (__frameLocLog.wordInnerH!=null?__frameLocLog.wordInnerH:"NA") + "}"
+        + " wordMargins=" + (__frameLocLog.marginStr || "{}")
+        + " mapped={" + (__frameLocLog.mappedLeft!=null?__frameLocLog.mappedLeft:"NA")
+        + "," + (__frameLocLog.mappedTop!=null?__frameLocLog.mappedTop:"NA") + "}"
+        + " base={" + (__frameLocLog.baseX!=null?__frameLocLog.baseX:"NA")
+        + "," + (__frameLocLog.baseY!=null?__frameLocLog.baseY:"NA") + "}"
+        + " area={" + (__frameLocLog.areaLeft!=null?__frameLocLog.areaLeft:"NA")
+        + "," + (__frameLocLog.areaTop!=null?__frameLocLog.areaTop:"NA")
+        + " -> " + (__frameLocLog.areaRight!=null?__frameLocLog.areaRight:"NA")
+        + "," + (__frameLocLog.areaBottom!=null?__frameLocLog.areaBottom:"NA")
+        + " w=" + (__frameLocLog.areaWidth!=null?__frameLocLog.areaWidth:"NA")
+        + " h=" + (__frameLocLog.areaHeight!=null?__frameLocLog.areaHeight:"NA") + "}"
+        + " size={" + (__frameLocLog.scaledW!=null?__frameLocLog.scaledW:"NA")
+        + "," + (__frameLocLog.scaledH!=null?__frameLocLog.scaledH:"NA") + "}"
+        + " hostUsed=" + (__frameLocLog.hostUsedH?"H":"-") + "/" + (__frameLocLog.hostUsedV?"V":"-")
+        + " offWP={" + __frameLocLog.offWordX + "," + __frameLocLog.offWordY + "}"
+        + " offPt={" + __frameLocLog.offPtX + "," + __frameLocLog.offPtY + "}"
+        + " final={" + (__frameLocLog.finalLeft!=null?__frameLocLog.finalLeft:"NA")
+        + "," + (__frameLocLog.finalTop!=null?__frameLocLog.finalTop:"NA") + "})";
+    try{
+      log(frameLocMsg);
+    }catch(_frameLocErr){
+      try{ log("[FRAMEFLOAT][LOC-ERR] " + _frameLocErr); }catch(__){}
+    }
+  }
   var frame = targetPage.textFrames.add();
   frame.geometricBounds = gbFrame;
   try{
