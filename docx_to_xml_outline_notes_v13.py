@@ -55,7 +55,10 @@ NSMAP = {"w": W_NS}
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 WP_NS= "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
-NSMAP_ALL = {"w": W_NS, "a": A_NS, "r": R_NS, "wp": WP_NS}
+WPS_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+WPG_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+V_NS = "urn:schemas-microsoft-com:vml"
+NSMAP_ALL = {"w": W_NS, "a": A_NS, "r": R_NS, "wp": WP_NS, "wps": WPS_NS, "wpg": WPG_NS, "v": V_NS}
 NS = NSMAP_ALL
 XP_RUN_BLIPS = etree.XPath(".//w:drawing//a:blip", namespaces=NSMAP_ALL)
 XP_RUN_EXTENT = etree.XPath(

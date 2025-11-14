@@ -4469,85 +4469,18 @@ def _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images):
     expanded = []
     for style, text in paragraphs:
         expanded.extend(_split_media_chunks(style, text))
-    chunks = expanded or paragraphs
-    _apply_page_anchor_auto_wrap(chunks)
-    return chunks
-
-
-_VISIBLE_TOKEN_RE = re.compile(r"\[\[[^\]]+\]\]")
-
-
-def _visible_text_length(text: str) -> int:
-    if not text:
-        return 0
-    cleaned = _VISIBLE_TOKEN_RE.sub("", text)
-    return len(cleaned.strip())
-
-
-def _inject_auto_wrap(spec: ImageSpec, lengths):
-    if not spec or not spec.force_block or not lengths:
-        return
-    longest = max(lengths) if lengths else 0
-    if longest <= 0:
-        return
-    char_width = BODY_PT * 0.58
-    guard = (longest + 2) * char_width + 6
-    guard = max(36.0, min(guard, 140.0))
-    guard_str = f"{guard:.2f}pt"
-    if not spec.get("distL"):
-        spec.attrs["distL"] = guard_str
-    if not spec.get("distR"):
-        spec.attrs["distR"] = guard_str
-    if not spec.get("wrap"):
-        spec.attrs["wrap"] = "wrapSquare"
-
-
-def _apply_page_anchor_auto_wrap(chunks):
-    current_spec = None
-    collected = []
-    for style, chunk in chunks:
-        if isinstance(chunk, ImageSpec):
-            if current_spec is not None:
-                _inject_auto_wrap(current_spec, collected)
-            current_spec = chunk if chunk.force_block else None
-            collected = []
-            continue
-        if current_spec is None:
-            continue
-        if not isinstance(chunk, str):
-            continue
-        if style and style.lower().startswith("level"):
-            _inject_auto_wrap(current_spec, collected)
-            current_spec = None
-            collected = []
-            continue
-        visible = _visible_text_length(chunk)
-        if visible:
-            collected.append(visible)
-        else:
-            _inject_auto_wrap(current_spec, collected)
-            current_spec = None
-            collected = []
-    if current_spec is not None:
-        _inject_auto_wrap(current_spec, collected)
+    return expanded or paragraphs
 
 
 def _split_media_chunks(style, text):
     if not text:
         return [(style, text)]
+
     parts = []
+    stripped_all = text.strip()
     idx = 0
     length = len(text)
-    stripped_all = text.strip()
-
-    def _consume_unknown_marker(start_idx: int) -> int:
-        close_idx = text.find("]]", start_idx)
-        if close_idx == -1:
-            next_idx = start_idx + 2
-        else:
-            next_idx = close_idx + 2
-        parts.append((style, text[start_idx:next_idx]))
-        return next_idx
+    token_pattern = re.compile(r'\[\[(IMG|FRAME|TABLE)\b', re.I)
 
     def _extract_table_block(start_idx: int):
         json_start = text.find("{", start_idx)
@@ -4556,23 +4489,17 @@ def _split_media_chunks(style, text):
         brace = 0
         in_string = False
         escape = False
-        json_end = None
         pos = json_start
+        json_end = None
         while pos < length:
             ch = text[pos]
             if escape:
                 escape = False
-                pos += 1
-                continue
-            if ch == "\\":
+            elif ch == "\\":
                 escape = True
-                pos += 1
-                continue
-            if ch == '"':
+            elif ch == '"':
                 in_string = not in_string
-                pos += 1
-                continue
-            if not in_string:
+            elif not in_string:
                 if ch == "{":
                     brace += 1
                 elif ch == "}":
@@ -4588,51 +4515,58 @@ def _split_media_chunks(style, text):
             return None, start_idx
         return text[start_idx:close_idx + 2], close_idx + 2
 
-    while idx < length:
-        marker_start = text.find("[[", idx)
-        if marker_start == -1:
-            tail = text[idx:]
-            if tail:
-                parts.append((style, tail))
+    search_pos = 0
+    while True:
+        marker = token_pattern.search(text, search_pos)
+        if not marker:
             break
+        marker_start = marker.start()
         if marker_start > idx:
             parts.append((style, text[idx:marker_start]))
-        lower_slice = text[marker_start:marker_start + 8].lower()
-        if lower_slice.startswith("[[img"):
-            match = IMG_PLACEHOLDER_ANY_RE.match(text, marker_start)
-            if not match:
-                idx = _consume_unknown_marker(marker_start)
+        token = marker.group(1).lower()
+        if token == "img":
+            img_match = IMG_PLACEHOLDER_ANY_RE.match(text, marker_start)
+            if not img_match:
+                search_pos = marker_start + 2
                 continue
-            attr_section = match.group(1)
-            only_img = stripped_all == match.group(0).strip()
+            attr_section = img_match.group(1)
+            only_img = stripped_all == img_match.group(0).strip()
             spec = _image_spec_from_attrs(attr_section, force_block=only_img)
             parts.append((style, spec))
-            idx = match.end()
+            idx = img_match.end()
+            search_pos = idx
             continue
-        if lower_slice.startswith("[[frame"):
+        if token == "frame":
             open_match = FRAME_OPEN_RE.match(text, marker_start)
             if not open_match:
-                idx = _consume_unknown_marker(marker_start)
+                search_pos = marker_start + 2
                 continue
             close_idx = text.find(FRAME_CLOSE_TOKEN, open_match.end())
             if close_idx == -1:
-                idx = _consume_unknown_marker(marker_start)
+                search_pos = marker_start + 2
                 continue
             inner_text = text[open_match.end():close_idx]
             spec = _frame_spec_from_attrs(open_match.group(1), inner_text)
             parts.append((style, spec))
             idx = close_idx + len(FRAME_CLOSE_TOKEN)
+            search_pos = idx
             continue
-        if lower_slice.startswith("[[table"):
+        if token == "table":
             table_chunk, next_idx = _extract_table_block(marker_start)
             if not table_chunk:
-                idx = _consume_unknown_marker(marker_start)
+                search_pos = marker_start + 2
                 continue
             parts.append((style, table_chunk))
             idx = next_idx
+            search_pos = next_idx
             continue
-        idx = _consume_unknown_marker(marker_start)
+        search_pos = marker_start + 2
+
+    if idx < length:
+        parts.append((style, text[idx:]))
+
     return [(style, chunk) for style, chunk in parts if chunk not in ("", None)]
+
 
 def _normalize_style_name(style, levels_used):
     sty = style
