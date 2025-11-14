@@ -4221,7 +4221,6 @@ IMG_PLACEHOLDER_ANY_RE = re.compile(r'\[\[IMG\s+(.+?)\]\]', re.I)
 IMG_KV_PATTERN = r'(\w+)=["\'\u201c\u201d]([^"\'\u201c\u201d]*)["\'\u201c\u201d]'
 FRAME_OPEN_RE = re.compile(r'\[\[FRAME\s+([^\]]+)\]\]', re.I)
 FRAME_CLOSE_TOKEN = "[[/FRAME]]"
-TABLE_INLINE_RE = re.compile(r"\[\[TABLE\s+(\{[\s\S]*?\})\s*\]\]", re.I)
 
 
 def _js_escape_simple(val: str) -> str:
@@ -4550,6 +4549,45 @@ def _split_media_chunks(style, text):
         parts.append((style, text[start_idx:next_idx]))
         return next_idx
 
+    def _extract_table_block(start_idx: int):
+        json_start = text.find("{", start_idx)
+        if json_start == -1:
+            return None, start_idx
+        brace = 0
+        in_string = False
+        escape = False
+        json_end = None
+        pos = json_start
+        while pos < length:
+            ch = text[pos]
+            if escape:
+                escape = False
+                pos += 1
+                continue
+            if ch == "\\":
+                escape = True
+                pos += 1
+                continue
+            if ch == '"':
+                in_string = not in_string
+                pos += 1
+                continue
+            if not in_string:
+                if ch == "{":
+                    brace += 1
+                elif ch == "}":
+                    brace -= 1
+                    if brace == 0:
+                        json_end = pos + 1
+                        break
+            pos += 1
+        if json_end is None:
+            return None, start_idx
+        close_idx = text.find("]]", json_end)
+        if close_idx == -1:
+            return None, start_idx
+        return text[start_idx:close_idx + 2], close_idx + 2
+
     while idx < length:
         marker_start = text.find("[[", idx)
         if marker_start == -1:
@@ -4586,16 +4624,15 @@ def _split_media_chunks(style, text):
             idx = close_idx + len(FRAME_CLOSE_TOKEN)
             continue
         if lower_slice.startswith("[[table"):
-            tbl_match = TABLE_INLINE_RE.match(text, marker_start)
-            if not tbl_match:
+            table_chunk, next_idx = _extract_table_block(marker_start)
+            if not table_chunk:
                 idx = _consume_unknown_marker(marker_start)
                 continue
-            parts.append((style, text[marker_start:tbl_match.end()]))
-            idx = tbl_match.end()
+            parts.append((style, table_chunk))
+            idx = next_idx
             continue
         idx = _consume_unknown_marker(marker_start)
     return [(style, chunk) for style, chunk in parts if chunk not in ("", None)]
-
 
 def _normalize_style_name(style, levels_used):
     sty = style
