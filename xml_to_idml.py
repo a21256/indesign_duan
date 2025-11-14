@@ -4221,6 +4221,7 @@ IMG_PLACEHOLDER_ANY_RE = re.compile(r'\[\[IMG\s+(.+?)\]\]', re.I)
 IMG_KV_PATTERN = r'(\w+)=["\'\u201c\u201d]([^"\'\u201c\u201d]*)["\'\u201c\u201d]'
 FRAME_OPEN_RE = re.compile(r'\[\[FRAME\s+([^\]]+)\]\]', re.I)
 FRAME_CLOSE_TOKEN = "[[/FRAME]]"
+TABLE_INLINE_RE = re.compile(r"\[\[TABLE\s+(\{[\s\S]*?\})\s*\]\]", re.I)
 
 
 def _js_escape_simple(val: str) -> str:
@@ -4539,6 +4540,16 @@ def _split_media_chunks(style, text):
     idx = 0
     length = len(text)
     stripped_all = text.strip()
+
+    def _consume_unknown_marker(start_idx: int) -> int:
+        close_idx = text.find("]]", start_idx)
+        if close_idx == -1:
+            next_idx = start_idx + 2
+        else:
+            next_idx = close_idx + 2
+        parts.append((style, text[start_idx:next_idx]))
+        return next_idx
+
     while idx < length:
         marker_start = text.find("[[", idx)
         if marker_start == -1:
@@ -4552,8 +4563,7 @@ def _split_media_chunks(style, text):
         if lower_slice.startswith("[[img"):
             match = IMG_PLACEHOLDER_ANY_RE.match(text, marker_start)
             if not match:
-                parts.append((style, text[marker_start:marker_start + 2]))
-                idx = marker_start + 2
+                idx = _consume_unknown_marker(marker_start)
                 continue
             attr_section = match.group(1)
             only_img = stripped_all == match.group(0).strip()
@@ -4564,21 +4574,26 @@ def _split_media_chunks(style, text):
         if lower_slice.startswith("[[frame"):
             open_match = FRAME_OPEN_RE.match(text, marker_start)
             if not open_match:
-                parts.append((style, text[marker_start:marker_start + 2]))
-                idx = marker_start + 2
+                idx = _consume_unknown_marker(marker_start)
                 continue
             close_idx = text.find(FRAME_CLOSE_TOKEN, open_match.end())
             if close_idx == -1:
-                parts.append((style, text[marker_start:marker_start + 2]))
-                idx = marker_start + 2
+                idx = _consume_unknown_marker(marker_start)
                 continue
             inner_text = text[open_match.end():close_idx]
             spec = _frame_spec_from_attrs(open_match.group(1), inner_text)
             parts.append((style, spec))
             idx = close_idx + len(FRAME_CLOSE_TOKEN)
             continue
-        parts.append((style, text[marker_start:marker_start + 2]))
-        idx = marker_start + 2
+        if lower_slice.startswith("[[table"):
+            tbl_match = TABLE_INLINE_RE.match(text, marker_start)
+            if not tbl_match:
+                idx = _consume_unknown_marker(marker_start)
+                continue
+            parts.append((style, text[marker_start:tbl_match.end()]))
+            idx = tbl_match.end()
+            continue
+        idx = _consume_unknown_marker(marker_start)
     return [(style, chunk) for style, chunk in parts if chunk not in ("", None)]
 
 
