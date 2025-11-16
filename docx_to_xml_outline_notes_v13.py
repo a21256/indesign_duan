@@ -774,6 +774,259 @@ class DOCXOutlineExporter:
             append_child(child, states[idx])
         self._body_iter_items = items
 
+    def _table_placeholder(self, tbl_el, section_state) -> Optional[str]:
+        def _tbl_width_pt(table_el):
+            tw = table_el.find("./w:tblPr/w:tblW", NSMAP)
+            if tw is not None:
+                t = tw.get(f"{{{W_NS}}}type")
+                v = tw.get(f"{{{W_NS}}}w")
+                if v and t in (None, "dxa"):
+                    pt = _twip_to_pt(v)
+                    if pt:
+                        return max(pt, 1.0)
+                if v and t == "pct":
+                    try:
+                        return max((float(v) / 50.0) * 4.8, 1.0)
+                    except Exception:
+                        pass
+            return 480.0
+
+        def _expanded_cols(row_cells):
+            total = 0
+            for cell in row_cells:
+                try:
+                    cs = int(cell.get("colspan", 1)) or 1
+                except Exception:
+                    cs = 1
+                total += max(1, cs)
+            return total
+
+        tableWidthPt = _tbl_width_pt(tbl_el)
+        headerRows = 1 if tbl_el.find("./w:tblPr/w:tblHeader", NSMAP) is not None else 0
+        jc = tbl_el.find("./w:tblPr/w:jc", NSMAP)
+        tableAlign = (jc.get(f"{{{W_NS}}}val") if jc is not None else None) or "left"
+
+        borders = {"inner": 0.5, "outer": 0.75}
+        tblBorders = tbl_el.find("./w:tblPr/w:tblBorders", NSMAP)
+
+        def _edge_weight(ed):
+            if ed is None:
+                return None
+            sz = ed.get(f"{{{W_NS}}}sz")
+            try:
+                return (float(sz) or 4.0) / 8.0
+            except Exception:
+                return None
+
+        if tblBorders is not None:
+            ins = [_edge_weight(tblBorders.find(f"./w:{n}", NSMAP)) for n in ("insideH", "insideV")]
+            outs = [_edge_weight(tblBorders.find(f"./w:{n}", NSMAP)) for n in ("top", "bottom", "left", "right")]
+            borders["inner"] = next((v for v in ins if v), borders["inner"])
+            borders["outer"] = next((v for v in outs if v), borders["outer"])
+
+        cellPadding = None
+        tcMar = tbl_el.find("./w:tblPr/w:tblCellMar", NSMAP)
+        if tcMar is not None:
+            def _pad(which):
+                el = tcMar.find(f"./w:{which}", NSMAP)
+                return round(_twip_to_pt(el.get(f"{{{W_NS}}}w")) or 3.0, 2) if el is not None else None
+
+            cellPadding = {"t": _pad("top"), "l": _pad("left"), "b": _pad("bottom"), "r": _pad("right")}
+
+        rows_data: List[List[dict]] = []
+        MAX_ROWS, MAX_COLS, MAX_SPAN = 500, 200, 50
+        all_tr = tbl_el.findall("./w:tr", NSMAP)
+        for r_idx, tr in enumerate(all_tr):
+            if r_idx >= MAX_ROWS:
+                break
+            row_cells = []
+            tcs = tr.findall("./w:tc", NSMAP)
+            c_vis = 0
+            for tc in tcs:
+                if c_vis >= MAX_COLS:
+                    break
+                tcPr = tc.find("./w:tcPr", NSMAP)
+
+                align = "left"
+                p_first = tc.find("./w:p/w:pPr/w:jc", NSMAP)
+                if p_first is not None and p_first.get(f"{{{W_NS}}}val"):
+                    align = p_first.get(f"{{{W_NS}}}val")
+                valign = "top"
+                vAli = tcPr.find("./w:vAlign", NSMAP) if tcPr is not None else None
+                if vAli is not None and vAli.get(f"{{{W_NS}}}val"):
+                    valign = vAli.get(f"{{{W_NS}}}val")
+
+                shading = None
+                sh = tcPr.find("./w:shd", NSMAP) if tcPr is not None else None
+                if sh is not None and sh.get(f"{{{W_NS}}}val") not in ("nil", "clear"):
+                    shading = sh.get(f"{{{W_NS}}}fill") or sh.get(f"{{{W_NS}}}color")
+
+                cell_text = DOCXOutlineExporter._collect_text_from_p(tc)
+
+                gridSpan = tcPr.find("./w:gridSpan", NSMAP) if tcPr is not None else None
+                colspan = 1
+                if gridSpan is not None and gridSpan.get(f"{{{W_NS}}}val"):
+                    try:
+                        colspan = max(1, min(MAX_SPAN, int(gridSpan.get(f"{{{W_NS}}}val"))))
+                    except Exception:
+                        colspan = 1
+
+                vMerge = tcPr.find("./w:vMerge", NSMAP) if tcPr is not None else None
+                vm_attr = vMerge.get(f"{{{W_NS}}}val") if vMerge is not None else None
+                is_continue = (vMerge is not None and vm_attr in (None, "", "continue"))
+                is_restart = (vMerge is not None and vm_attr not in ("continue", "cont", "0"))
+
+                if is_continue:
+                    row_cells.append({"text": "", "colspan": 1, "rowspan": 0, "align": align, "valign": valign})
+                    c_vis += 1
+                    continue
+
+                rowspan = 1
+                if is_restart:
+                    col_index = c_vis
+                    down = r_idx + 1
+                    while down < len(all_tr):
+                        tlist = all_tr[down].findall("./w:tc", NSMAP)
+                        if not tlist:
+                            break
+
+                        cur_col = 0
+                        target_tc = None
+                        for n_tc in tlist:
+                            n_pr = n_tc.find("./w:tcPr", NSMAP)
+                            n_grid = n_pr.find("./w:gridSpan", NSMAP) if n_pr is not None else None
+                            n_cs = 1
+                            if n_grid is not None and n_grid.get(f"{{{W_NS}}}val"):
+                                try:
+                                    n_cs = max(1, min(MAX_SPAN, int(n_grid.get(f"{{{W_NS}}}val"))))
+                                except Exception:
+                                    n_cs = 1
+                            if cur_col <= col_index < cur_col + n_cs:
+                                target_tc = n_tc
+                                break
+                            cur_col += n_cs
+
+                        if target_tc is None:
+                            break
+
+                        n_pr = target_tc.find("./w:tcPr", NSMAP)
+                        n_vm = n_pr.find("./w:vMerge", NSMAP) if n_pr is not None else None
+                        if n_vm is None:
+                            break
+                        nv = n_vm.get(f"{{{W_NS}}}val")
+                        if nv in (None, "", "continue", "cont", "1"):
+                            rowspan += 1
+                            down += 1
+                            continue
+                        else:
+                            break
+
+                row_cells.append({
+                    "text": cell_text,
+                    "colspan": colspan,
+                    "rowspan": max(1, rowspan),
+                    "align": align,
+                    "valign": valign,
+                    "shading": shading
+                })
+                c_vis += 1
+
+            rows_data.append(row_cells)
+
+        rows = len(rows_data)
+        cols = 0
+        for r in rows_data:
+            cols = max(cols, _expanded_cols(r))
+
+        colWidthsPt: List[float] = []
+        grid_cols = tbl_el.findall("./w:tblGrid/w:gridCol", NSMAP)
+        for gc in grid_cols:
+            w = gc.get(f"{{{W_NS}}}w")
+            pt = _twip_to_pt(w)
+            if pt is not None:
+                colWidthsPt.append(round(pt, 2))
+
+        if (not colWidthsPt) or (len(colWidthsPt) != cols):
+            first_tr = all_tr[0] if all_tr else None
+            widths_acc = [0.0] * max(cols, len(colWidthsPt) or cols)
+            used_tcW = False
+            if first_tr is not None:
+                tcs = first_tr.findall("./w:tc", NSMAP)
+                cur_col = 0
+                for tc in tcs:
+                    tcPr = tc.find("./w:tcPr", NSMAP)
+                    wpt = None
+                    if tcPr is not None:
+                        tcW = tcPr.find("./w:tcW", NSMAP)
+                        if tcW is not None and tcW.get(f"{{{W_NS}}}w"):
+                            wtype = tcW.get(f"{{{W_NS}}}type")
+                            wval = tcW.get(f"{{{W_NS}}}w")
+                            if wtype in (None, "dxa"):
+                                wpt = _twip_to_pt(wval)
+                            elif wtype == "pct":
+                                try:
+                                    pct = float(wval) / 50.0
+                                    wpt = pct * 4.8
+                                except Exception:
+                                    wpt = None
+                    gridSpan = tcPr.find("./w:gridSpan", NSMAP) if tcPr is not None else None
+                    cs = 1
+                    if gridSpan is not None and gridSpan.get(f"{{{W_NS}}}val"):
+                        try:
+                            cs = max(1, min(50, int(gridSpan.get(f"{{{W_NS}}}val"))))
+                        except Exception:
+                            cs = 1
+                    if wpt is None:
+                        wpt = tableWidthPt * (cs / float(cols or 1))
+                    share = float(wpt) / float(cs or 1)
+                    for k in range(cs):
+                        if cur_col + k < len(widths_acc):
+                            widths_acc[cur_col + k] += share
+                    cur_col += cs
+                    used_tcW = True
+            if used_tcW:
+                colWidthsPt = [round(max(1.0, v), 2) for v in widths_acc[:cols]]
+            else:
+                each = max(1.0, tableWidthPt / float(cols or 1))
+                colWidthsPt = [round(each, 2) for _ in range(cols)]
+
+        if len(colWidthsPt) > cols:
+            colWidthsPt = colWidthsPt[:cols]
+        elif len(colWidthsPt) < cols:
+            missing = cols - len(colWidthsPt)
+            each = max(1.0, tableWidthPt / float(cols or 1))
+            colWidthsPt += [round(each, 2) for _ in range(missing)]
+        s = sum(colWidthsPt) or 1.0
+        scale = tableWidthPt / s
+        colWidthsPt = [round(max(1.0, w * scale), 2) for w in colWidthsPt]
+        total = sum(colWidthsPt) or 1.0
+        colWidthFrac = [round(w / total, 6) for w in colWidthsPt]
+
+        table_obj = {
+            "rows": rows,
+            "cols": cols,
+            "data": rows_data,
+            "colWidthsPt": colWidthsPt,
+            "colWidthFrac": colWidthFrac,
+            "tableWidthPt": round(tableWidthPt, 2),
+            "headerRows": headerRows,
+            "tableAlign": tableAlign,
+        }
+        if cellPadding:
+            table_obj["cellPadding"] = cellPadding
+        if borders:
+            table_obj["borders"] = borders
+        delta_state = self._section_state_delta(section_state or {})
+        if delta_state.get("pageOrientation"):
+            table_obj["pageOrientation"] = delta_state["pageOrientation"]
+        if "pageWidthPt" in delta_state:
+            table_obj["pageWidthPt"] = delta_state["pageWidthPt"]
+        if "pageHeightPt" in delta_state:
+            table_obj["pageHeightPt"] = delta_state["pageHeightPt"]
+        if "pageMarginsPt" in delta_state:
+            table_obj["pageMarginsPt"] = delta_state["pageMarginsPt"]
+        return "[[TABLE " + json.dumps(table_obj, ensure_ascii=False) + "]]"
+
     def _resolve_default_section_state(self) -> Dict[str, Any]:
         base = {
             "pageOrientation": "portrait",
@@ -1698,289 +1951,26 @@ class DOCXOutlineExporter:
                             target.body_paragraphs.append(text_with_refs)
 
             elif kind == "tbl":
-                # === 表格导出：保证 cols 与 colWidthsPt 准确 ===
-                tbl_el = obj._element  # w:tbl
-                tableWidthPt = _tbl_width_pt(tbl_el)
-
-                # 1) 表属性
-                headerRows = 1 if tbl_el.find("./w:tblPr/w:tblHeader", NSMAP) is not None else 0
-                jc = tbl_el.find("./w:tblPr/w:jc", NSMAP)
-                tableAlign = (jc.get(f"{{{W_NS}}}val") if jc is not None else None) or "left"
-
-                borders = {"inner": 0.5, "outer": 0.75}
-                tblBorders = tbl_el.find("./w:tblPr/w:tblBorders", NSMAP)
-
-                def _edge_weight(ed):
-                    if ed is None:
-                        return None
-                    sz = ed.get(f"{{{W_NS}}}sz")
-                    try:
-                        return (float(sz) or 4.0) / 8.0  # Word sz=4≈0.5pt
-                    except Exception:
-                        return None
-
-                if tblBorders is not None:
-                    ins = [_edge_weight(tblBorders.find(f"./w:{n}", NSMAP)) for n in ("insideH", "insideV")]
-                    outs = [_edge_weight(tblBorders.find(f"./w:{n}", NSMAP)) for n in
-                            ("top", "bottom", "left", "right")]
-                    borders["inner"] = next((v for v in ins if v), borders["inner"])
-                    borders["outer"] = next((v for v in outs if v), borders["outer"])
-
-                cellPadding = None
-                tcMar = tbl_el.find("./w:tblPr/w:tblCellMar", NSMAP)
-                if tcMar is not None:
-                    def _pad(which):
-                        el = tcMar.find(f"./w:{which}", NSMAP)
-                        return round(_twip_to_pt(el.get(f"{{{W_NS}}}w")) or 3.0, 2) if el is not None else None
-
-                    cellPadding = {"t": _pad("top"), "l": _pad("left"), "b": _pad("bottom"), "r": _pad("right")}
-
-                # 2) 读取表格内容（含合并/对齐/底纹），先得 rows_data
-                rows_data: List[List[dict]] = []
-                MAX_ROWS, MAX_COLS, MAX_SPAN = 500, 200, 50
-                all_tr = tbl_el.findall("./w:tr", NSMAP)
-                for r_idx, tr in enumerate(all_tr):
-                    if r_idx >= MAX_ROWS:
-                        break
-                    row_cells = []
-                    tcs = tr.findall("./w:tc", NSMAP)
-                    c_vis = 0
-                    for tc in tcs:
-                        if c_vis >= MAX_COLS:
-                            break
-                        tcPr = tc.find("./w:tcPr", NSMAP)
-
-                        # 水平/垂直对齐
-                        align = "left"
-                        p_first = tc.find("./w:p/w:pPr/w:jc", NSMAP)
-                        if p_first is not None and p_first.get(f"{{{W_NS}}}val"):
-                            align = p_first.get(f"{{{W_NS}}}val")
-                        valign = "top"
-                        vAli = tcPr.find("./w:vAlign", NSMAP) if tcPr is not None else None
-                        if vAli is not None and vAli.get(f"{{{W_NS}}}val"):
-                            valign = vAli.get(f"{{{W_NS}}}val")
-
-                        # 底纹
-                        shading = None
-                        sh = tcPr.find("./w:shd", NSMAP) if tcPr is not None else None
-                        if sh is not None and sh.get(f"{{{W_NS}}}fill"):
-                            fill = sh.get(f"{{{W_NS}}}fill")
-                            if fill and fill != "auto":
-                                shading = f"#{fill}" if not fill.startswith("#") else fill
-
-                        # gridSpan/colspan
-                        gridSpan = tcPr.find("./w:gridSpan", NSMAP) if tcPr is not None else None
-                        colspan = 1
-                        if gridSpan is not None and gridSpan.get(f"{{{W_NS}}}val"):
-                            try:
-                                colspan = int(gridSpan.get(f"{{{W_NS}}}val"))
-                            except Exception:
-                                colspan = 1
-                        colspan = max(1, min(MAX_SPAN, colspan))
-
-                        # vMerge：restart / continue
-                        vmerge = tcPr.find("./w:vMerge", NSMAP) if tcPr is not None else None
-                        vval = vmerge.get(f"{{{W_NS}}}val") if vmerge is not None else None
-                        is_continue = (vmerge is not None and (vval in (None, "", "continue", "cont", "1")))
-                        is_restart = (vmerge is not None and (vval in ("restart", "rest", "0")))
-
-                        # 文本（含换行/脚注尾注）
-                        texts = []
-                        for p_el in tc.findall(".//w:p", NSMAP):
-                            parts = []
-                            for t in p_el.findall(".//w:t", NSMAP):
-                                if t.text:
-                                    parts.append(t.text)
-                            if p_el.findall(".//w:tab", NSMAP):
-                                parts.append("\t")
-                            for fr in p_el.findall(".//w:footnoteReference", NSMAP):
-                                rid = fr.get(f"{{{W_NS}}}id")
-                                parts.append(f"[[FNREF:{rid}]]")
-                            for er in p_el.findall(".//w:endnoteReference", NSMAP):
-                                rid = er.get(f"{{{W_NS}}}id")
-                                parts.append(f"[[ENREF:{rid}]]")
-                            txt = "".join(parts).strip()
-                            if txt:
-                                texts.append(txt)
-                        cell_text = "\n".join(texts)
-
-                        if is_continue:
-                            row_cells.append({"text": "", "colspan": 1, "rowspan": 0, "align": align, "valign": valign})
-                            c_vis += 1
-                            continue
-
-                                                # 计算 rowspan：按“同一可视列”向下统计 continue（修复误扩展）
-                        rowspan = 1
-                        if is_restart:
-                            # 以“展开后的可视列索引”对齐同列单元格，逐行检查 vMerge 状态
-                            col_index = c_vis  # 当前格在本行的可视列索引（从 0 起）
-                            down = r_idx + 1
-                            while down < len(all_tr):
-                                tlist = all_tr[down].findall("./w:tc", NSMAP)
-                                if not tlist:
-                                    break
-
-                                # 在该行按 gridSpan 展开后，找到覆盖 col_index 的单元格
-                                cur_col = 0
-                                target_tc = None
-                                for n_tc in tlist:
-                                    n_pr = n_tc.find("./w:tcPr", NSMAP)
-                                    n_grid = n_pr.find("./w:gridSpan", NSMAP) if n_pr is not None else None
-                                    n_cs = 1
-                                    if n_grid is not None and n_grid.get(f"{{{W_NS}}}val"):
-                                        try:
-                                            n_cs = max(1, min(MAX_SPAN, int(n_grid.get(f"{{{W_NS}}}val"))))
-                                        except Exception:
-                                            n_cs = 1
-                                    if cur_col <= col_index < cur_col + n_cs:
-                                        target_tc = n_tc
-                                        break
-                                    cur_col += n_cs
-
-                                if target_tc is None:
-                                    break
-
-                                # 仅当“同列单元格”为 continue 时才累计 rowspan；遇到 restart 或无 vMerge 即停止
-                                n_pr = target_tc.find("./w:tcPr", NSMAP)
-                                n_vm = n_pr.find("./w:vMerge", NSMAP) if n_pr is not None else None
-                                if n_vm is None:
-                                    break
-                                nv = n_vm.get(f"{{{W_NS}}}val")
-                                if nv in (None, "", "continue", "cont", "1"):
-                                    rowspan += 1
-                                    down += 1
-                                    continue
-                                else:
-                                    break
-                        row_cells.append({
-                            "text": cell_text,
-                            "colspan": colspan,
-                            "rowspan": max(1, rowspan),
-                            "align": align,
-                            "valign": valign,
-                            "shading": shading
-                        })
-                        c_vis += 1
-
-                    rows_data.append(row_cells)
-
-                # 3) 真实列数（考虑 colspan 展开）
-                rows = len(rows_data)
-                cols = 0
-                for r in rows_data:
-                    cols = max(cols, _expanded_cols(r))
-
-                # 4) 生成 colWidthsPt
-                colWidthsPt: List[float] = []
-                grid_cols = tbl_el.findall("./w:tblGrid/w:gridCol", NSMAP)
-                for gc in grid_cols:
-                    w = gc.get(f"{{{W_NS}}}w")
-                    pt = _twip_to_pt(w)
-                    if pt is not None:
-                        colWidthsPt.append(round(pt, 2))
-
-                if (not colWidthsPt) or (len(colWidthsPt) != cols):
-                    # 4.1 尝试用首行 tcW（dxa/pct），按 colspan 平均分配到网格列
-                    first_tr = all_tr[0] if all_tr else None
-                    widths_acc = [0.0] * max(cols, len(colWidthsPt) or 0 or cols)
-                    used_tcW = False
-                    if first_tr is not None:
-                        tcs = first_tr.findall("./w:tc", NSMAP)
-                        cur_col = 0
-                        for tc in tcs:
-                            tcPr = tc.find("./w:tcPr", NSMAP)
-                            # 宽度
-                            wpt = None
-                            if tcPr is not None:
-                                tcW = tcPr.find("./w:tcW", NSMAP)
-                                if tcW is not None and tcW.get(f"{{{W_NS}}}w"):
-                                    wtype = tcW.get(f"{{{W_NS}}}type")
-                                    wval = tcW.get(f"{{{W_NS}}}w")
-                                    if wtype in (None, "dxa"):
-                                        wpt = _twip_to_pt(wval)
-                                    elif wtype == "pct":
-                                        try:
-                                            pct = float(wval) / 50.0  # 100% = 5000
-                                            wpt = pct * 4.8  # 近似到 pt
-                                        except Exception:
-                                            wpt = None
-                            # 跨列
-                            gridSpan = tcPr.find("./w:gridSpan", NSMAP) if tcPr is not None else None
-                            cs = 1
-                            if gridSpan is not None and gridSpan.get(f"{{{W_NS}}}val"):
-                                try:
-                                    cs = max(1, min(50, int(gridSpan.get(f"{{{W_NS}}}val"))))
-                                except Exception:
-                                    cs = 1
-                            if wpt is None:
-                                wpt = tableWidthPt * (cs / float(cols or 1))
-                            share = float(wpt) / float(cs or 1)
-                            for k in range(cs):
-                                if cur_col + k < len(widths_acc):
-                                    widths_acc[cur_col + k] += share
-                            cur_col += cs
-                            used_tcW = True
-                    if used_tcW:
-                        colWidthsPt = [round(max(1.0, v), 2) for v in widths_acc[:cols]]
-                    else:
-                        # 4.2 完全拿不到：用表宽等分
-                        each = max(1.0, tableWidthPt / float(cols or 1))
-                        colWidthsPt = [round(each, 2) for _ in range(cols)]
-
-                # 4.3 截断/补齐，并按表宽归一
-                if len(colWidthsPt) > cols:
-                    colWidthsPt = colWidthsPt[:cols]
-                elif len(colWidthsPt) < cols:
-                    missing = cols - len(colWidthsPt)
-                    each = max(1.0, tableWidthPt / float(cols or 1))
-                    colWidthsPt += [round(each, 2) for _ in range(missing)]
-                s = sum(colWidthsPt) or 1.0
-                scale = tableWidthPt / s
-                colWidthsPt = [round(max(1.0, w * scale), 2) for w in colWidthsPt]
-
-                # 列比例（供 InDesign 端按框宽缩放）
-                _sum = sum(colWidthsPt) or 1.0
-                colWidthFrac = [round(w / _sum, 6) for w in colWidthsPt]
-                table_obj = {
-                    "rows": rows,
-                    "cols": cols,
-                    "data": rows_data,
-                    "colWidthsPt": colWidthsPt,
-                    "colWidthFrac": colWidthFrac,
-                    "tableWidthPt": round(tableWidthPt, 2),
-                    "headerRows": headerRows,
-                    "tableAlign": tableAlign,
-                }
-                if cellPadding:
-                    table_obj["cellPadding"] = cellPadding
-                if borders:
-                    table_obj["borders"] = borders
-
-                # 4.4 Section overrides (only when different from defaults)
-                working_state = section_state or {}
-                delta_state = self._section_state_delta(working_state)
-                if delta_state.get("pageOrientation"):
-                    table_obj["pageOrientation"] = delta_state["pageOrientation"]
-                if "pageWidthPt" in delta_state:
-                    table_obj["pageWidthPt"] = delta_state["pageWidthPt"]
-                if "pageHeightPt" in delta_state:
-                    table_obj["pageHeightPt"] = delta_state["pageHeightPt"]
-                if "pageMarginsPt" in delta_state:
-                    table_obj["pageMarginsPt"] = delta_state["pageMarginsPt"]
-
-                ph = "[[TABLE " + json.dumps(table_obj, ensure_ascii=False) + "]]"
-                target = stack[-1] if stack else self.root
-                target.body_paragraphs.append(ph)
+                ph = self._table_placeholder(obj._element, section_state)
+                if ph:
+                    target = stack[-1] if stack else self.root
+                    target.body_paragraphs.append(ph)
                 continue
+
 
         logger.info("Heading tree build complete.")
 
     def _build_tree_regex_mode(self):
         logger.info("Building hierarchy (regex mode, hierarchical segmentation with dynamic numeric depth)...")
         lines: List[str] = []
-        for p in self.doc.paragraphs:
-            line = self._paragraph_text_with_refs(p, include_pstyle=True)
-            lines.append(line)
+        for kind, obj, section_state in self._iter_block_items():
+            if kind == "p":
+                line = self._paragraph_text_with_refs(obj, include_pstyle=True)
+                lines.append(line)
+            elif kind == "tbl":
+                ph = self._table_placeholder(obj._element, section_state)
+                if ph:
+                    lines.append(ph)
         self._regex_build_recursive(self.root, level=1, lines=lines, max_depth=200)
         self._regex_finalize_pending_to_body(self.root)
         logger.info("Regex tree build complete.")
