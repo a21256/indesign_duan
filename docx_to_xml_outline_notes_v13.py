@@ -40,6 +40,8 @@ import zipfile
 import argparse
 from typing import Any, Dict, List, Optional, Tuple
 
+from regex_rules import REGEX_ORDER
+
 from docx import Document
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -84,18 +86,8 @@ XP_RUN_ENDREF  = etree.XPath(".//w:endnoteReference", namespaces=NSMAP)
 XP_RUN_PAGEBREAK = etree.XPath(".//w:br[@w:type='page']", namespaces=NSMAP)
 XP_RUN_LAST_PAGEBREAK = etree.XPath(".//w:lastRenderedPageBreak", namespaces=NSMAP)
 
-# --------- Regex patterns (order = priority) ---------
-REGEX_ORDER: List[Tuple[str, Optional[str]]] = [
-    ("fixed", r'^第[\d一二三四五六七八九十百]+章[ 　\t]*'),
-    ("fixed", r'^第[\d一二三四五六七八九十百]+节[ 　\t]*'),
-    ("fixed", r'^第[\d一二三四五六七八九十百]+条[ 　\t]*'),
-    ("numeric_dotted", None),
-    ("fixed", r'^[（(]\s*\d+\s*[)）]'),
-    ("fixed", r'^\d+\s*[)）]'),
-    ("fixed", r'^[一二三四五六七八九十百]+、\s*'),
-]
 COMPILED_FIXED: List[Optional[re.Pattern]] = []
-NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)[\.．]?\s*')
+NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)(?=[\.．]\d+|[\.．]\s+|\s+)')
 
 def _emu_to_pt(val_emu: Optional[str]) -> Optional[float]:
     try:
@@ -764,14 +756,22 @@ class DOCXOutlineExporter:
         items: List[Tuple[str, int, Dict[str, Any]]] = []
         p_idx = 0
         t_idx = 0
-        for idx, child in enumerate(children):
+        def append_child(child, state):
+            nonlocal p_idx, t_idx, items
             tag = child.tag
             if tag.endswith('}p'):
-                items.append(('p', p_idx, states[idx]))
+                items.append(('p', p_idx, state))
                 p_idx += 1
             elif tag.endswith('}tbl'):
-                items.append(('tbl', t_idx, states[idx]))
+                items.append(('tbl', t_idx, state))
                 t_idx += 1
+            elif tag.endswith('}sdt'):
+                content = child.find("./w:sdtContent", NSMAP)
+                if content is not None:
+                    for inner in list(content):
+                        append_child(inner, state)
+        for idx, child in enumerate(children):
+            append_child(child, states[idx])
         self._body_iter_items = items
 
     def _resolve_default_section_state(self) -> Dict[str, Any]:
@@ -1541,7 +1541,13 @@ class DOCXOutlineExporter:
                 elif kind == "numeric_dotted":
                     m = NUMERIC_DOTTED.match(s)
                     if m:
-                        depth = len([seg for seg in re.split(r'[\.．]', m.group(1)) if seg])
+                        rest = s[m.end():].lstrip()
+                        token = m.group(1) or ""
+                        if rest and rest[0] in "年月日" and len(token) >= 4:
+                            continue
+                        if not rest:
+                            continue
+                        depth = len([seg for seg in re.split(r'[\.．]', token) if seg])
                         return NumericDepthSplitter(depth)
         return None
 

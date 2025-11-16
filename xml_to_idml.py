@@ -6,7 +6,7 @@ from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Optional
 
 # ========== 路径与配置 ==========
 OUT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -4075,6 +4075,9 @@ function _holderInnerBounds(holder){
     function flushOverflow(currentStory, lastPage, lastFrame) {
         // 仅在达到 MAX_PAGES 或总页数限制时退出，保持顺序造页，避免“无进展”误判。
         var MAX_PAGES = 20;
+        var STALL_LIMIT = 3;
+        var stallFrameId = null;
+        var stallCount = 0;
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
             var docRef = app && app.activeDocument;
             try{
@@ -4094,6 +4097,27 @@ function _holderInnerBounds(holder){
             try { currentStory.recompose(); } catch(_) {}
             try { app.activeDocument.recompose(); } catch(_) {}
             $.sleep(10);
+
+            var tailFrameId = null;
+            try{
+                var tailIp = currentStory && currentStory.isValid ? currentStory.insertionPoints[-1] : null;
+                if (tailIp && tailIp.isValid && tailIp.parentTextFrames && tailIp.parentTextFrames.length){
+                    var tailFrame = tailIp.parentTextFrames[0];
+                    if (tailFrame && tailFrame.isValid) tailFrameId = tailFrame.id;
+                }
+            }catch(_tail){}
+            if (tailFrameId !== null){
+                if (stallFrameId !== null && tailFrameId === stallFrameId){
+                    stallCount++;
+                }else{
+                    stallCount = 0;
+                    stallFrameId = tailFrameId;
+                }
+                if (stallCount >= STALL_LIMIT){
+                    try { log("[WARN] flushOverflow guard hit; no progress resolving overset"); } catch(_){}
+                    break;
+                }
+            }
         }
         if (currentStory && currentStory.overflows) {
             try { log("[WARN] flushOverflow guard hit; overset still true"); } catch(_){ }
@@ -4534,6 +4558,27 @@ def _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images):
     return expanded or paragraphs
 
 
+def _preflight_snippet(text: str, limit: int = 120) -> str:
+    snippet = (text or "").strip().replace("\r", " ").replace("\n", " ")
+    if len(snippet) > limit:
+        snippet = snippet[:limit] + "..."
+    return snippet
+
+
+def _preflight_reason(style: str, text: str, max_chars: int = 600000) -> Optional[str]:
+    """Return reason string if the paragraph should be skipped before handing to JSX."""
+    if not text:
+        return None
+    length = len(text)
+    if length > max_chars:
+        return f"text too long ({length} chars > {max_chars})"
+    opens = text.count("[[")
+    closes = text.count("]]")
+    if opens != closes:
+        return f"unbalanced markers ([[ count {opens} vs ]] count {closes})"
+    return None
+
+
 def _split_media_chunks(style, text):
     if not text:
         return [(style, text)]
@@ -4794,34 +4839,50 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     add_lines.append("firstChapterSeen = false;")
 
     img_pattern = re.compile(r'\[\[IMG\s+[^\]]+\]\]', re.I)
-    paragraphs = _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images)
-
-    for style, chunk in paragraphs:
-        if isinstance(chunk, ImageSpec):
-            add_lines.append("__ensureLayoutDefault();")
-            add_lines.append(chunk.to_js_block())
-            continue
-        if isinstance(chunk, FrameSpec):
-            add_lines.append("__ensureLayoutDefault();")
-            add_lines.append(chunk.to_js_block())
-            continue
-        text = chunk
+    for idx, (style, text) in enumerate(paragraphs):
         sty = _normalize_style_name(style, levels_used)
-        esc = escape_js(text)
-
-        if sty == "Level1":
-            add_lines.append("if (firstChapterSeen) { var __fl = flushOverflow(story, page, tf); story = __fl.frame.parentStory; page = __fl.page; tf = __fl.frame; onNewLevel1(); } else { firstChapterSeen = true; }")
-
-        if _handle_table_marker(text, add_lines):
-            continue
-        if _handle_img_marker(text, skip_images, add_lines):
-            continue
-        if _handle_html_table(text, skip_images, add_lines):
-            continue
-        if _handle_html_image(text, skip_images, add_lines):
+        normalized_text = text or ""
+        reason = _preflight_reason(style, normalized_text)
+        if reason:
+            preview = escape_js(_preflight_snippet(normalized_text))
+            js_reason = escape_js(f"preflight: {reason}")
+            add_lines.append(f'__logSkipParagraph(__nextParaSeq(), "{sty}", "{js_reason}", "{preview}")')
+            print(f"[WARN] 段落 {idx+1} ({style}) 预检查失败：{reason}，已跳过")
             continue
 
-        _append_default_paragraph(add_lines, sty, esc)
+        expanded = _prepare_paragraphs_for_jsx([(sty, normalized_text)], img_pattern, skip_images)
+        if not expanded:
+            expanded = [(sty, normalized_text)]
+
+        level1_pending = (sty == "Level1")
+        for sub_style, chunk in expanded:
+            if level1_pending:
+                add_lines.append("if (firstChapterSeen) { var __fl = flushOverflow(story, page, tf); story = __fl.frame.parentStory; page = __fl.page; tf = __fl.frame; onNewLevel1(); } else { firstChapterSeen = true; }")
+                level1_pending = False
+
+            if isinstance(chunk, ImageSpec):
+                add_lines.append("__ensureLayoutDefault();")
+                add_lines.append(chunk.to_js_block())
+                continue
+            if isinstance(chunk, FrameSpec):
+                add_lines.append("__ensureLayoutDefault();")
+                add_lines.append(chunk.to_js_block())
+                continue
+
+            text_chunk = chunk or ""
+            sty_chunk = _normalize_style_name(sub_style, levels_used)
+            esc = escape_js(text_chunk)
+
+            if _handle_table_marker(text_chunk, add_lines):
+                continue
+            if _handle_img_marker(text_chunk, skip_images, add_lines):
+                continue
+            if _handle_html_table(text_chunk, skip_images, add_lines):
+                continue
+            if _handle_html_image(text_chunk, skip_images, add_lines):
+                continue
+
+            _append_default_paragraph(add_lines, sty_chunk, esc)
 
     style_lines = build_style_lines(levels_used)
 
