@@ -403,8 +403,18 @@ function iso() {
         if (!wordSeqVal) return null;
         var docRef = app && app.activeDocument;
         if (!docRef || !docRef.pages) return null;
+        var extendGuard = 0;
         while (wordSeqVal > docRef.pages.length){
+          if (__SAFE_PAGE_LIMIT && docRef.pages.length >= __SAFE_PAGE_LIMIT){
+            try{ log("[WARN] seq page request exceeds limit seq=" + wordSeqVal + " limit=" + __SAFE_PAGE_LIMIT); }catch(_){ }
+            return null;
+          }
           docRef.pages.add(LocationOptions.AT_END);
+          extendGuard++;
+          if (extendGuard > 50){
+            try{ log("[WARN] seq page request guard tripped seq=" + wordSeqVal); }catch(_){ }
+            break;
+          }
         }
         var pageObj = docRef.pages[wordSeqVal-1];
         if (pageObj && pageObj.isValid){
@@ -423,6 +433,39 @@ function iso() {
     var __UNITVALUE_FAIL_ONCE = false;
     var __ALLOW_IMG_EXT_FALLBACK = (typeof $.global.__ALLOW_IMG_EXT_FALLBACK !== "undefined")
                                    ? !!$.global.__ALLOW_IMG_EXT_FALLBACK : true;
+    var __SAFE_PAGE_LIMIT = 2000;
+    var __PARA_SEQ = 0;
+
+    function __resetParaSeq(){ __PARA_SEQ = 0; }
+    function __nextParaSeq(){ __PARA_SEQ++; return __PARA_SEQ; }
+    function __logSkipParagraph(seq, styleName, reason, textSample){
+      try{
+        var preview = "";
+        if (textSample){
+          preview = String(textSample).replace(/\s+/g, " ");
+          if (preview.length > 80) preview = preview.substring(0, 80) + "...";
+        }
+        log("[SKIP][PARA " + seq + "] style=" + styleName + " reason=" + reason + (preview ? " text=\"" + preview + "\"" : ""));
+      }catch(_){}
+    }
+    function __recoverAfterParagraph(storyObj, startIdx){
+      try{
+        if (storyObj && storyObj.isValid && typeof startIdx === "number"){
+          var total = storyObj.characters.length;
+          if (total > startIdx){
+            try{ storyObj.characters.itemByRange(startIdx, total-1).remove(); }catch(_rm){}
+          }
+        }
+      }catch(_){}
+      try{
+        if (storyObj && storyObj.isValid){
+          var ip = storyObj.insertionPoints[-1];
+          if (ip && ip.isValid) ip.contents = "\r";
+          storyObj.recompose();
+        }
+      }catch(_r){}
+      try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(_){}
+    }
 
     // 放在定义 log() 之后、其它函数之前即可
     if (typeof curTextFrame === "undefined" && typeof tf !== "undefined") {
@@ -3649,6 +3692,7 @@ function _holderInnerBounds(holder){
 
     // —— 段落插入：扩展识别 [[IMG ...]] / [[TABLE {...}]] ——
     function addParaWithNotes(story, styleName, raw) {
+        var paraSeq = __nextParaSeq();
         var s = app.activeDocument.paragraphStyles.itemByName(styleName);
         try { log("[PARA] style=" + styleName + " len=" + String(raw||"").length); } catch(_){}
         if (!s.isValid) { s = app.activeDocument.paragraphStyles.add({name:styleName}); }
@@ -3656,6 +3700,10 @@ function _holderInnerBounds(holder){
         var text = String(raw).replace(/^\s+|\s+$/g, "");
         if (text.length === 0) return;
 
+        var insertionStart = 0;
+        try{ insertionStart = (story && story.isValid) ? story.characters.length : 0; }catch(_){ }
+
+        try{
         // ★ 正则扩展：新增 IMG/TABLE（修复 I/B/U 与 IMG/TABLE 的匹配）
         var re = /\[\[FNI:(\d+)\]\]|\[\[(FN|EN):(.*?)\]\]|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
         var last = 0, m;
@@ -3869,6 +3917,10 @@ function _holderInnerBounds(holder){
                 curTextFrame = tf;              // ★ 新增：切到新框后更新全局指针
             }
         } catch(_){}
+        }catch(eAddPara){
+            __logSkipParagraph(paraSeq, styleName, String(eAddPara||"error"), text);
+            __recoverAfterParagraph(story, insertionStart);
+        }
     }
 
     // 打开模板、清空页面框等（保持你原逻辑）
@@ -4021,12 +4073,21 @@ function _holderInnerBounds(holder){
     }
 
     function flushOverflow(currentStory, lastPage, lastFrame) {
-        // 说明：原先用 story.characters.length 判断“是否前进”，会误判为卡住（字符总数不随分页变化）。
-        // 最小修复：移除早停判定；只要 still overset 就继续加页并接链，直到不 overset 或达到 MAX_PAGES。
+        // 仅在达到 MAX_PAGES 或总页数限制时退出，保持顺序造页，避免“无进展”误判。
         var MAX_PAGES = 20;
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
+            var docRef = app && app.activeDocument;
+            try{
+                if (__SAFE_PAGE_LIMIT && docRef && docRef.pages && docRef.pages.length >= __SAFE_PAGE_LIMIT){
+                    log("[WARN] flushOverflow page limit hit (" + __SAFE_PAGE_LIMIT + ")");
+                    break;
+                }
+            }catch(_limit){}
             var pkt = __createLayoutFrame(__CURRENT_LAYOUT, lastFrame, {afterPage:lastPage, forceBreak:false});
-            if (!pkt || !pkt.frame || !pkt.page) { break; }
+            if (!pkt || !pkt.frame || !pkt.page) {
+                try{ log("[WARN] flushOverflow failed to allocate new frame"); }catch(_){ }
+                break;
+            }
             lastPage  = pkt.page;
             lastFrame = pkt.frame;
 
@@ -4035,7 +4096,7 @@ function _holderInnerBounds(holder){
             $.sleep(10);
         }
         if (currentStory && currentStory.overflows) {
-            try { log("[WARN] flushOverflow guard hit; overset still true"); } catch(_){}
+            try { log("[WARN] flushOverflow guard hit; overset still true"); } catch(_){ }
         }
         return { page: lastPage, frame: lastFrame };
     }
@@ -4139,6 +4200,7 @@ function _holderInnerBounds(holder){
     curTextFrame = tf; 
 
     var firstChapterSeen = false;
+    __resetParaSeq();
 
     __ADD_LINES__
     var tail = flushOverflow(story, page, tf);
