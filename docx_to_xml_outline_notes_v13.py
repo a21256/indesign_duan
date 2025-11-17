@@ -40,7 +40,7 @@ import zipfile
 import argparse
 from typing import Any, Dict, List, Optional, Tuple
 
-from regex_rules import REGEX_ORDER
+from regex_rules import REGEX_ORDER, NEGATIVE_PATTERNS
 
 from docx import Document
 from docx.oxml.ns import qn
@@ -87,6 +87,7 @@ XP_RUN_PAGEBREAK = etree.XPath(".//w:br[@w:type='page']", namespaces=NSMAP)
 XP_RUN_LAST_PAGEBREAK = etree.XPath(".//w:lastRenderedPageBreak", namespaces=NSMAP)
 
 COMPILED_FIXED: List[Optional[re.Pattern]] = []
+COMPILED_NEGATIVE: List[Optional[re.Pattern]] = []
 NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)(?=[\.．]\d+|[\.．]\s+|\s+)')
 NOTE_MARKER_TRIM = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』.,．、，。:：;-—﹣﹘"
 NOTE_MARKER_CHAR_SET = set(
@@ -110,14 +111,32 @@ def _twip_to_pt(val: Optional[str]) -> Optional[float]:
         return None
 
 def _compile_patterns():
-    global COMPILED_FIXED
+    global COMPILED_FIXED, COMPILED_NEGATIVE
     COMPILED_FIXED = []
     for kind, pat in REGEX_ORDER:
         if kind == "fixed" and pat:
             COMPILED_FIXED.append(re.compile(pat))
         else:
             COMPILED_FIXED.append(None)
+    COMPILED_NEGATIVE = []
+    for pat in NEGATIVE_PATTERNS:
+        try:
+            COMPILED_NEGATIVE.append(re.compile(pat))
+        except re.error:
+            logger.warning(f"Invalid negative regex pattern skipped: {pat}")
+            COMPILED_NEGATIVE.append(None)
 _compile_patterns()
+
+def _is_regex_excluded(text: str) -> bool:
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    for pat in COMPILED_NEGATIVE:
+        if pat is not None and pat.search(stripped):
+            return True
+    return False
 
 def _int_to_roman(n: int, upper: bool=True) -> str:
     if n <= 0:
@@ -1864,6 +1883,8 @@ class DOCXOutlineExporter:
                 if kind == "fixed":
                     cp = COMPILED_FIXED[idx]
                     if cp is not None and cp.match(s):
+                        if _is_regex_excluded(s):
+                            continue
                         return FixedRegexSplitter(cp)
                 elif kind == "numeric_dotted":
                     m = NUMERIC_DOTTED.match(s)
@@ -1875,6 +1896,8 @@ class DOCXOutlineExporter:
                         if not rest:
                             continue
                         depth = len([seg for seg in re.split(r'[\.．]', token) if seg])
+                        if _is_regex_excluded(s):
+                            continue
                         return NumericDepthSplitter(depth)
         return None
 
@@ -1890,7 +1913,7 @@ class DOCXOutlineExporter:
 
         for ln in lines:
             s = ln.strip()
-            if splitter.matches(s):
+            if splitter.matches(s) and not _is_regex_excluded(s):
                 index = len(nodes) + 1
                 props = {"mode": "regex"}
                 title = _strip_pstyle_marker(s)
