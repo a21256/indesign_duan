@@ -88,6 +88,14 @@ XP_RUN_LAST_PAGEBREAK = etree.XPath(".//w:lastRenderedPageBreak", namespaces=NSM
 
 COMPILED_FIXED: List[Optional[re.Pattern]] = []
 NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)(?=[\.．]\d+|[\.．]\s+|\s+)')
+NOTE_MARKER_TRIM = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』.,．、，。:：;-—﹣﹘"
+NOTE_MARKER_CHAR_SET = set(
+    "0123456789０１２３４５６７８９"
+    "ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ"
+    "一二三四五六七八九十零〇甲乙丙丁"
+    "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+)
+NOTE_MARKER_SINGLE_ALPHA = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 def _emu_to_pt(val_emu: Optional[str]) -> Optional[float]:
     try:
@@ -278,6 +286,8 @@ class NumericDepthSplitter(Splitter):
         return len([s for s in segs if s]) == self.depth
 
 class DOCXOutlineExporter:
+    _NOTE_STYLE_HINTS = {"footnotereference", "endnotereference"}
+    _MAX_NOTE_MARKER_LEN = 4
     def __init__(self, input_path: str, mode: str = "heading"):
         assert mode in ("heading", "regex", "hybrid"), "mode must be 'heading', 'regex', or 'hybrid'"
         self.mode = mode
@@ -351,14 +361,78 @@ class DOCXOutlineExporter:
 
     # ---------- Notes extraction ----------
     @staticmethod
-    def _collect_text_from_p(par_el) -> str:
-        chunks = []
+    def _collect_text_from_p(par_el, *, skip_note_refs: bool = False) -> str:
+        chunks: List[str] = []
+        runs = par_el.findall(".//w:r", NSMAP)
+        skipped_marker = False
+        for run in runs:
+            text = DOCXOutlineExporter._text_from_run(run)
+            if not text:
+                continue
+            if skip_note_refs and not chunks:
+                if DOCXOutlineExporter._is_note_reference_run(run, text):
+                    skipped_marker = True
+                    continue
+                if skipped_marker and not text.strip():
+                    continue
+                skipped_marker = False
+            chunks.append(text)
+        if chunks:
+            return "".join(chunks)
+        fallback: List[str] = []
         for node in par_el.iter():
             if node.tag == f"{{{W_NS}}}t":
-                chunks.append(node.text or "")
+                fallback.append(node.text or "")
             elif node.tag == f"{{{W_NS}}}tab":
-                chunks.append("\t")
-        return "".join(chunks)
+                fallback.append("\t")
+        return "".join(fallback)
+
+    @staticmethod
+    def _text_from_run(run_element) -> str:
+        parts: List[str] = []
+        for node in run_element.iter():
+            if node.tag == f"{{{W_NS}}}t":
+                parts.append(node.text or "")
+            elif node.tag == f"{{{W_NS}}}tab":
+                parts.append("\t")
+        return "".join(parts)
+
+    @classmethod
+    def _is_note_reference_run(cls, run_element, text: str) -> bool:
+        stripped = (text or "").strip()
+        if XP_RUN_FOOTREF(run_element) or XP_RUN_ENDREF(run_element):
+            return True
+        rpr = run_element.find("./w:rPr", NSMAP)
+        if rpr is not None:
+            rstyle = rpr.find("./w:rStyle", NSMAP)
+            if rstyle is not None:
+                style_val = (rstyle.get(f"{{{W_NS}}}val") or "").strip().lower()
+                if style_val and (style_val in cls._NOTE_STYLE_HINTS or "footnote" in style_val or "endnote" in style_val):
+                    return True
+            vert = rpr.find("./w:vertAlign", NSMAP)
+            if vert is not None:
+                vval = (vert.get(f"{{{W_NS}}}val") or "").lower()
+                if vval == "superscript" and cls._looks_like_note_marker_text(stripped):
+                    return True
+        return cls._looks_like_note_marker_text(stripped)
+
+    @classmethod
+    def _looks_like_note_marker_text(cls, text: str) -> bool:
+        if not text:
+            return False
+        stripped = text.strip()
+        if not stripped:
+            return False
+        core = stripped.strip(NOTE_MARKER_TRIM)
+        if not core:
+            return False
+        if len(core) > cls._MAX_NOTE_MARKER_LEN:
+            return False
+        if all(ch in NOTE_MARKER_CHAR_SET for ch in core):
+            return True
+        if len(core) == 1 and core in NOTE_MARKER_SINGLE_ALPHA:
+            return True
+        return False
 
     def _next_frame_id(self) -> str:
         self._frame_seq += 1
@@ -699,7 +773,7 @@ class DOCXOutlineExporter:
             except Exception:
                 pass
             paras = n.findall(".//w:p", NSMAP)
-            texts = [DOCXOutlineExporter._collect_text_from_p(p) for p in paras]
+            texts = [DOCXOutlineExporter._collect_text_from_p(p, skip_note_refs=True) for p in paras]
             result[nid] = "\n".join([t for t in texts if t.strip()])
         return result
 
