@@ -646,42 +646,58 @@ function iso() {
         }
         var basePage = (opts.afterPage && opts.afterPage.isValid) ? opts.afterPage : (page && page.isValid ? page : doc.pages[doc.pages.length-1]);
         var newPage = null;
-        var docAllowPrev = null;
-        var spreadAllowPrev = null;
         try{
-          try{ docAllowPrev = doc.allowPageShuffle; doc.allowPageShuffle = true; }catch(_docShuf){}
+          try{ doc.allowPageShuffle = true; }catch(_docShuf){}
           if (basePage && basePage.parent && basePage.parent.isValid){
-            try{
-              spreadAllowPrev = { id: basePage.parent.id, value: basePage.parent.allowPageShuffle };
-              basePage.parent.allowPageShuffle = true;
-            }catch(_spShuf){}
+            try{ basePage.parent.allowPageShuffle = true; }catch(_spShuf){}
           }
         }catch(_prep){}
-        try{
-          if (basePage && basePage.isValid){
-            newPage = doc.pages.add(LocationOptions.AFTER, basePage);
-          } else {
-            newPage = doc.pages.add(LocationOptions.AT_END);
-          }
-        }catch(eAdd){
-          try{ newPage = doc.pages.add(LocationOptions.AT_END); }catch(eAdd2){ newPage = doc.pages.add(); }
-        }
-        try{
-          if (spreadAllowPrev && spreadAllowPrev.id != null){
+        var forceSpread = !!(opts && opts.forceNewSpread);
+        if (forceSpread){
+          try{
+            var targetSpread = null;
             try{
-              var sp = basePage && basePage.parent && basePage.parent.isValid ? basePage.parent : null;
-              if (sp && sp.isValid && sp.id === spreadAllowPrev.id){
-                sp.allowPageShuffle = spreadAllowPrev.value;
+              var baseSpread = (basePage && basePage.parent && basePage.parent.isValid) ? basePage.parent : null;
+              if (baseSpread){
+                try{ log("[LAYOUT] base spread pages=" + baseSpread.pages.length + " name=" + baseSpread.name); }catch(__logBase){}
+                targetSpread = doc.spreads.add(LocationOptions.AFTER, baseSpread);
+              } else {
+                targetSpread = doc.spreads.add(LocationOptions.AT_END);
               }
-            }catch(_restoreSp){}
+            }catch(__baseInfo){
+              try{ targetSpread = doc.spreads.add(LocationOptions.AT_END); }catch(__spreadFallback){}
+            }
+            if (targetSpread && targetSpread.isValid){
+              try{ targetSpread.allowPageShuffle = true; }catch(__spAllow){}
+              try{
+                while(targetSpread.pages.length > 1){
+                  targetSpread.pages[1].remove();
+                }
+              }catch(__trimSpread){}
+              if (targetSpread.pages.length > 0){
+                newPage = targetSpread.pages[0];
+              } else {
+                newPage = targetSpread.pages.add();
+              }
+            }
+            if (!newPage || !newPage.isValid){
+              newPage = doc.pages.add(LocationOptions.AT_END);
+            }
+          }catch(eAddForce){
+            try{ newPage = doc.pages.add(LocationOptions.AT_END); }catch(eAddForce2){ newPage = doc.pages.add(); }
           }
-          if (docAllowPrev !== null){
-            try{ doc.allowPageShuffle = docAllowPrev; }catch(_restoreDoc){}
+        } else {
+          try{
+            if (basePage && basePage.isValid){
+              newPage = doc.pages.add(LocationOptions.AFTER, basePage);
+            } else {
+              newPage = doc.pages.add(LocationOptions.AT_END);
+            }
+          }catch(eAdd){
+            try{ newPage = doc.pages.add(LocationOptions.AT_END); }catch(eAdd2){ newPage = doc.pages.add(); }
           }
-          if (docAllowPrev === false && newPage && newPage.parent && newPage.parent.isValid){
-            try{ newPage.parent.allowPageShuffle = false; }catch(_restoreNew){}
-          }
-        }catch(_restore){}
+        }
+        try{ /* no-op restore to keep shuffle true intentionally */ }catch(_restore){}
         if (!newPage || !newPage.isValid){
           throw new Error("page add failed");
         }
@@ -742,12 +758,14 @@ function iso() {
         target.pageHeightPt = target.pageWidthPt;
         target.pageWidthPt = tmpH;
       }
+      var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
+      var needNewSpread = !!(target.pageOrientation && prevOrientation && target.pageOrientation !== prevOrientation);
       if (__layoutsEqual(__CURRENT_LAYOUT, target)){
         try{ log("[LAYOUT] ensure skip orient=" + (target.pageOrientation||"") + " width=" + target.pageWidthPt + " height=" + target.pageHeightPt); }catch(_){}
         return;
       }
       var prevFrame = (typeof tf !== "undefined" && tf && tf.isValid) ? tf : null;
-      var pkt = __createLayoutFrame(target, prevFrame, {});
+      var pkt = __createLayoutFrame(target, prevFrame, {forceNewSpread: needNewSpread});
       if (pkt && pkt.frame && pkt.frame.isValid){
         try{ log("[LAYOUT] ensure apply orient=" + (target.pageOrientation||"") + " page=" + (pkt.page && pkt.page.name) + " frame=" + pkt.frame.id); }catch(_){}
         page = pkt.page;
@@ -2891,6 +2909,26 @@ function _holderInnerBounds(holder){
         try{
           if (layoutSpec){
             var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
+            var needSwitch = layoutSpec.pageOrientation && prevOrientation && layoutSpec.pageOrientation !== prevOrientation;
+            if (needSwitch){
+              try{
+                story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
+                story.recompose();
+              }catch(__preBreakErr){
+                try{ log("[WARN] frame break before layout failed: " + __preBreakErr); }catch(_){}
+              }
+              try{
+                if (typeof flushOverflow === "function" && tf && tf.isValid){
+                  var __preFlush = flushOverflow(story, page, tf);
+                  if (__preFlush && __preFlush.frame && __preFlush.page){
+                    page = __preFlush.page;
+                    tf = __preFlush.frame;
+                    story = tf.parentStory;
+                    curTextFrame = tf;
+                  }
+                }
+              }catch(__flushErr){ try{ log("[WARN] flush before layout failed: " + __flushErr); }catch(_){ } }
+            }
             __ensureLayout(layoutSpec);
             var newOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : prevOrientation;
             if (layoutSpec.pageOrientation && newOrientation !== prevOrientation){
@@ -2902,14 +2940,6 @@ function _holderInnerBounds(holder){
           }
         }catch(__layoutErr){
           try{ log("[WARN] ensure layout failed: " + __layoutErr); }catch(__layoutLog){}
-        }
-        if (layoutSwitchApplied){
-          try{
-            story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
-            story.recompose();
-          }catch(__frameBreakErr){
-            try{ log("[WARN] frame break after layout failed: " + __frameBreakErr); }catch(_){}
-          }
         }
         try{ log("[TABLE] begin rows="+rows+" cols="+cols); }catch(__){}
         var doc = app.activeDocument;
@@ -3108,7 +3138,7 @@ function _holderInnerBounds(holder){
                         log("[TABLE] pre-break forcing approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount);
                     }catch(__log0){}
                     try{
-                        ipCheck.contents = SpecialCharacters.FORCED_FRAME_BREAK;
+                        ipCheck.contents = SpecialCharacters.FRAME_BREAK;
                     }catch(_){
                         try{ ipCheck.contents = SpecialCharacters.COLUMN_BREAK; }catch(__){}
                     }
@@ -3700,6 +3730,7 @@ function _holderInnerBounds(holder){
             try{ log("[WARN] degrade notice insert failed: " + __noticeBlockErr); }catch(__noticeWarn){}
           }
         }
+        // keep current layout until after post-table flush; default restore happens later
         try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(__resetErr){}
 
         try{
@@ -3709,6 +3740,26 @@ function _holderInnerBounds(holder){
             page = st.page; tf = st.frame; story = tf.parentStory; curTextFrame = tf;
           }
         }catch(e){ log("[WARN] flush after table failed: " + e); }
+        if (layoutSwitchApplied){
+          try{
+            story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
+            story.recompose();
+          }catch(__restoreBreak){ try{ log("[WARN] frame break before restore failed: " + __restoreBreak); }catch(_){ } }
+          try{
+            __ensureLayoutDefault();
+            if (typeof flushOverflow==="function" && tf && tf.isValid){
+              var __restoreFlush = flushOverflow(story, page, tf);
+              if (__restoreFlush && __restoreFlush.frame && __restoreFlush.page){
+                page = __restoreFlush.page;
+                tf = __restoreFlush.frame;
+                story = tf.parentStory;
+                curTextFrame = tf;
+              }
+            }
+          }catch(__restoreErr){
+            try{ log("[WARN] restore default layout failed: " + __restoreErr); }catch(_){ }
+          }
+        }
       }catch(e){
         log("[ERR] addTableHiFi " + e);
       }
@@ -3758,12 +3809,6 @@ function _holderInnerBounds(holder){
         }
         try { if (!ENDNOTE_PS || !ENDNOTE_PS.isValid) ENDNOTE_PS = ensureEndnoteParaStyle(app.activeDocument);
               (en.endnoteText || en.texts[0] || en).paragraphs.everyItem().appliedParagraphStyle = ENDNOTE_PS; } catch(_){}
-        try{
-          var totalEns = (doc && doc.endnotes) ? doc.endnotes.length : app.activeDocument.endnotes.length;
-          log("[NOTE][EN] total=" + totalEns);
-        }catch(e){
-          try{ log("[NOTE][EN][ERR-LEN] " + e); }catch(_){}
-        }
         return en;
     }
 
@@ -4008,6 +4053,29 @@ function _holderInnerBounds(holder){
     var templateFile = File("%TEMPLATE_PATH%");
     if (!templateFile.exists) { alert("未找到模板文件 template.idml"); return; }
     var doc = app.open(templateFile);
+    try{
+        doc.allowPageShuffle = true;
+        try{
+            var __dp = doc.documentPreferences;
+            var __fpBefore = null;
+            try{ __fpBefore = __dp.facingPages; }catch(__fpRead){}
+            var __fpError = false;
+            try{
+                __dp.facingPages = false;
+            }catch(__fpAssign){
+                __fpError = true;
+                try{ __dp.properties = { facingPages: false }; __fpError = false; }catch(__fpProp){}
+            }
+            try{ log("[LAYOUT] facingPages before=" + __fpBefore + " after=" + __dp.facingPages + " assignErr=" + __fpError); }catch(__faceLog){}
+        }catch(__face){}
+        try{
+            var spreads = doc.spreads;
+            try{ log("[LAYOUT] spreads init count=" + (spreads ? spreads.length : "NA")); }catch(__spreadCntLog){}
+            for (var si=0; spreads && si<spreads.length; si++){
+                try{ spreads[si].allowPageShuffle = true; }catch(__spreadEnable){}
+            }
+        }catch(__spreadLoop){}
+    }catch(__allowDoc){}
 
     // 清空页面与母版文本框，保留第一页
     for (var pi = doc.pages.length - 1; pi >= 0; pi--) {
@@ -4026,6 +4094,20 @@ function _holderInnerBounds(holder){
         }
     } catch(e) {}
     while (doc.pages.length > 1) { doc.pages[doc.pages.length - 1].remove(); }
+    try{
+        doc.allowPageShuffle = true;
+        var __dpAfterTrim = doc.documentPreferences;
+        try{ __dpAfterTrim.facingPages = false; }catch(__faceAfter){
+            try{ __dpAfterTrim.properties = { facingPages: false }; }catch(__faceAfterProp){}
+        }
+        try{
+            var __spreadsAfter = doc.spreads;
+            for (var __si=0; __spreadsAfter && __si<__spreadsAfter.length; __si++){
+                try{ __spreadsAfter[__si].allowPageShuffle = true; }catch(__spAllow){}
+            }
+        }catch(__spreadTrim){}
+        try{ log("[LAYOUT] post-trim spreads=" + doc.spreads.length + " facing=" + __dpAfterTrim.facingPages); }catch(__trimLog){}
+    }catch(__allowTrim){}
     __DEFAULT_LAYOUT = (function(){
         var state = {};
         try{
@@ -5151,13 +5233,18 @@ def run_indesign_macos(jsx_path):
     return False
 
 
-def _relay_jsx_events(logger: PipelineLogger, log_path: str, warn_missing: bool = True):
+def _relay_jsx_events(
+    logger: PipelineLogger,
+    log_path: str,
+    warn_missing: bool = True,
+    cleanup: bool = True,
+):
     stats = {"info": 0, "warn": 0, "error": 0, "debug": 0}
     if logger is None:
         return stats
     if not os.path.exists(log_path):
         if warn_missing:
-            logger.warn(f"未找到 JSX 事件日志: {log_path}")
+            logger.warn(f"δ�ҵ� JSX �¼���־: {log_path}")
         return stats
     try:
         with open(log_path, 'r', encoding='utf-8', errors='ignore') as fh:
@@ -5195,8 +5282,15 @@ def _relay_jsx_events(logger: PipelineLogger, log_path: str, warn_missing: bool 
                 else:
                     stats["debug"] += 1
     except Exception as exc:
-        logger.warn(f"读取 JSX 日志失败: {exc}")
+        logger.warn(f"��ȡ JSX ��־ʧ��: {exc}")
+    finally:
+        if cleanup:
+            try:
+                os.remove(log_path)
+            except OSError:
+                pass
     return stats
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -5260,7 +5354,6 @@ def main():
     print(f"[LOG] 用户日志: {PIPELINE_LOGGER.user_log_path}")
     if args.debug_log:
         print(f"[LOG] 调试日志: {PIPELINE_LOGGER.debug_log_path}")
-    print(f"[LOG] JSX 事件日志: {LOG_PATH}")
 
     if args.skip_docx:
         if not os.path.exists(XML_PATH):
@@ -5313,7 +5406,9 @@ def main():
     PIPELINE_LOGGER.user(f"[OUTPUT] JSX: {JSX_PATH}")
     PIPELINE_LOGGER.user(f"[OUTPUT] IDML: {IDML_OUT_PATH}")
 
-    stats = _relay_jsx_events(PIPELINE_LOGGER, LOG_PATH, warn_missing=not args.no_run)
+    stats = _relay_jsx_events(
+        PIPELINE_LOGGER, LOG_PATH, warn_missing=not args.no_run, cleanup=True
+    )
     summary_line = (
         f"[REPORT] JSX 事件统计 info={stats.get('info', 0)} "
         f"warn={stats.get('warn', 0)} error={stats.get('error', 0)} "

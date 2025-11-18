@@ -922,6 +922,33 @@ class DOCXOutlineExporter:
         self._body_iter_items = items
 
     def _table_placeholder(self, tbl_el, section_state) -> Optional[str]:
+        def _unwrap_nested_table(table_el):
+            """Certain word files wrap the real table inside a single-row outer table."""
+            try:
+                rows = table_el.findall("./w:tr", NSMAP)
+            except Exception:
+                return table_el
+            if len(rows) != 1:
+                return table_el
+            tcs = rows[0].findall("./w:tc", NSMAP)
+            if not tcs:
+                return table_el
+            candidate = None
+            for tc in tcs:
+                tc_text_parts = [DOCXOutlineExporter._collect_text_from_p(p) for p in tc.findall("./w:p", NSMAP)]
+                # if this wrapper cell still contains visible text, keep original table
+                if any((part or "").strip() for part in tc_text_parts):
+                    return table_el
+                inner_tbls = tc.findall(".//w:tbl", NSMAP)
+                for inner in inner_tbls:
+                    inner_rows = inner.findall("./w:tr", NSMAP)
+                    if len(inner_rows) > 1:
+                        return inner
+                    if inner_rows and candidate is None:
+                        candidate = inner
+            return candidate or table_el
+
+        tbl_el = _unwrap_nested_table(tbl_el)
         def _tbl_width_pt(table_el):
             tw = table_el.find("./w:tblPr/w:tblW", NSMAP)
             if tw is not None:
@@ -1163,7 +1190,7 @@ class DOCXOutlineExporter:
             table_obj["cellPadding"] = cellPadding
         if borders:
             table_obj["borders"] = borders
-        delta_state = self._section_state_delta(section_state or {})
+        delta_state = self._section_state_delta(section_state or {}, base_state=self.default_section_state or {})
         if delta_state.get("pageOrientation"):
             table_obj["pageOrientation"] = delta_state["pageOrientation"]
         if "pageWidthPt" in delta_state:
@@ -1173,6 +1200,7 @@ class DOCXOutlineExporter:
         if "pageMarginsPt" in delta_state:
             table_obj["pageMarginsPt"] = delta_state["pageMarginsPt"]
         return "[[TABLE " + json.dumps(table_obj, ensure_ascii=False) + "]]"
+
 
     def _resolve_default_section_state(self) -> Dict[str, Any]:
         base = {
@@ -1227,11 +1255,18 @@ class DOCXOutlineExporter:
             state["pageMarginsPt"] = margins
         return state
 
-    def _section_state_delta(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    def _section_state_delta(self, state: Dict[str, Any], base_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not state:
             return {}
-        default = self.default_section_state or {}
+        default = base_state or self.default_section_state or {}
         delta: Dict[str, Any] = {}
+
+        if state.get("pageOrientation") and state.get("pageOrientation") != default.get("pageOrientation"):
+            delta["pageOrientation"] = state["pageOrientation"]
+
+        margins = state.get("pageMarginsPt")
+        def_margins = default.get("pageMarginsPt") if isinstance(default, dict) else None
+        margins_delta: Dict[str, float] = {}
 
         def _diff(a, b, tol=0.5):
             if a is None or b is None:
@@ -1241,16 +1276,6 @@ class DOCXOutlineExporter:
             except Exception:
                 return a != b
 
-        if state.get("pageOrientation") and state.get("pageOrientation") != default.get("pageOrientation"):
-            delta["pageOrientation"] = state["pageOrientation"]
-        if _diff(state.get("pageWidthPt"), default.get("pageWidthPt")):
-            delta["pageWidthPt"] = state.get("pageWidthPt")
-        if _diff(state.get("pageHeightPt"), default.get("pageHeightPt")):
-            delta["pageHeightPt"] = state.get("pageHeightPt")
-
-        margins = state.get("pageMarginsPt")
-        def_margins = default.get("pageMarginsPt") if isinstance(default, dict) else None
-        margins_delta: Dict[str, float] = {}
         if isinstance(margins, dict):
             for key in ("top", "bottom", "left", "right"):
                 if key in margins:
@@ -1258,7 +1283,6 @@ class DOCXOutlineExporter:
                     if _diff(margins[key], base_val):
                         margins_delta[key] = margins[key]
         if margins_delta:
-            # include untouched defaults so the importer has complete margins
             complete = dict(def_margins) if isinstance(def_margins, dict) else {}
             complete.update(margins_delta)
             delta["pageMarginsPt"] = complete
@@ -2121,6 +2145,11 @@ class DOCXOutlineExporter:
         logger.info("Building hierarchy (regex mode, hierarchical segmentation with dynamic numeric depth)...")
         lines: List[str] = []
         for kind, obj, section_state in self._iter_block_items():
+            if kind == "layout":
+                marker = self._layout_marker_from_state(section_state)
+                if marker:
+                    lines.append(marker)
+                continue
             if kind == "p":
                 line = self._paragraph_text_with_refs(obj, include_pstyle=True)
                 lines.append(line)
