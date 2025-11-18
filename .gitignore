@@ -6,6 +6,9 @@
 !docx_to_idml.py
 !xml_to_idml.py
 !docx_to_xml_outline_notes_v13.py
+!image_table/
+!image_table/docx_to_idml.py
+!image_table/xml_to_idml.py
 !README.md
 !builders/
 !builders/*.py
