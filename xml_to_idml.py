@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
+from pipeline_logger import PipelineLogger
 
 # ========== 路径与配置 ==========
 OUT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -22,7 +23,7 @@ AUTO_RUN_WINDOWS = True
 AUTO_RUN_MACOS = True
 AUTO_EXPORT_IDML = True  # 如需脚本结束自动导出 output.idml，改 True
 # 是否把运行日志写入文件：开发=True，商用=False，也可用环境变量 INDESIGN_LOG=0/1 覆盖
-LOG_WRITE = True
+LOG_WRITE = False
 
 WIN_PROGIDS = [
     "InDesign.Application.2020",
@@ -49,6 +50,26 @@ FN_MARK_PT = max(7, BODY_PT - 2)
 # 脚注正文段落样式找不到时的兜底字号/行距（只影响脚注内容，不影响正文）
 FN_FALLBACK_PT = max(8, BODY_PT - 2)
 FN_FALLBACK_LEAD = FN_FALLBACK_PT + 2
+
+PIPELINE_LOGGER: Optional[PipelineLogger] = None
+
+def _user_log(message: str):
+    if PIPELINE_LOGGER:
+        PIPELINE_LOGGER.user(message)
+    else:
+        print(message)
+
+def _debug_log(message: str):
+    if PIPELINE_LOGGER:
+        PIPELINE_LOGGER.debug(message)
+
+def _log_snippet(text: str, limit: int = 120) -> str:
+    if not text:
+        return ""
+    stripped = text.strip()
+    if len(stripped) > limit:
+        return stripped[:limit] + "..."
+    return stripped
 
 
 # ========== XML 解析（无限层级 + 引用式脚注/尾注；忽略 <meta>/<prop>/<footnotes>/<endnotes>内容） ==========
@@ -80,16 +101,21 @@ def _index_notes(root):
                 if _strip_ns(ch.tag) == "footnote":
                     fid = ch.attrib.get("id") or ch.attrib.get("rid") or ch.attrib.get("ref")
                     if fid:
-                        foot_map[str(fid)] = _collect_all_text(ch).strip().replace("]]", "】】")
+                        note_text = _collect_all_text(ch).strip().replace("]]", "】】")
+                        foot_map[str(fid)] = note_text
+                        _debug_log(f"[NOTE-FOOT] id={fid} len={len(note_text)} snippet={_log_snippet(note_text)}")
             continue
         if tag == "endnotes":
             for ch in list(n):
                 if _strip_ns(ch.tag) == "endnote":
                     eid = ch.attrib.get("id") or ch.attrib.get("rid") or ch.attrib.get("ref")
                     if eid:
-                        end_map[str(eid)] = _collect_all_text(ch).strip().replace("]]", "】】")
+                        note_text = _collect_all_text(ch).strip().replace("]]", "】】")
+                        end_map[str(eid)] = note_text
+                        _debug_log(f"[NOTE-END] id={eid} len={len(note_text)} snippet={_log_snippet(note_text)}")
             continue
         stack.extend(list(n))
+    _debug_log(f"[NOTES] indexed footnotes={len(foot_map)} endnotes={len(end_map)}")
     return foot_map, end_map
 
 
@@ -142,12 +168,19 @@ def _collect_inline_with_notes(elem, foot_map, end_map):
             parts.append(f"[[FNI:{str(rid)}]]")
             note = foot_map.get(str(rid), "")
             parts.append(f"[[FN:{note}]]" if note else "[*]")
+            _debug_log(
+                f"[FNREF] id={rid} has_note={bool(note)} noteSnippet={_log_snippet(note)} tailSnippet={_log_snippet(c.tail)}"
+            )
             if c.tail: parts.append(c.tail)
             continue
         if tag == "enref":
             rid = c.attrib.get("id") or c.attrib.get("rid") or c.attrib.get("ref")
+            parts.append(f"[[FNI:{str(rid)}]]")
             note = end_map.get(str(rid), "")
             parts.append(f"[[EN:{note}]]" if note else "[*]")
+            _debug_log(
+                f"[ENREF] id={rid} has_note={bool(note)} noteSnippet={_log_snippet(note)} tailSnippet={_log_snippet(c.tail)}"
+            )
             if c.tail: parts.append(c.tail)
             continue
 
@@ -173,6 +206,7 @@ def _collect_inline_with_notes(elem, foot_map, end_map):
 
 
 def extract_paragraphs_with_levels(xml_path):
+    _debug_log(f"[XML] parsing paragraphs from {xml_path}")
     tree = ET.parse(xml_path)
     root = tree.getroot()
     foot_map, end_map = _index_notes(root)
@@ -237,6 +271,7 @@ def extract_paragraphs_with_levels(xml_path):
             out.append(("Body", elem.tail.strip()))
 
     walk(root, 0)
+    _debug_log(f"[XML] extracted paragraphs={len(out)} from {xml_path}")
     return out
 
 
@@ -292,23 +327,44 @@ function iso() {
         app.viewPreferences.verticalMeasurementUnits = MeasurementUnits.POINTS;
     }catch(_){}
 
-    // ====== 日志 ======
-    var LOG_FILE   = File("%LOG_PATH%");
-    var LOG_WRITE  = %LOG_WRITE%;   // ← Python 注入的总开关：true/false
+    // ====== 日志收集 ======
+    var EVENT_FILE = File("%EVENT_LOG_PATH%");
+    var LOG_WRITE  = %LOG_WRITE%;   // true=记录 debug；false=仅保留 warn/error/info
+    var __EVENT_LINES = [];
 
-    function warn(m){ if (LOG_WRITE) log("[WARN] " + m); }
-    function err(m){  if (LOG_WRITE) log("[ERR] "  + m); }
-    function log(m){
-      if (!LOG_WRITE) return;                     // ← 关掉写盘
-      var stamp = iso()+" "+m;
-      // 1) 尝试写到工程目录日志文件
+    function __sanitizeLogMessage(m){
+      var txt = String(m == null ? "" : m);
+      txt = txt.replace(/[\r\n]+/g, " ").replace(/\t/g, " ");
+      return txt;
+    }
+    function __pushEvent(level, message){
+      if (level === "debug" && !LOG_WRITE) return;
+      var stamp = iso();
+      __EVENT_LINES.push(level + "\t" + stamp + "\t" + __sanitizeLogMessage(message));
+      if (EVENT_FILE) {
+        try {
+          if (EVENT_FILE.parent && !EVENT_FILE.parent.exists) EVENT_FILE.parent.create();
+          EVENT_FILE.encoding = "UTF-8";
+          EVENT_FILE.open("a");
+          EVENT_FILE.writeln(__EVENT_LINES[__EVENT_LINES.length - 1]);
+          EVENT_FILE.close();
+        } catch(_){}
+      }
+    }
+    function info(m){ __pushEvent("info", m); }
+    function warn(m){ __pushEvent("warn", m); }
+    function err(m){  __pushEvent("error", m); }
+    function log(m){  __pushEvent("debug", m); }
+    function __flushEvents(){
       try{
-        if (LOG_FILE.parent && !LOG_FILE.parent.exists) LOG_FILE.parent.create();
-        LOG_FILE.encoding = "UTF-8";
-        LOG_FILE.open("a");
-        LOG_FILE.writeln(stamp);
-        LOG_FILE.close();
-      }catch(_){}
+        if (EVENT_FILE.parent && !EVENT_FILE.parent.exists) EVENT_FILE.parent.create();
+        EVENT_FILE.encoding = "UTF-8";
+        EVENT_FILE.open("w");
+        for (var i=0; i<__EVENT_LINES.length; i++){
+          EVENT_FILE.writeln(__EVENT_LINES[i]);
+        }
+        EVENT_FILE.close();
+      }catch(_){ }
     }
     function __logUnitValueFail(msg, err){
       if (__UNITVALUE_FAIL_ONCE) return;
@@ -3665,28 +3721,49 @@ function _holderInnerBounds(holder){
         if (!ok) { try { fn = story.footnotes.add(ip); ok = (fn && fn.isValid); } catch(e){} }
         if (!ok) { try { fn = doc.footnotes.add(ip);   ok = (fn && fn.isValid); } catch(e){} }
         if (!ok) { return null; }
-        try { fn.texts[0].contents = content; }
-        catch(_){ try { fn.contents = content; } catch(__){ try { fn.insertionPoints[-1].contents = content; } catch(___) {} } }
-        if (idForDisplay != null) {
-            try { fn.texts[0].insertionPoints[0].contents = String(idForDisplay) + " "; } catch(_){}
+        try {
+            var tgtFn = fn.texts[0];
+            tgtFn.insertionPoints[-1].contents = content;
+        } catch(_){
+            try { fn.contents = content; } catch(__){ try { fn.insertionPoints[-1].contents = content; } catch(___) {} }
         }
         try { if (!FOOTNOTE_PS || !FOOTNOTE_PS.isValid) FOOTNOTE_PS = ensureFootnoteParaStyle(doc);
               fn.texts[0].paragraphs.everyItem().appliedParagraphStyle = FOOTNOTE_PS; } catch(_){}
         return fn;
     }
 
-    function createEndnoteAt(ip, content){
+    function createEndnoteAt(ip, content, idForDisplay){
         if(!ip || !ip.isValid) return null;
         var doc = app.activeDocument, story = ip.parentStory;
         var en = null, ok = false;
         try { if (ip.createEndnote) { en = ip.createEndnote(); ok = (en && en.isValid); } } catch(e){ }
         if (!ok) { try { en = story.endnotes.add(ip); ok = (en && en.isValid); } catch(e){ } }
         if (!ok) { try { en = doc.endnotes.add(ip);   ok = (en && en.isValid); } catch(e){ } }
-        if (!ok) { return null; }
-        try { en.endnoteText.contents = content; }
-        catch(_){ try { en.texts[0].contents = content; } catch(__){ try { en.contents = content; } catch(___) {} } }
+        if (!ok) {
+            try{ log("[NOTE][EN][ERR] unable to create endnote"); }catch(_){}
+            return null;
+        }
+        var target = null;
+        try { target = en.endnoteText; } catch(_){}
+        if (!target || !target.isValid) {
+            try { target = en.texts[0]; } catch(_){}
+        }
+        if (!target || !target.isValid) {
+            target = en;
+        }
+        try {
+            target.insertionPoints[-1].contents = content;
+        } catch(_){
+            try { target.contents = content; } catch(__){}
+        }
         try { if (!ENDNOTE_PS || !ENDNOTE_PS.isValid) ENDNOTE_PS = ensureEndnoteParaStyle(app.activeDocument);
               (en.endnoteText || en.texts[0] || en).paragraphs.everyItem().appliedParagraphStyle = ENDNOTE_PS; } catch(_){}
+        try{
+          var totalEns = (doc && doc.endnotes) ? doc.endnotes.length : app.activeDocument.endnotes.length;
+          log("[NOTE][EN] total=" + totalEns);
+        }catch(e){
+          try{ log("[NOTE][EN][ERR-LEN] " + e); }catch(_){}
+        }
         return en;
     }
 
@@ -3705,9 +3782,10 @@ function _holderInnerBounds(holder){
 
         try{
         // ★ 正则扩展：新增 IMG/TABLE（修复 I/B/U 与 IMG/TABLE 的匹配）
-        var re = /\[\[FNI:(\d+)\]\]|\[\[(FN|EN):(.*?)\]\]|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
+        var re = /\[{2,}FNI:(\d+)\]{2,}|\[{2,}(FN|EN):(.*?)\]{2,}|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
         var last = 0, m;
         var st = {i:0, b:0, u:0};
+        var PENDING_NOTE_ID = null;
         function on(x){ return x>0; }
 
         while ((m = re.exec(text)) !== null) {
@@ -3722,14 +3800,17 @@ function _holderInnerBounds(holder){
 
 
             if (m[1]) {
-                PENDING_FN_ID = parseInt(m[1], 10);
+                PENDING_NOTE_ID = parseInt(m[1], 10);
             } else if (m[2]) {
                 var noteType = m[2];
                 var noteContent = m[3];
                 var ip = story.insertionPoints[-1];
-                try { if (noteType === "FN") createFootnoteAt(ip, noteContent, PENDING_FN_ID);
-                      else createEndnoteAt(ip, noteContent); } catch(_){}
-                PENDING_FN_ID = null;
+                try {
+                      log("[NOTE] create " + noteType + " id=" + PENDING_NOTE_ID + " len=" + (noteContent||"").length);
+                      if (noteType === "FN") createFootnoteAt(ip, noteContent, PENDING_NOTE_ID);
+                      else createEndnoteAt(ip, noteContent, PENDING_NOTE_ID);
+                } catch(e){ log("[NOTE][ERR] " + e); }
+                PENDING_NOTE_ID = null;
 
             } else if (m[6]) {
                 try{ log("[IMGDBG] enter [[IMG]] attrs=" + m[6]); }catch(_){}
@@ -3973,7 +4054,7 @@ function _holderInnerBounds(holder){
             }
         }catch(_){ }
         return __cloneLayoutState(state);
-    })();
+})();
     __CURRENT_LAYOUT = __cloneLayoutState(__DEFAULT_LAYOUT);
 
 
@@ -4550,11 +4631,16 @@ def _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images):
             (style, img_pattern.sub(" ", text))
             for style, text in paragraphs
         ]
+        _debug_log(f"[PARA-SPLIT] skip_images sanitized {len(paragraphs)} paragraphs")
         return paragraphs
 
     expanded = []
-    for style, text in paragraphs:
-        expanded.extend(_split_media_chunks(style, text))
+    for idx, (style, text) in enumerate(paragraphs, 1):
+        chunks = _split_media_chunks(style, text)
+        if PIPELINE_LOGGER:
+            kinds = [_classify_chunk_value(chunk) for _, chunk in chunks]
+            _debug_log(f"[PARA-SPLIT idx={idx} style={style}] origLen={len(text or '')} chunks={len(chunks)} kinds={kinds}")
+        expanded.extend(chunks)
     return expanded or paragraphs
 
 
@@ -4565,17 +4651,28 @@ def _preflight_snippet(text: str, limit: int = 120) -> str:
     return snippet
 
 
+def _report_preflight_issue(style: str, text: str, reason: str):
+    snippet = _preflight_snippet(text)
+    label = style or "Body"
+    _user_log(f"[WARN][PRECHECK] style={label} reason={reason}; snippet={snippet}")
+    _debug_log(f"[PRECHECK] style={label} reason={reason} text={text}")
+
+
 def _preflight_reason(style: str, text: str, max_chars: int = 600000) -> Optional[str]:
     """Return reason string if the paragraph should be skipped before handing to JSX."""
     if not text:
         return None
     length = len(text)
     if length > max_chars:
-        return f"text too long ({length} chars > {max_chars})"
+        reason = f"text too long ({length} chars > {max_chars})"
+        _report_preflight_issue(style, text, reason)
+        return reason
     opens = text.count("[[")
     closes = text.count("]]")
     if opens != closes:
-        return f"unbalanced markers ([[ count {opens} vs ]] count {closes})"
+        reason = f"unbalanced markers ([[ count {opens} vs ]] count {closes})"
+        _report_preflight_issue(style, text, reason)
+        return reason
     return None
 
 
@@ -4675,6 +4772,27 @@ def _split_media_chunks(style, text):
     return [(style, chunk) for style, chunk in parts if chunk not in ("", None)]
 
 
+def _classify_chunk_value(chunk):
+    if isinstance(chunk, str):
+        trimmed = chunk.strip()
+        if not trimmed:
+            return "text-empty"
+        upper = trimmed.upper()
+        if upper.startswith("[[IMG"):
+            return "IMG_MARKER"
+        if upper.startswith("[[TABLE"):
+            return "TABLE_MARKER"
+        if upper.startswith("[[FRAME"):
+            return "FRAME_MARKER"
+        return f"text(len={len(trimmed)})"
+    name = getattr(chunk, "__class__", type(chunk)).__name__
+    if isinstance(chunk, dict):
+        if "rows" in chunk and "cols" in chunk:
+            return "TABLE_DICT"
+        return "dict"
+    return name
+
+
 def _normalize_style_name(style, levels_used):
     sty = style
     lower = sty.lower()
@@ -4722,32 +4840,46 @@ def _handle_table_marker(text, add_lines):
     m_tbl = re.match(r'^\s*\[\[TABLE\s+(\{[\s\S]*\})\s*\]\]\s*$', text)
     if not m_tbl:
         return False
+    payload = m_tbl.group(1)
+    parse_source = "json"
     try:
-        obj = json.loads(m_tbl.group(1))
-    except Exception:
-        obj = eval("(" + m_tbl.group(1) + ")")
+        obj = json.loads(payload)
+    except Exception as exc:
+        parse_source = "eval"
+        _debug_log(f"[TABLE] json decode failed; fallback eval err={exc}")
+        obj = eval("(" + payload + ")")
     rows = int(obj.get("rows", 0))
     cols = int(obj.get("cols", 0))
-    data = obj.get("data", [])
-    # rows/cols/data 保留在此，便于调试时断点查看
+    data = obj.get("data") or []
+    _debug_log(
+        f"[TABLE] marker rows={rows} cols={cols} dataRows={len(data)} source={parse_source}"
+    )
+    # rows/cols/data kept here for debugging
     add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
     return True
 
 
 def _handle_img_marker(text, skip_images, add_lines):
     if skip_images:
+        _debug_log("[IMG] skip_images flag set; ignore [[IMG]] marker")
         return False
     match, only_img = _match_img_marker(text)
     if not match:
         return False
     spec = _image_spec_from_attrs(match, force_block=only_img)
+    _debug_log(
+        f"[IMG] marker src={spec.get('src')} inline={spec.get('inline')} force_block={spec.force_block}"
+    )
     add_lines.append("__ensureLayoutDefault();")
     add_lines.append(spec.to_js_block())
     return True
 
 
 def _handle_html_table(text, skip_images, add_lines):
-    if skip_images or not re.match(r'^\s*<table\b[\s\S]*</table>\s*$', text, flags=re.I):
+    if skip_images:
+        _debug_log("[HTML-TABLE] skip_images flag set; ignore <table> block")
+        return False
+    if not re.match(r'^\s*<table\b[\s\S]*</table>\s*$', text, flags=re.I):
         return False
     try:
         root = ET.fromstring(text)
@@ -4775,6 +4907,7 @@ def _handle_html_table(text, skip_images, add_lines):
         rows_data.append(row)
     cols = max([len(r) for r in rows_data]) if rows_data else 0
     obj = {"rows": len(rows_data), "cols": cols, "data": rows_data}
+    _debug_log(f"[HTML-TABLE] rows={obj['rows']} cols={cols} rowsWithCells={len(rows_data)}")
     add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
     return True
 
@@ -4817,10 +4950,14 @@ def _build_html_image_spec(text):
 
 def _handle_html_image(text, skip_images, add_lines):
     if skip_images:
+        _debug_log("[HTML-IMG] skip_images flag set; ignore <img> block")
         return False
     spec = _build_html_image_spec(text)
     if not spec:
         return False
+    _debug_log(
+        f"[HTML-IMG] src={spec.get('src')} inline={spec.get('inline')} force_block={spec.force_block}"
+    )
     add_lines.append("__ensureLayoutDefault();")
     add_lines.append(spec.to_js_block())
     return True
@@ -4839,9 +4976,11 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     add_lines.append("firstChapterSeen = false;")
 
     img_pattern = re.compile(r'\[\[IMG\s+[^\]]+\]\]', re.I)
-    for idx, (style, text) in enumerate(paragraphs):
+    _debug_log(f"[WRITE-JSX] totalParas={len(paragraphs)} skip_images={skip_images}")
+    for idx, (style, text) in enumerate(paragraphs, 1):
         sty = _normalize_style_name(style, levels_used)
         normalized_text = text or ""
+        _debug_log(f"[WRITE-JSX idx={idx}] inStyle={style} normalized={sty} origLen={len(normalized_text)}")
         reason = _preflight_reason(style, normalized_text)
         if reason:
             preview = escape_js(_preflight_snippet(normalized_text))
@@ -4856,6 +4995,8 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
 
         level1_pending = (sty == "Level1")
         for sub_style, chunk in expanded:
+            chunk_desc = _classify_chunk_value(chunk)
+            _debug_log(f"[WRITE-JSX chunk idx={idx}] type={chunk_desc}")
             if level1_pending:
                 add_lines.append("if (firstChapterSeen) { var __fl = flushOverflow(story, page, tf); story = __fl.frame.parentStory; page = __fl.page; tf = __fl.frame; onNewLevel1(); } else { firstChapterSeen = true; }")
                 level1_pending = False
@@ -4912,7 +5053,7 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     jsx = jsx.replace("%FN_MARK_PT%", str(FN_MARK_PT))
     jsx = jsx.replace("%FN_FALLBACK_PT%", str(FN_FALLBACK_PT))
     jsx = jsx.replace("%FN_FALLBACK_LEAD%", str(FN_FALLBACK_LEAD))
-    jsx = jsx.replace("%LOG_PATH%", LOG_PATH.replace("\\", "/"))
+    jsx = jsx.replace("%EVENT_LOG_PATH%", LOG_PATH.replace("\\", "/"))
     jsx = jsx.replace("%LOG_WRITE%", "true" if LOG_WRITE else "false")  # ← 新增
     jsx = jsx.replace("__STYLE_LINES__", style_lines)
     jsx = jsx.replace("__ADD_LINES__", "\n    ".join(add_lines))
@@ -4921,8 +5062,7 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     with open(jsx_path, "w", encoding="utf-8") as f:
         f.write(jsx)
     print("[OK] JSX 写入:", jsx_path)
-    if LOG_WRITE:
-        print("[INFO] 日志写入:", LOG_PATH)
+    print(f"[INFO] JSX 事件日志: {LOG_PATH}")
     # 在 write_jsx() 末尾、写完 add_lines 之后临时加一行：
     print("[DEBUG] JSX 是否包含 addImageAtV2：", any("addImageAtV2(" in ln for ln in add_lines))
 
@@ -5011,9 +5151,56 @@ def run_indesign_macos(jsx_path):
     return False
 
 
+def _relay_jsx_events(logger: PipelineLogger, log_path: str, warn_missing: bool = True):
+    stats = {"info": 0, "warn": 0, "error": 0, "debug": 0}
+    if logger is None:
+        return stats
+    if not os.path.exists(log_path):
+        if warn_missing:
+            logger.warn(f"未找到 JSX 事件日志: {log_path}")
+        return stats
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='ignore') as fh:
+            for raw in fh:
+                entry = raw.rstrip('\n')
+                if not entry:
+                    continue
+                parts = entry.split('\t', 2)
+                if len(parts) == 3:
+                    level, stamp, message = parts
+                else:
+                    level, stamp, message = "debug", "", entry
+                level = (level or "debug").strip().lower()
+                stamp = stamp.strip()
+                message = message.strip()
+                upper_msg = message.upper()
+                if level == "debug":
+                    if "[WARN" in upper_msg or upper_msg.startswith("WARN "):
+                        level = "warn"
+                    elif "[ERR" in upper_msg or upper_msg.startswith("ERROR "):
+                        level = "error"
+                    elif "[INFO" in upper_msg or upper_msg.startswith("INFO "):
+                        level = "info"
+                formatted = f"[JSX][{level.upper()}] {stamp} {message}".strip()
+                logger.debug(formatted)
+                if level == "warn":
+                    stats["warn"] += 1
+                    logger.warn(formatted)
+                elif level == "error":
+                    stats["error"] += 1
+                    logger.error(formatted)
+                elif level == "info":
+                    stats["info"] += 1
+                    logger.user(formatted)
+                else:
+                    stats["debug"] += 1
+    except Exception as exc:
+        logger.warn(f"读取 JSX 日志失败: {exc}")
+    return stats
+
 def main():
     parser = argparse.ArgumentParser(
-        description="DOCX → XML → JSX → InDesign 自动排版工具"
+        description="DOCX → XML → JSX → InDesign 自动化管线"
     )
     parser.add_argument(
         "docx",
@@ -5029,45 +5216,86 @@ def main():
     parser.add_argument(
         "--skip-docx",
         action="store_true",
-        help="跳过 DOCX→XML 流程，直接使用现有 XML（需保证 XML 存在）",
+        help="跳过 DOCX→XML，直接使用已有的 XML",
     )
     parser.add_argument(
         "--xml-path",
-        help="显式指定 XML 输入/输出路径（默认 formatted_output.xml）",
+        help="手动指定 XML 输出/输入路径（默认 formatted_output.xml）",
     )
     parser.add_argument(
         "--no-run",
         action="store_true",
-        help="只生成 XML/JSX，不调用 InDesign",
+        help="仅生成 XML/JSX，不实际调用 InDesign",
     )
     parser.add_argument(
         "--no-images",
         action="store_true",
-        help="skip inserting images when generating JSX",
+        help="生成 JSX 时忽略图片",
+    )
+    parser.add_argument(
+        "--log-dir",
+        help="指定日志输出目录（默认写入脚本目录下的 logs）",
+    )
+    parser.add_argument(
+        "--debug-log",
+        action="store_true",
+        help="开启 debug 日志输出",
     )
     args = parser.parse_args()
 
-    global XML_PATH
+    global XML_PATH, LOG_PATH, LOG_WRITE, PIPELINE_LOGGER
     if args.xml_path:
         XML_PATH = os.path.abspath(args.xml_path)
+    docx_input = os.path.abspath(args.docx or "1.docx")
+    log_source = docx_input if docx_input else XML_PATH
+    PIPELINE_LOGGER = PipelineLogger(
+        log_source,
+        log_root=args.log_dir,
+        enable_debug=args.debug_log,
+        console_echo=False,
+    )
+    LOG_PATH = str(PIPELINE_LOGGER.jsx_event_log_path)
+    LOG_WRITE = args.debug_log
+    PIPELINE_LOGGER.describe_paths()
+    print(f"[LOG] 用户日志: {PIPELINE_LOGGER.user_log_path}")
+    if args.debug_log:
+        print(f"[LOG] 调试日志: {PIPELINE_LOGGER.debug_log_path}")
+    print(f"[LOG] JSX 事件日志: {LOG_PATH}")
 
     if args.skip_docx:
         if not os.path.exists(XML_PATH):
-            print(f"[ERR] --skip-docx 指定但未找到 XML：{XML_PATH}")
+            msg = f"[ERR] --skip-docx 指定但未找到 XML：{XML_PATH}"
+            print(msg)
+            PIPELINE_LOGGER.error(msg)
             return
-        print(f"[INFO] 跳过 DOCX → XML，直接使用：{XML_PATH}")
+        msg = f"[INFO] 跳过 DOCX → XML，直接使用：{XML_PATH}"
+        print(msg)
+        PIPELINE_LOGGER.user(msg)
     else:
-        input_file = os.path.abspath(args.docx or "1.docx")
-        if not os.path.exists(input_file):
-            print(f"[ERR] 找不到 DOCX：{input_file}")
+        if not os.path.exists(docx_input):
+            msg = f"[ERR] 找不到 DOCX：{docx_input}"
+            print(msg)
+            PIPELINE_LOGGER.error(msg)
             return
-        exporter = DOCXOutlineExporter(input_file, mode=args.mode)
-        exporter.process(XML_PATH)
+        exporter = DOCXOutlineExporter(docx_input, mode=args.mode)
+        summary = exporter.process(XML_PATH)
+        _debug_log(f"[DOCX] summary raw={summary}")
+        report = (
+            f"[REPORT] DOCX 解析完毕: paragraphs={summary.get('word_paragraphs')} "
+            f"tables={summary.get('word_tables')} headings={summary.get('headings_detected')} "
+            f"footnotes={summary.get('footnotes')} endnotes={summary.get('endnotes')}"
+        )
+        print(report)
+        PIPELINE_LOGGER.user(report)
 
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
-    print(f"[INFO] 解析了 {len(paragraphs)} 段；示例： {paragraphs[:3]}")
+    _debug_log(f"[XML] paragraphs_ready={len(paragraphs)} mode={args.mode}")
+    para_msg = f"[INFO] 解析到 {len(paragraphs)} 段；示例： {paragraphs[:3]}"
+    print(para_msg)
+    PIPELINE_LOGGER.user(para_msg)
 
     write_jsx(JSX_PATH, paragraphs, skip_images=args.no_images)
+    PIPELINE_LOGGER.user(f"[JSX] 已生成 {JSX_PATH}")
 
     ran = False
     if not args.no_run:
@@ -5081,6 +5309,19 @@ def main():
     print("JSX: ", JSX_PATH)
     print("LOG: ", LOG_PATH)
     print("IDML:", IDML_OUT_PATH)
+    PIPELINE_LOGGER.user(f"[OUTPUT] XML: {XML_PATH}")
+    PIPELINE_LOGGER.user(f"[OUTPUT] JSX: {JSX_PATH}")
+    PIPELINE_LOGGER.user(f"[OUTPUT] IDML: {IDML_OUT_PATH}")
+
+    stats = _relay_jsx_events(PIPELINE_LOGGER, LOG_PATH, warn_missing=not args.no_run)
+    summary_line = (
+        f"[REPORT] JSX 事件统计 info={stats.get('info', 0)} "
+        f"warn={stats.get('warn', 0)} error={stats.get('error', 0)} "
+        f"debug={stats.get('debug', 0)}"
+    )
+    print(summary_line)
+    PIPELINE_LOGGER.user(summary_line)
+
     if ran:
         print("InDesign 已执行 JSX。若设置 AUTO_EXPORT_IDML=True，将在脚本目录生成 output.idml。")
 

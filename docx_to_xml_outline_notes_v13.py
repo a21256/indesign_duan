@@ -90,6 +90,7 @@ COMPILED_FIXED: List[Optional[re.Pattern]] = []
 COMPILED_NEGATIVE: List[Optional[re.Pattern]] = []
 NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)(?=[\.．]\d+|[\.．]\s+|\s+)')
 NOTE_MARKER_TRIM = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』.,．、，。:：;-—﹣﹘"
+NOTE_MARKER_EDGE = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』"
 NOTE_MARKER_CHAR_SET = set(
     "0123456789０１２３４５６７８９"
     "ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ"
@@ -315,6 +316,11 @@ class DOCXOutlineExporter:
         self.footnotes: Dict[str, str] = {}
         self.endnotes: Dict[str, str] = {}
         self.root = MyDOCNode("root", level=0, index=0, parent=None, element_type="root")
+        self._stats = {
+            "body_fragments": 0,
+            "table_fragments": 0,
+        }
+        self._last_summary: Dict[str, Any] = {}
 
         # Numbering (lists)
         self.num_map_abstract: Dict[int, int] = {}
@@ -330,6 +336,11 @@ class DOCXOutlineExporter:
         self._frame_seq = 0
         self._word_page_width_pt, self._word_page_height_pt = self._resolve_word_page_size()
         self._word_page_seq = 1
+        self._stats = {
+            "body_fragments": 0,
+            "table_fragments": 0,
+        }
+        self._last_summary: Dict[str, Any] = {}
 
     def _resolve_word_page_size(self) -> Tuple[float, float]:
         try:
@@ -378,23 +389,63 @@ class DOCXOutlineExporter:
                 mapping[member] = "justify"
         return mapping.get(val, "")
 
+    def _append_body_fragment(self, target_node, fragment: str):
+        if fragment is None:
+            return
+        text = fragment.strip()
+        if not text:
+            return
+        target_node.body_paragraphs.append(fragment)
+        self._stats["body_fragments"] += 1
+        if text.startswith("[[TABLE"):
+            self._stats["table_fragments"] += 1
+
+    def _count_headings(self, node: MyDOCNode) -> int:
+        count = 1 if node.element_type == "heading" else 0
+        for child in node.children:
+            count += self._count_headings(child)
+        return count
+
+    def _collect_summary(self) -> Dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "word_paragraphs": len(self.doc.paragraphs),
+            "word_tables": len(self.doc.tables),
+            "footnotes": len(self.footnotes),
+            "endnotes": len(self.endnotes),
+            "body_fragments": self._stats.get("body_fragments", 0),
+            "table_fragments": self._stats.get("table_fragments", 0),
+            "headings_detected": self._count_headings(self.root),
+        }
+
     # ---------- Notes extraction ----------
     @staticmethod
     def _collect_text_from_p(par_el, *, skip_note_refs: bool = False) -> str:
         chunks: List[str] = []
         runs = par_el.findall(".//w:r", NSMAP)
-        skipped_marker = False
+        pending_strip_leading = False
         for run in runs:
             text = DOCXOutlineExporter._text_from_run(run)
+            is_note_ref = False
+            if skip_note_refs:
+                is_note_ref = DOCXOutlineExporter._is_note_reference_run(run, text or "")
+            if is_note_ref:
+                if chunks:
+                    stripped_prev = chunks[-1].rstrip(NOTE_MARKER_EDGE)
+                    if stripped_prev != chunks[-1]:
+                        chunks[-1] = stripped_prev
+                        if not chunks[-1]:
+                            chunks.pop()
+                pending_strip_leading = True
+                continue
             if not text:
                 continue
-            if skip_note_refs and not chunks:
-                if DOCXOutlineExporter._is_note_reference_run(run, text):
-                    skipped_marker = True
+            if pending_strip_leading:
+                stripped = text.lstrip(NOTE_MARKER_EDGE)
+                if not stripped:
                     continue
-                if skipped_marker and not text.strip():
-                    continue
-                skipped_marker = False
+                text = stripped
+                pending_strip_leading = False
             chunks.append(text)
         if chunks:
             return "".join(chunks)
@@ -444,6 +495,9 @@ class DOCXOutlineExporter:
             return False
         core = stripped.strip(NOTE_MARKER_TRIM)
         if not core:
+            # run contains only bracket/marker characters (e.g., []、【】); treat as marker
+            if stripped and all(ch in NOTE_MARKER_TRIM for ch in stripped):
+                return True
             return False
         if len(core) > cls._MAX_NOTE_MARKER_LEN:
             return False
@@ -1908,7 +1962,9 @@ class DOCXOutlineExporter:
         current: Optional[MyDOCNode] = None
 
         if splitter is None:
-            parent.body_paragraphs.extend([ln for ln in lines if ln and ln.strip()])
+            for ln in lines:
+                if ln and ln.strip():
+                    self._append_body_fragment(parent, ln)
             return nodes
 
         for ln in lines:
@@ -1926,14 +1982,16 @@ class DOCXOutlineExporter:
             else:
                 if not found_first:
                     if s:
-                        parent.body_paragraphs.append(ln)
+                        self._append_body_fragment(parent, ln)
                 else:
                     current._pending_for_children.append(ln)
         return nodes
 
     def _regex_build_recursive(self, parent: MyDOCNode, level: int, lines: List[str], max_depth: int = 200):
         if level > max_depth:
-            parent.body_paragraphs.extend([ln for ln in lines if ln and ln.strip()])
+            for ln in lines:
+                if ln and ln.strip():
+                    self._append_body_fragment(parent, ln)
             return
         children = self._regex_split_into_nodes(parent, level, lines)
         if not children:
@@ -1946,7 +2004,9 @@ class DOCXOutlineExporter:
 
     def _regex_finalize_pending_to_body(self, node: MyDOCNode):
         if node._pending_for_children:
-            node.body_paragraphs.extend([ln for ln in node._pending_for_children if ln and ln.strip()])
+            for ln in node._pending_for_children:
+                if ln and ln.strip():
+                    self._append_body_fragment(node, ln)
             node._pending_for_children = []
         for ch in node.children:
             self._regex_finalize_pending_to_body(ch)
@@ -2045,13 +2105,13 @@ class DOCXOutlineExporter:
                     if text_with_refs or raw_text:
                         target = current if current is not None else self.root
                         if text_with_refs.strip():
-                            target.body_paragraphs.append(text_with_refs)
+                            self._append_body_fragment(target, text_with_refs)
 
             elif kind == "tbl":
                 ph = self._table_placeholder(obj._element, section_state)
                 if ph:
                     target = stack[-1] if stack else self.root
-                    target.body_paragraphs.append(ph)
+                    self._append_body_fragment(target, ph)
                 continue
 
 
@@ -2134,6 +2194,27 @@ class DOCXOutlineExporter:
             f.write("\n".join(parts))
         logger.info("Done.")
 
+    def _count_headings(self, node: MyDOCNode) -> int:
+        count = 1 if node.element_type == "heading" else 0
+        for child in node.children:
+            count += self._count_headings(child)
+        return count
+
+    def _collect_summary(self) -> Dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "word_paragraphs": len(self.doc.paragraphs),
+            "word_tables": len(self.doc.tables),
+            "footnotes": len(self.footnotes),
+            "endnotes": len(self.endnotes),
+            "body_fragments": self._stats.get("body_fragments", 0),
+            "table_fragments": self._stats.get("table_fragments", 0),
+            "headings_detected": self._count_headings(self.root),
+        }
+
+    def summary(self) -> Dict[str, Any]:
+        return self._last_summary or self._collect_summary()
+
     def process(self, output_path: str):
         # set assets dir next to output
         outdir = os.path.dirname(os.path.abspath(output_path)) or "."
@@ -2141,6 +2222,10 @@ class DOCXOutlineExporter:
         self.extract_notes()
         self.build_tree()
         self.to_xml(output_path)
+        self._last_summary = self._collect_summary()
+        return self._last_summary
+        self._last_summary = self._collect_summary()
+        return self._last_summary
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex/hybrid) with style switches")
