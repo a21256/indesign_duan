@@ -72,6 +72,30 @@ def _log_snippet(text: str, limit: int = 120) -> str:
     return stripped
 
 
+def _make_chunk_context(kind: str, seq: int, para_idx: int, style: str, text: str):
+    preview = _log_snippet(text or "", limit=120).replace('"', "'")
+    return {
+        "id": f"{kind}-{seq:03d}",
+        "paraIndex": para_idx,
+        "style": style,
+        "preview": preview,
+    }
+
+
+def _ctx_label(ctx: Optional[Dict[str, str]]) -> str:
+    if not ctx:
+        return ""
+    parts = [ctx.get("id", "ctx")]
+    if ctx.get("paraIndex"):
+        parts.append(f"para={ctx['paraIndex']}")
+    if ctx.get("style"):
+        parts.append(f"style={ctx['style']}")
+    preview = ctx.get("preview")
+    if preview:
+        parts.append(f"text={preview}")
+    return "[" + " ".join(parts) + "]"
+
+
 # ========== XML 解析（无限层级 + 引用式脚注/尾注；忽略 <meta>/<prop>/<footnotes>/<endnotes>内容） ==========
 def _strip_ns(tag):
     return tag.split('}', 1)[-1].lower()
@@ -354,7 +378,21 @@ function iso() {
     function info(m){ __pushEvent("info", m); }
     function warn(m){ __pushEvent("warn", m); }
     function err(m){  __pushEvent("error", m); }
-    function log(m){  __pushEvent("debug", m); }
+    var __LAST_LAYOUT_LOG = null;
+    function __logLayoutEvent(message){
+      if (!__LAST_LAYOUT_LOG || __LAST_LAYOUT_LOG !== message){
+        __LAST_LAYOUT_LOG = message;
+        __pushEvent("debug", message);
+      }
+    }
+    function log(m){
+      if (String(m||"").indexOf("[LAYOUT]") === 0){
+        __logLayoutEvent(String(m));
+      } else {
+        __LAST_LAYOUT_LOG = null;
+        __pushEvent("debug", m);
+      }
+    }
     function __flushEvents(){
       try{
         if (EVENT_FILE.parent && !EVENT_FILE.parent.exists) EVENT_FILE.parent.create();
@@ -422,7 +460,24 @@ function iso() {
           logs.push(attempt.label + ":set=" + applyErr);
         }
       }
-      try{ log("[WARN] width apply failed idx=" + idx + " val=" + widthPt + " trace=" + logs.join("|")); }catch(_){}
+      try{
+        var docRef = app && app.activeDocument;
+        var curPageName = "NA";
+        var curFrameId = "NA";
+        try{
+          if (docRef && docRef.selection && docRef.selection.length){
+            var sel = docRef.selection[0];
+            if (sel && sel.parentTextFrames && sel.parentTextFrames.length){
+              var tf = sel.parentTextFrames[0];
+              curFrameId = tf && tf.isValid ? tf.id : "NA";
+              if (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid){
+                curPageName = tf.parentPage.name;
+              }
+            }
+          }
+        }catch(__ctx){}
+        log("[WARN] width apply failed idx=" + idx + " val=" + widthPt + " page=" + curPageName + " frame=" + curFrameId + " trace=" + logs.join("|"));
+      }catch(_){}
       return false;
     }
 
@@ -761,7 +816,16 @@ function iso() {
       var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
       var needNewSpread = !!(target.pageOrientation && prevOrientation && target.pageOrientation !== prevOrientation);
       if (__layoutsEqual(__CURRENT_LAYOUT, target)){
-        try{ log("[LAYOUT] ensure skip orient=" + (target.pageOrientation||"") + " width=" + target.pageWidthPt + " height=" + target.pageHeightPt); }catch(_){}
+        try{
+          log("[LAYOUT] ensure skip orient=" + (target.pageOrientation||"") + " width=" + target.pageWidthPt + " height=" + target.pageHeightPt);
+        }catch(_){}
+        try{
+          if (target.pageOrientation && __CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation !== target.pageOrientation){
+            var __skipPayload = __cloneLayoutState(target);
+            __skipPayload.origin = "skip";
+            log("[LAYOUT] still skipping due to same state; page=" + (page && page.name) + " spec=" + JSON.stringify(__skipPayload));
+          }
+        }catch(__skipLog){}
         return;
       }
       var prevFrame = (typeof tf !== "undefined" && tf && tf.isValid) ? tf : null;
@@ -2866,7 +2930,7 @@ function _holderInnerBounds(holder){
             }
                 }catch(_){}
             }
-        }catch(e){ try{ log("[WARN] _normalizeTableWidth: "+e); }catch(__){} }
+        }catch(e){ try{ log(__tableWarnTag + " _normalizeTableWidth: "+e); }catch(__){} }
     }
 
 
@@ -2874,6 +2938,22 @@ function _holderInnerBounds(holder){
       try{
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
+        var __tableCtx = (obj && obj.logContext) ? obj.logContext : null;
+        var __tableTag = "[TABLE]";
+        var __tableWarnTag = "[WARN]";
+        if (__tableCtx && __tableCtx.id){
+          __tableTag = "[TABLE][" + __tableCtx.id + "]";
+          __tableWarnTag = "[WARN][TABLE " + __tableCtx.id + "]";
+        }
+        if (__tableCtx){
+          try{
+            var __tblPrev = __tableCtx.preview ? String(__tableCtx.preview) : "";
+            if (__tblPrev.length > 80) __tblPrev = __tblPrev.substring(0,80) + "...";
+            var __tblSummary = ' para=' + (__tableCtx.paraIndex||"?") + ' style=' + (__tableCtx.style||"");
+            if (__tblPrev) __tblSummary += ' text="' + __tblPrev + '"';
+            log(__tableTag + " ctx" + __tblSummary);
+          }catch(__ctxLog){}
+        }
         var layoutSpec = null;
         try{
           if (obj){
@@ -2915,7 +2995,7 @@ function _holderInnerBounds(holder){
                 story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
                 story.recompose();
               }catch(__preBreakErr){
-                try{ log("[WARN] frame break before layout failed: " + __preBreakErr); }catch(_){}
+                try{ log(__tableWarnTag + " frame break before layout failed: " + __preBreakErr); }catch(_){}
               }
               try{
                 if (typeof flushOverflow === "function" && tf && tf.isValid){
@@ -2927,21 +3007,21 @@ function _holderInnerBounds(holder){
                     curTextFrame = tf;
                   }
                 }
-              }catch(__flushErr){ try{ log("[WARN] flush before layout failed: " + __flushErr); }catch(_){ } }
+              }catch(__flushErr){ try{ log(__tableWarnTag + " flush before layout failed: " + __flushErr); }catch(_){ } }
             }
             __ensureLayout(layoutSpec);
             var newOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : prevOrientation;
             if (layoutSpec.pageOrientation && newOrientation !== prevOrientation){
               layoutSwitchApplied = true;
             }
-            log("[TABLE] layout request orient=" + (layoutSpec.pageOrientation||""));
+            log(__tableTag + " layout request orient=" + (layoutSpec.pageOrientation||""));
           }else if (__CURRENT_LAYOUT && __DEFAULT_LAYOUT && !__layoutsEqual(__CURRENT_LAYOUT, __DEFAULT_LAYOUT)){
             __ensureLayoutDefault();
           }
         }catch(__layoutErr){
-          try{ log("[WARN] ensure layout failed: " + __layoutErr); }catch(__layoutLog){}
+          try{ log(__tableWarnTag + " ensure layout failed: " + __layoutErr); }catch(__layoutLog){}
         }
-        try{ log("[TABLE] begin rows="+rows+" cols="+cols); }catch(__){}
+        try{ log(__tableTag + " begin rows="+rows+" cols="+cols); }catch(__){}
         var doc = app.activeDocument;
 
         var storyRef = null;
@@ -3135,7 +3215,7 @@ function _holderInnerBounds(holder){
 
                 if (approxNeed > available && available >= 0){
                     try{
-                        log("[TABLE] pre-break forcing approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount);
+                        log(__tableTag + " pre-break forcing approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount);
                     }catch(__log0){}
                     try{
                         ipCheck.contents = SpecialCharacters.FRAME_BREAK;
@@ -3164,11 +3244,11 @@ function _holderInnerBounds(holder){
                     }catch(_){}
                     result.didBreak = true;
                     try{
-                        log("[TABLE] pre-break result frame=" + (result.frame && result.frame.isValid ? result.frame.id : "NA")
+                        log(__tableTag + " pre-break result frame=" + (result.frame && result.frame.isValid ? result.frame.id : "NA")
                             + " page=" + (result.page && result.page.isValid ? result.page.name : (result.frame && result.frame.parentPage ? result.frame.parentPage.name : "NA")));
                     }catch(__log1){}
                 } else {
-                    try{ log("[TABLE] pre-break skip approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount); }catch(__log2){}
+                    try{ log(__tableTag + " pre-break skip approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount); }catch(__log2){}
                 }
             }catch(e){
                 try{ log("[WARN] table pre-break failed: " + e); }catch(__){}
@@ -3249,7 +3329,7 @@ function _holderInnerBounds(holder){
           var __basePageName = (baseFrame && baseFrame.isValid && baseFrame.parentPage && baseFrame.parentPage.isValid)
                                 ? baseFrame.parentPage.name : "NA";
           var __anchorIdxDbg = (insertIP && insertIP.isValid) ? insertIP.index : "NA";
-          log("[TABLE] anchor pick storyLen=" + __storyLenBefore
+          log(__tableTag + " anchor pick storyLen=" + __storyLenBefore
               + " frame=" + __baseFrameId + " page=" + __basePageName
               + " ipIdx=" + __anchorIdxDbg);
         }catch(__dbgAnchor){}
@@ -3263,7 +3343,7 @@ function _holderInnerBounds(holder){
         try{
           var __colLenInit = 0;
           try{ __colLenInit = tbl.columns.length; }catch(__colErr){}
-          log("[TABLE] init columns expected=" + cols + " actual=" + __colLenInit);
+          log(__tableTag + " init columns expected=" + cols + " actual=" + __colLenInit);
         }catch(__colLog){}
         try{ tableStory.recompose(); }catch(_){ }
         try {
@@ -3315,7 +3395,7 @@ function _holderInnerBounds(holder){
         }
         function _flattenRowspan(r, c, rawSpec, spanRows, spanCols){
           degradeNotice = true;
-          try{ log("[WARN] degrade rowspan rows=" + spanRows + " at r=" + r + " c=" + c); }catch(__warnLog){}
+          try{ log(__tableWarnTag + " degrade rowspan rows=" + spanRows + " at r=" + r + " c=" + c); }catch(__warnLog){}
           var maxR = Math.min(rows, r + spanRows);
           for (var rr=r; rr<maxR; rr++){
             var clone = _cloneCellSpec(rawSpec, 1, spanCols);
@@ -3636,13 +3716,13 @@ function _holderInnerBounds(holder){
         try{
           var __gbFit = geometricBounds;
           var __hFit = (__gbFit && __gbFit.length>=3) ? (__gbFit[2]-__gbFit[0]) : "NA";
-          log("[TABLE] frame fit height=" + __hFit);
+          log(__tableTag + " frame fit height=" + __hFit);
         }catch(_){}
         try{
           var __offsetIdx = (tbl && tbl.isValid && tbl.storyOffset && tbl.storyOffset.isValid) ? tbl.storyOffset.index : "NA";
           var __storyLenAfter = 0;
           try{ __storyLenAfter = story.characters.length; }catch(__lenErr){}
-          log("[TABLE] placed idx=" + __offsetIdx + " storyLenNow=" + __storyLenAfter);
+          log(__tableTag + " placed idx=" + __offsetIdx + " storyLenNow=" + __storyLenAfter);
         }catch(__placedDbg){}
 
         var __postTableIP = null;
@@ -3698,7 +3778,7 @@ function _holderInnerBounds(holder){
               var __tfIdDbg = (__tfDbg && __tfDbg.isValid) ? __tfDbg.id : "NA";
               var __pgDbg = (__tfDbg && __tfDbg.isValid && __tfDbg.parentPage && __tfDbg.parentPage.isValid)
                             ? __tfDbg.parentPage.name : "NA";
-              log("[TABLE] post-ip idx=" + __postIdxDbg + " frame=" + __tfIdDbg + " page=" + __pgDbg);
+              log(__tableTag + " post-ip idx=" + __postIdxDbg + " frame=" + __tfIdDbg + " page=" + __pgDbg);
             }catch(__postDbg){}
           }
         }catch(__ipErr){}
@@ -3724,10 +3804,10 @@ function _holderInnerBounds(holder){
                                 + MAX_ROWSPAN_INLINE
                                 + " \u884c\u7684\u7eb5\u5411\u5408\u5e76\uff0c\u7cfb\u7edf\u5df2\u62c6\u5206\u5bfc\u5165\uff0c\u8bf7\u6838\u5bf9\u539f\u7a3f\u5e76\u624b\u52a8\u8865\u9f50\u9057\u6f0f\u5185\u5bb9\u3002";
               try{ __noticeIP.contents = __noticeMsg + "\r"; }catch(__noticeInsert){}
-              try{ log("[TABLE] degrade notice inserted idx=" + __noticeIP.index); }catch(__noticeLog){}
+              try{ log(__tableTag + " degrade notice inserted idx=" + __noticeIP.index); }catch(__noticeLog){}
             }
           }catch(__noticeBlockErr){
-            try{ log("[WARN] degrade notice insert failed: " + __noticeBlockErr); }catch(__noticeWarn){}
+            try{ log(__tableWarnTag + " degrade notice insert failed: " + __noticeBlockErr); }catch(__noticeWarn){}
           }
         }
         // keep current layout until after post-table flush; default restore happens later
@@ -3960,7 +4040,7 @@ function _holderInnerBounds(holder){
 
                       // △ 根据 XML：inline="1" → 内联锚定；inline="0" → 浮动定位
                       var inl = _trim(spec.inline);
-                      log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
+                      log(__imgTag + " dispatch src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
                   try{
                     var _preIP = (tf && tf.isValid) ? tf.insertionPoints[-1] : null;
                     log("[IMG-STACK] pre ip=" + (_preIP && _preIP.isValid?_preIP.index:"NA")
@@ -4241,17 +4321,24 @@ function _holderInnerBounds(holder){
         var STALL_LIMIT = 3;
         var stallFrameId = null;
         var stallCount = 0;
+        function __logFlushWarn(msg){
+            try{
+                var pgName = (lastPage && lastPage.isValid && lastPage.name) ? lastPage.name : "NA";
+                var frameId = (lastFrame && lastFrame.isValid && lastFrame.id != null) ? lastFrame.id : "NA";
+                log("[WARN] " + msg + " page=" + pgName + " frame=" + frameId);
+            }catch(_){}
+        }
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
             var docRef = app && app.activeDocument;
             try{
                 if (__SAFE_PAGE_LIMIT && docRef && docRef.pages && docRef.pages.length >= __SAFE_PAGE_LIMIT){
-                    log("[WARN] flushOverflow page limit hit (" + __SAFE_PAGE_LIMIT + ")");
+                    __logFlushWarn("flushOverflow page limit hit (" + __SAFE_PAGE_LIMIT + ")");
                     break;
                 }
             }catch(_limit){}
             var pkt = __createLayoutFrame(__CURRENT_LAYOUT, lastFrame, {afterPage:lastPage, forceBreak:false});
             if (!pkt || !pkt.frame || !pkt.page) {
-                try{ log("[WARN] flushOverflow failed to allocate new frame"); }catch(_){ }
+                __logFlushWarn("flushOverflow failed to allocate new frame");
                 break;
             }
             lastPage  = pkt.page;
@@ -4277,13 +4364,13 @@ function _holderInnerBounds(holder){
                     stallFrameId = tailFrameId;
                 }
                 if (stallCount >= STALL_LIMIT){
-                    try { log("[WARN] flushOverflow guard hit; no progress resolving overset"); } catch(_){}
+                    __logFlushWarn("flushOverflow guard hit; no progress resolving overset");
                     break;
                 }
             }
         }
         if (currentStory && currentStory.overflows) {
-            try { log("[WARN] flushOverflow guard hit; overset still true"); } catch(_){ }
+            __logFlushWarn("flushOverflow guard hit; overset still true");
         }
         return { page: lastPage, frame: lastFrame };
     }
@@ -4487,6 +4574,7 @@ def _js_escape_simple(val: str) -> str:
 class ImageSpec:
     attrs: Dict[str, str] = field(default_factory=dict)
     force_block: bool = False
+    log_context: Optional[Dict[str, str]] = None
 
     @classmethod
     def from_mapping(cls, mapping: Dict[str, str], *, force_block: bool = False):
@@ -4502,8 +4590,21 @@ class ImageSpec:
         inline_for_log = self.get("inline")
         spec_js = self._build_spec_js_literal()
         return f'''(function(){{
-              log("[PY][m_img] {src_for_log} inline={inline_for_log}");
               try {{
+                var spec={spec_js};
+                var __imgCtx = spec.logContext || null;
+                var __imgTag = "[IMG]";
+                if (__imgCtx && __imgCtx.id) __imgTag = "[IMG][" + __imgCtx.id + "]";
+                var __imgWarnTag = "[WARN]";
+                if (__imgCtx && __imgCtx.id) __imgWarnTag = "[WARN][IMG " + __imgCtx.id + "]";
+                if (__imgCtx){{
+                  var __imgPrev = __imgCtx.preview ? String(__imgCtx.preview) : "";
+                  if (__imgPrev.length > 80) __imgPrev = __imgPrev.substring(0,80) + "...";
+                  var __imgSummary = ' para=' + (__imgCtx.paraIndex||"?") + ' style=' + (__imgCtx.style||"");
+                  if (__imgPrev) __imgSummary += ' text="' + __imgPrev + '"';
+                  log(__imgTag + " ctx" + __imgSummary);
+                }}
+                log(__imgTag + " pyMeta src={src_for_log} inline={inline_for_log}");
                 // 0) 环境检查
                 log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
                     + " typeof addImageAtV2=" + (typeof addImageAtV2)
@@ -4522,14 +4623,13 @@ class ImageSpec:
                 log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
 
                 if(f&&f.exists){{
-                  var spec={spec_js};
                   var inl=_trim(spec.inline); // 兼容 InDesign 2020
-                  log("[IMG-DISPATCH] src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
+                  log(__imgTag + " dispatch src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
 
                   if(inl==="0"||/^false$/i.test(inl)){{
                     log("[DBG] dispatch -> addFloatingImage");
                     var rect=addFloatingImage(tf,story,page,spec);
-                    if(rect&&rect.isValid) log("[IMG] ok (float): " + spec.src);
+                    if(rect&&rect.isValid) log(__imgTag + " ok (float): " + spec.src);
                     try{{
                       if (__FLOAT_CTX && __FLOAT_CTX.lastTf && __FLOAT_CTX.lastTf.isValid){{
                         tf = __FLOAT_CTX.lastTf;
@@ -4554,13 +4654,13 @@ class ImageSpec:
                   }} else {{
                     log("[DBG] dispatch -> addImageAtV2");
                     var rect=addImageAtV2(ip,spec);
-                    if(rect&&rect.isValid) log("[IMG] ok (inline): " + spec.src);
+                    if(rect&&rect.isValid) log(__imgTag + " ok (inline): " + spec.src);
                   }}
                 }} else {{
-                  log("[IMG] missing: {src_for_log}");
+                  log(__imgWarnTag + " missing: {src_for_log}");
                 }}
               }} catch(e) {{
-                log("[IMG][EXC] " + e);
+                log(__imgWarnTag + " exception " + e);
               }}
             }})();'''
 
@@ -4608,6 +4708,8 @@ class ImageSpec:
         ]
         parts = [f'{k}:"{_js_escape_simple(v)}"' for k, v in ordered_keys]
         parts.append(f"forceBlock:{str(self.force_block).lower()}")
+        if self.log_context:
+            parts.append(f"logContext:{json.dumps(self.log_context, ensure_ascii=False)}")
         return "{%s}" % ",".join(parts)
 
 
@@ -4918,7 +5020,7 @@ def _frame_spec_from_attrs(attr_text, inner_text):
     return FrameSpec.from_mapping(kv, text=inner_text.strip())
 
 
-def _handle_table_marker(text, add_lines):
+def _handle_table_marker(text, add_lines, ctx=None):
     m_tbl = re.match(r'^\s*\[\[TABLE\s+(\{[\s\S]*\})\s*\]\]\s*$', text)
     if not m_tbl:
         return False
@@ -4933,33 +5035,50 @@ def _handle_table_marker(text, add_lines):
     rows = int(obj.get("rows", 0))
     cols = int(obj.get("cols", 0))
     data = obj.get("data") or []
+    ctx_label = _ctx_label(ctx)
     _debug_log(
-        f"[TABLE] marker rows={rows} cols={cols} dataRows={len(data)} source={parse_source}"
+        f"[TABLE]{ctx_label} marker rows={rows} cols={cols} dataRows={len(data)} source={parse_source}"
     )
+    if ctx:
+        obj["logContext"] = {
+            "id": ctx.get("id"),
+            "paraIndex": ctx.get("paraIndex"),
+            "style": ctx.get("style"),
+            "preview": ctx.get("preview"),
+        }
     # rows/cols/data kept here for debugging
     add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
     return True
 
 
-def _handle_img_marker(text, skip_images, add_lines):
+def _handle_img_marker(text, skip_images, add_lines, ctx=None):
     if skip_images:
-        _debug_log("[IMG] skip_images flag set; ignore [[IMG]] marker")
+        label = _ctx_label(ctx)
+        _debug_log(f"[IMG]{label} skip_images flag set; ignore [[IMG]] marker")
         return False
     match, only_img = _match_img_marker(text)
     if not match:
         return False
     spec = _image_spec_from_attrs(match, force_block=only_img)
+    spec.log_context = {
+        "id": ctx.get("id") if ctx else None,
+        "paraIndex": ctx.get("paraIndex") if ctx else None,
+        "style": ctx.get("style") if ctx else None,
+        "preview": ctx.get("preview") if ctx else None,
+    } if ctx else None
+    ctx_label = _ctx_label(ctx)
     _debug_log(
-        f"[IMG] marker src={spec.get('src')} inline={spec.get('inline')} force_block={spec.force_block}"
+        f"[IMG]{ctx_label} marker src={spec.get('src')} inline={spec.get('inline')} force_block={spec.force_block}"
     )
     add_lines.append("__ensureLayoutDefault();")
     add_lines.append(spec.to_js_block())
     return True
 
 
-def _handle_html_table(text, skip_images, add_lines):
+def _handle_html_table(text, skip_images, add_lines, ctx=None):
     if skip_images:
-        _debug_log("[HTML-TABLE] skip_images flag set; ignore <table> block")
+        label = _ctx_label(ctx)
+        _debug_log(f"[HTML-TABLE]{label} skip_images flag set; ignore <table> block")
         return False
     if not re.match(r'^\s*<table\b[\s\S]*</table>\s*$', text, flags=re.I):
         return False
@@ -4989,7 +5108,15 @@ def _handle_html_table(text, skip_images, add_lines):
         rows_data.append(row)
     cols = max([len(r) for r in rows_data]) if rows_data else 0
     obj = {"rows": len(rows_data), "cols": cols, "data": rows_data}
-    _debug_log(f"[HTML-TABLE] rows={obj['rows']} cols={cols} rowsWithCells={len(rows_data)}")
+    ctx_label = _ctx_label(ctx)
+    _debug_log(f"[HTML-TABLE]{ctx_label} rows={obj['rows']} cols={cols} rowsWithCells={len(rows_data)}")
+    if ctx:
+        obj["logContext"] = {
+            "id": ctx.get("id"),
+            "paraIndex": ctx.get("paraIndex"),
+            "style": ctx.get("style"),
+            "preview": ctx.get("preview"),
+        }
     add_lines.append('addTableHiFi(%s);' % (json.dumps(obj, ensure_ascii=False)))
     return True
 
@@ -5030,15 +5157,23 @@ def _build_html_image_spec(text):
     }
     return ImageSpec.from_mapping(attrs)
 
-def _handle_html_image(text, skip_images, add_lines):
+def _handle_html_image(text, skip_images, add_lines, ctx=None):
     if skip_images:
-        _debug_log("[HTML-IMG] skip_images flag set; ignore <img> block")
+        label = _ctx_label(ctx)
+        _debug_log(f"[HTML-IMG]{label} skip_images flag set; ignore <img> block")
         return False
     spec = _build_html_image_spec(text)
     if not spec:
         return False
+    spec.log_context = {
+        "id": ctx.get("id") if ctx else None,
+        "paraIndex": ctx.get("paraIndex") if ctx else None,
+        "style": ctx.get("style") if ctx else None,
+        "preview": ctx.get("preview") if ctx else None,
+    } if ctx else None
+    ctx_label = _ctx_label(ctx)
     _debug_log(
-        f"[HTML-IMG] src={spec.get('src')} inline={spec.get('inline')} force_block={spec.force_block}"
+        f"[HTML-IMG]{ctx_label} src={spec.get('src')} inline={spec.get('inline')} force_block={spec.force_block}"
     )
     add_lines.append("__ensureLayoutDefault();")
     add_lines.append(spec.to_js_block())
@@ -5053,6 +5188,8 @@ def _append_default_paragraph(add_lines, sty, esc):
 def write_jsx(jsx_path, paragraphs, skip_images=False):
     add_lines = []
     levels_used = set()
+    table_seq = 0
+    image_seq = 0
 
     add_lines.append("function onNewLevel1(){ var pkt = startNewChapter(story, page, tf); story=pkt.story; page=pkt.page; tf=pkt.frame; }")
     add_lines.append("firstChapterSeen = false;")
@@ -5062,7 +5199,8 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     for idx, (style, text) in enumerate(paragraphs, 1):
         sty = _normalize_style_name(style, levels_used)
         normalized_text = text or ""
-        _debug_log(f"[WRITE-JSX idx={idx}] inStyle={style} normalized={sty} origLen={len(normalized_text)}")
+        preview = normalized_text[:40].replace("\n", " ").strip()
+        _debug_log(f"[WRITE-JSX idx={idx}] inStyle={style} normalized={sty} origLen={len(normalized_text)} preview={preview!r}")
         reason = _preflight_reason(style, normalized_text)
         if reason:
             preview = escape_js(_preflight_snippet(normalized_text))
@@ -5096,13 +5234,19 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
             sty_chunk = _normalize_style_name(sub_style, levels_used)
             esc = escape_js(text_chunk)
 
-            if _handle_table_marker(text_chunk, add_lines):
+            table_ctx = _make_chunk_context("tbl", table_seq + 1, idx, sty_chunk, text_chunk)
+            if _handle_table_marker(text_chunk, add_lines, ctx=table_ctx):
+                table_seq += 1
                 continue
-            if _handle_img_marker(text_chunk, skip_images, add_lines):
+            img_ctx = _make_chunk_context("img", image_seq + 1, idx, sty_chunk, text_chunk)
+            if _handle_img_marker(text_chunk, skip_images, add_lines, ctx=img_ctx):
+                image_seq += 1
                 continue
-            if _handle_html_table(text_chunk, skip_images, add_lines):
+            if _handle_html_table(text_chunk, skip_images, add_lines, ctx=table_ctx):
+                table_seq += 1
                 continue
-            if _handle_html_image(text_chunk, skip_images, add_lines):
+            if _handle_html_image(text_chunk, skip_images, add_lines, ctx=img_ctx):
+                image_seq += 1
                 continue
 
             _append_default_paragraph(add_lines, sty_chunk, esc)
@@ -5244,7 +5388,7 @@ def _relay_jsx_events(
         return stats
     if not os.path.exists(log_path):
         if warn_missing:
-            logger.warn(f"δ�ҵ� JSX �¼���־: {log_path}")
+            logger.warn(f"未找到 JSX 事件日志: {log_path}")
         return stats
     try:
         with open(log_path, 'r', encoding='utf-8', errors='ignore') as fh:
@@ -5268,21 +5412,22 @@ def _relay_jsx_events(
                         level = "error"
                     elif "[INFO" in upper_msg or upper_msg.startswith("INFO "):
                         level = "info"
-                formatted = f"[JSX][{level.upper()}] {stamp} {message}".strip()
-                logger.debug(formatted)
+                formatted = f"{stamp} {message}".strip()
+                module = "JSX"
+                logger.debug(formatted, module=module)
                 if level == "warn":
                     stats["warn"] += 1
-                    logger.warn(formatted)
+                    logger.warn(formatted, module=module)
                 elif level == "error":
                     stats["error"] += 1
-                    logger.error(formatted)
+                    logger.error(formatted, module=module)
                 elif level == "info":
                     stats["info"] += 1
-                    logger.user(formatted)
+                    logger.user(formatted, module=module)
                 else:
                     stats["debug"] += 1
     except Exception as exc:
-        logger.warn(f"��ȡ JSX ��־ʧ��: {exc}")
+        logger.warn(f"读取 JSX 事件日志失败: {exc}")
     finally:
         if cleanup:
             try:
