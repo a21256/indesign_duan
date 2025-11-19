@@ -184,7 +184,13 @@ def _apply_overrides(cli_template: str | None, cli_out: str | None) -> None:
 def main(argv=None):
     # ====== 命令行解析（新增跨平台与模板/输出覆盖） ======
     parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex/hybrid) with style switches + Password Protection + Cross-platform paths")
-    parser.add_argument("--mode", choices=["heading", "regex", "hybrid"], default="heading", help="Detection mode")
+    parser.add_argument(
+        "--mode",
+        choices=["heading", "regex", "hybrid"],
+        metavar="{heading,regex}",
+        default="heading",
+        help="Detection mode（heading 或 regex）",
+    )
     parser.add_argument("--set-password", action="store_true", help="修改程序密码（先验证当前密码）")
     parser.add_argument("--password", default=None, help="以参数形式传入运行密码（可选，否则将提示输入）")
     parser.add_argument("--template", "-t", dest="template", default=None, help="覆盖 TEMPLATE_PATH（模板 .idml 的路径）")
@@ -194,7 +200,7 @@ def main(argv=None):
     parser.add_argument("--no-tables", action="store_true", help="生成 XML 时跳过 Word 表格")
     parser.add_argument("--no-textboxes", action="store_true", help="生成 XML 时跳过文本框/框架")
     parser.add_argument("--log-dir", help="指定日志目录，默认写入脚本目录的 logs")
-    parser.add_argument("--debug-log", action="store_true", help="开启 debug 日志记录")
+    parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     # —— 在输入密码之前：先校验 input 和 实际生效的 TEMPLATE_PATH ——
