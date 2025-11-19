@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 import json
 import time
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 from pipeline_logger import PipelineLogger
@@ -24,6 +25,125 @@ AUTO_RUN_MACOS = True
 AUTO_EXPORT_IDML = True  # 如需脚本结束自动导出 output.idml，改 True
 # 是否把运行日志写入文件：开发=True，商用=False，也可用环境变量 INDESIGN_LOG=0/1 覆盖
 LOG_WRITE = False
+
+PROGRESS_HEARTBEAT_MS = 15000  # JSX 粗略进度心跳频率（毫秒）
+PROGRESS_CONSOLE_ACTIVE = False
+PROGRESS_CONSOLE_LEN = 0
+
+def _write_progress_console_line(text: str, *, final: bool = False):
+    global PROGRESS_CONSOLE_ACTIVE, PROGRESS_CONSOLE_LEN
+    try:
+        pad = max(0, PROGRESS_CONSOLE_LEN - len(text))
+        sys.stdout.write("\r" + text + (" " * pad))
+        if final:
+            sys.stdout.write("\n")
+            PROGRESS_CONSOLE_LEN = 0
+            PROGRESS_CONSOLE_ACTIVE = False
+        else:
+            PROGRESS_CONSOLE_LEN = len(text)
+            PROGRESS_CONSOLE_ACTIVE = True
+        sys.stdout.flush()
+    except Exception:
+        print(text)
+        if final:
+            try:
+                sys.stdout.flush()
+            except Exception:
+                pass
+
+
+def _emit_progress_console(line: str):
+    text = (line or "").strip()
+    if not text:
+        return
+    parts = text.split("\t", 2)
+    message = ""
+    stamp = ""
+    if len(parts) == 3:
+        _, stamp, message = parts
+    elif len(parts) == 2:
+        stamp, message = parts
+    else:
+        message = text
+    body = message.strip()
+    body_upper = body.upper()
+    if "[PROGRESS]" not in body_upper:
+        return
+    stamp = stamp.strip()
+    if stamp:
+        console_line = f"[PROGRESS] {stamp} {body}".strip()
+    else:
+        console_line = f"[PROGRESS] {body}".strip()
+    final = "[PROGRESS][COMPLETE]" in body_upper
+    _write_progress_console_line(console_line, final=final)
+
+def _watch_jsx_progress(log_path: str, stop_event: "threading.Event"):
+    fh = None
+    try:
+        while not stop_event.is_set():
+            try:
+                if fh is None:
+                    if not os.path.exists(log_path):
+                        if stop_event.wait(0.5):
+                            break
+                        continue
+                    fh = open(log_path, "r", encoding="utf-8", errors="ignore")
+                    fh.seek(0, os.SEEK_END)
+                line = fh.readline()
+                if not line:
+                    if stop_event.wait(0.5):
+                        break
+                    continue
+                _emit_progress_console(line)
+            except FileNotFoundError:
+                if fh is not None:
+                    try:
+                        fh.close()
+                    except Exception:
+                        pass
+                    fh = None
+                if stop_event.wait(0.5):
+                    break
+            except Exception:
+                if fh is not None:
+                    try:
+                        fh.close()
+                    except Exception:
+                        pass
+                    fh = None
+                if stop_event.wait(0.5):
+                    break
+    finally:
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+
+def _start_progress_monitor():
+    path = LOG_PATH
+    if not path:
+        return None
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=_watch_jsx_progress, args=(path, stop_event), daemon=True
+    )
+    thread.start()
+    return (stop_event, thread)
+
+
+def _stop_progress_monitor(token):
+    if not token:
+        return
+    stop_event, thread = token
+    try:
+        stop_event.set()
+    except Exception:
+        pass
+    if thread:
+        thread.join(timeout=2.0)
+
 
 WIN_PROGIDS = [
     "InDesign.Application.2020",
@@ -407,7 +527,7 @@ function iso() {
     function __logUnitValueFail(msg, err){
       if (__UNITVALUE_FAIL_ONCE) return;
       __UNITVALUE_FAIL_ONCE = true;
-      try{ log("[WARN] UnitValue unavailable: " + msg + " err=" + err); }catch(_){}
+      try{ log("[DBG] UnitValue unavailable: " + msg + " err=" + err); }catch(_){}
     }
 
     function unitPt(val){
@@ -476,7 +596,7 @@ function iso() {
             }
           }
         }catch(__ctx){}
-        log("[WARN] width apply failed idx=" + idx + " val=" + widthPt + " page=" + curPageName + " frame=" + curFrameId + " trace=" + logs.join("|"));
+        log("[DBG] width apply failed idx=" + idx + " val=" + widthPt + " page=" + curPageName + " frame=" + curFrameId + " trace=" + logs.join("|"));
       }catch(_){}
       return false;
     }
@@ -517,13 +637,13 @@ function iso() {
         var extendGuard = 0;
         while (wordSeqVal > docRef.pages.length){
           if (__SAFE_PAGE_LIMIT && docRef.pages.length >= __SAFE_PAGE_LIMIT){
-            try{ log("[WARN] seq page request exceeds limit seq=" + wordSeqVal + " limit=" + __SAFE_PAGE_LIMIT); }catch(_){ }
+            try{ log("[ERROR] seq page request exceeds limit seq=" + wordSeqVal + " limit=" + __SAFE_PAGE_LIMIT); }catch(_){ }
             return null;
           }
           docRef.pages.add(LocationOptions.AT_END);
           extendGuard++;
           if (extendGuard > 50){
-            try{ log("[WARN] seq page request guard tripped seq=" + wordSeqVal); }catch(_){ }
+            try{ log("[ERROR] seq page request guard tripped seq=" + wordSeqVal); }catch(_){ }
             break;
           }
         }
@@ -546,6 +666,61 @@ function iso() {
                                    ? !!$.global.__ALLOW_IMG_EXT_FALLBACK : true;
     var __SAFE_PAGE_LIMIT = 2000;
     var __PARA_SEQ = 0;
+    var __PROGRESS_TOTAL = %PROGRESS_TOTAL%;
+    var __PROGRESS_DONE = 0;
+    var __PROGRESS_LAST_PCT = -1;
+    var __PROGRESS_LAST_TS = (new Date()).getTime();
+    var __PROGRESS_HEARTBEAT_MS = %PROGRESS_HEARTBEAT%;
+    function __progressDetailText(detail){
+      if (!detail) return "";
+      try{
+        if (typeof detail === "string") return detail;
+        var parts = [];
+        for (var key in detail){
+          if (!detail.hasOwnProperty(key)) continue;
+          parts.push(key + "=" + detail[key]);
+        }
+        return parts.join(" ");
+      }catch(_){ return ""; }
+    }
+    function __progressBump(kind, detail, forceLog){
+      if (!__PROGRESS_TOTAL || __PROGRESS_TOTAL <= 0) return;
+      __PROGRESS_DONE++;
+      var doneDisplay = __PROGRESS_DONE;
+      if (__PROGRESS_TOTAL > 0){
+        doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
+      }
+      var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
+      var now = (new Date()).getTime();
+      var shouldLog = !!forceLog;
+      if (!shouldLog && pct !== __PROGRESS_LAST_PCT){
+        shouldLog = true;
+      }
+      if (!shouldLog && (now - __PROGRESS_LAST_TS) >= __PROGRESS_HEARTBEAT_MS){
+        shouldLog = true;
+      }
+      if (shouldLog){
+        __PROGRESS_LAST_PCT = pct;
+        __PROGRESS_LAST_TS = now;
+        var suffix = "";
+        var detailText = __progressDetailText(detail);
+        if (detailText) suffix = " " + detailText;
+        try{
+        info("[PROGRESS][" + kind + "] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
+        }catch(_){}
+      }
+    }
+    function __progressFinalize(detail){
+      if (!__PROGRESS_TOTAL || __PROGRESS_TOTAL <= 0) return;
+      var suffix = "";
+      var detailText = __progressDetailText(detail);
+      if (detailText) suffix = " " + detailText;
+      var doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
+      var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
+      try{
+        info("[PROGRESS][COMPLETE] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
+      }catch(_){}
+    }
 
     function __resetParaSeq(){ __PARA_SEQ = 0; }
     function __nextParaSeq(){ __PARA_SEQ++; return __PARA_SEQ; }
@@ -1767,7 +1942,7 @@ if (_ensureRectValid()){
 }
 if (!gb){
   try{
-    log('[IMGFLOAT6][WARN] gb invalid, use fallback sizing');
+    log('[IMGFLOAT6][DBG] gb invalid, use fallback sizing');
   }catch(_){}
   try{
     var dbgAbsW = null, dbgAbsH = null, dbgRectValid = (rect && rect.isValid);
@@ -1872,7 +2047,7 @@ if (!gb){
       if (!_boundsApplied){
         if (_boundsErr){
           try{
-            log("[IMGFLOAT6][ERR] setBounds failed: " + _boundsErr);
+            log("[IMGFLOAT6][FALLBACK] setBounds fallback: " + _boundsErr);
           }catch(_){}
         }
         try{
@@ -1984,7 +2159,7 @@ if (!gb){
       if (!finalGb || finalGb.length !== 4){
         return _fallbackToClassic("geometricBounds invalid", anchorIndex, rect);
       }
-    } catch(eSz){ log("[IMGFLOAT6][WARN] size "+eSz); }
+    } catch(eSz){ log("[IMGFLOAT6][DBG] size "+eSz); }
 
     try{
       var p = (st && st.isValid) ? st.insertionPoints[anchorIndex].paragraphs[0] : null;
@@ -2200,7 +2375,7 @@ function addFloatingFrame(tf, story, page, spec){
     }
   }catch(_){}
   if (!targetPage || !targetPage.isValid){
-    try{ log("[FRAMEFLOAT][WARN] missing valid page"); }catch(_){}
+    try{ log("[FRAMEFLOAT][ERROR] missing valid page"); }catch(_){}
     return null;
   }
   var forceSeqBase = seqPageWasApplied;
@@ -2870,7 +3045,7 @@ function _holderInnerBounds(holder){
                     }
                 }catch(_){}
             }
-        }catch(e){ try{ log("[WARN] applyTableBorders: "+e); }catch(__){} }
+        }catch(e){ try{ log("[DBG] applyTableBorders: "+e); }catch(__){} }
     }
 
     function _normalizeTableWidth(tbl){
@@ -2941,9 +3116,11 @@ function _holderInnerBounds(holder){
         var __tableCtx = (obj && obj.logContext) ? obj.logContext : null;
         var __tableTag = "[TABLE]";
         var __tableWarnTag = "[WARN]";
+        var __tableErrTag = "[ERROR]";
         if (__tableCtx && __tableCtx.id){
           __tableTag = "[TABLE][" + __tableCtx.id + "]";
           __tableWarnTag = "[WARN][TABLE " + __tableCtx.id + "]";
+          __tableErrTag = "[ERROR][TABLE " + __tableCtx.id + "]";
         }
         if (__tableCtx){
           try{
@@ -3395,7 +3572,7 @@ function _holderInnerBounds(holder){
         }
         function _flattenRowspan(r, c, rawSpec, spanRows, spanCols){
           degradeNotice = true;
-          try{ log(__tableWarnTag + " degrade rowspan rows=" + spanRows + " at r=" + r + " c=" + c); }catch(__warnLog){}
+          try{ log(__tableErrTag + " degrade rowspan rows=" + spanRows + " at r=" + r + " c=" + c); }catch(__warnLog){}
           var maxR = Math.min(rows, r + spanRows);
           for (var rr=r; rr<maxR; rr++){
             var clone = _cloneCellSpec(rawSpec, 1, spanCols);
@@ -3784,31 +3961,8 @@ function _holderInnerBounds(holder){
         }catch(__ipErr){}
         if (degradeNotice){
           try{
-            var __noticeIP = null;
-            if (__postTableIP && __postTableIP.isValid && story && story.isValid){
-              try{ __noticeIP = story.insertionPoints[__postTableIP.index]; }catch(__noticeIdxErr){}
-            }
-            if ((!__noticeIP || !__noticeIP.isValid) && tbl && tbl.isValid){
-              try{
-                var __anchorIdx = (tbl.storyOffset && tbl.storyOffset.isValid) ? tbl.storyOffset.index : null;
-                if (__anchorIdx != null){
-                  try{ __noticeIP = story.insertionPoints[__anchorIdx+1]; }catch(__noticeIdxErr2){}
-                }
-              }catch(__noticeIdxEval){}
-            }
-            if ((!__noticeIP || !__noticeIP.isValid) && story && story.isValid){
-              try{ __noticeIP = story.insertionPoints[-1]; }catch(__noticeFallback){}
-            }
-            if (__noticeIP && __noticeIP.isValid){
-              var __noticeMsg = "\u3010\u8868\u683c\u63d0\u793a\u3011\u8be5\u8868\u5305\u542b\u8d85\u8fc7 "
-                                + MAX_ROWSPAN_INLINE
-                                + " \u884c\u7684\u7eb5\u5411\u5408\u5e76\uff0c\u7cfb\u7edf\u5df2\u62c6\u5206\u5bfc\u5165\uff0c\u8bf7\u6838\u5bf9\u539f\u7a3f\u5e76\u624b\u52a8\u8865\u9f50\u9057\u6f0f\u5185\u5bb9\u3002";
-              try{ __noticeIP.contents = __noticeMsg + "\r"; }catch(__noticeInsert){}
-              try{ log(__tableTag + " degrade notice inserted idx=" + __noticeIP.index); }catch(__noticeLog){}
-            }
-          }catch(__noticeBlockErr){
-            try{ log(__tableWarnTag + " degrade notice insert failed: " + __noticeBlockErr); }catch(__noticeWarn){}
-          }
+            log(__tableErrTag + " rowspan>=" + MAX_ROWSPAN_INLINE + " flattened; manual review required");
+          }catch(__noticeWarn){}
         }
         // keep current layout until after post-table flush; default restore happens later
         try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(__resetErr){}
@@ -3843,6 +3997,10 @@ function _holderInnerBounds(holder){
       }catch(e){
         log("[ERR] addTableHiFi " + e);
       }
+      try{
+        var __tblDetail = (__tableCtx && __tableCtx.id) ? ("id=" + __tableCtx.id) : ("rows=" + rows + " cols=" + cols);
+        __progressBump("TABLE", __tblDetail);
+      }catch(_){}
     }
     function createFootnoteAt(ip, content, idForDisplay){
         if(!ip || !ip.isValid) return null;
@@ -4127,6 +4285,9 @@ function _holderInnerBounds(holder){
             __logSkipParagraph(paraSeq, styleName, String(eAddPara||"error"), text);
             __recoverAfterParagraph(story, insertionStart);
         }
+        try{
+            __progressBump("PARA", "seq=" + paraSeq + " style=" + styleName);
+        }catch(_){}
     }
 
     // 打开模板、清空页面框等（保持你原逻辑）
@@ -4325,7 +4486,7 @@ function _holderInnerBounds(holder){
             try{
                 var pgName = (lastPage && lastPage.isValid && lastPage.name) ? lastPage.name : "NA";
                 var frameId = (lastFrame && lastFrame.isValid && lastFrame.id != null) ? lastFrame.id : "NA";
-                log("[WARN] " + msg + " page=" + pgName + " frame=" + frameId);
+                log("[ERROR] " + msg + " page=" + pgName + " frame=" + frameId);
             }catch(_){}
         }
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
@@ -4429,7 +4590,7 @@ function _holderInnerBounds(holder){
                 try{ frame.remove(); }catch(_){}
             }
         }catch(eTrim){
-            try{ log("[WARN] trim trailing frames failed: " + eTrim); }catch(_){}
+            try{ log("[DBG] trim trailing frames failed: " + eTrim); }catch(_){}
         }
     }
 
@@ -4445,7 +4606,7 @@ function _holderInnerBounds(holder){
                 try{ pg.remove(); }catch(_){}
             }
         }catch(ePg){
-            try{ log("[WARN] trim trailing pages failed: " + ePg); }catch(_){}
+            try{ log("[DBG] trim trailing pages failed: " + ePg); }catch(_){}
         }
     }
 
@@ -4485,6 +4646,7 @@ function _holderInnerBounds(holder){
     __trimTrailingEmptyFrames(story);
     __trimTrailingEmptyPages(doc);
     try { fixAllTables(); } catch(_) {}
+    try{ __progressFinalize(); }catch(_){}
                   // ★ 新增：切到新框后更新全局指针
 
         // （可选）导出 IDML
@@ -4530,7 +4692,7 @@ function fixAllTables(){
             }
         }
         try { log("[LOG] fixAllTables done"); } catch(_){}
-    }catch(e){ try{ log("[WARN] fixAllTables: "+e); }catch(__){} }
+    }catch(e){ try{ log("[DBG] fixAllTables: "+e); }catch(__){} }
 }
 """
 
@@ -4595,8 +4757,8 @@ class ImageSpec:
                 var __imgCtx = spec.logContext || null;
                 var __imgTag = "[IMG]";
                 if (__imgCtx && __imgCtx.id) __imgTag = "[IMG][" + __imgCtx.id + "]";
-                var __imgWarnTag = "[WARN]";
-                if (__imgCtx && __imgCtx.id) __imgWarnTag = "[WARN][IMG " + __imgCtx.id + "]";
+                var __imgWarnTag = "[ERROR]";
+                if (__imgCtx && __imgCtx.id) __imgWarnTag = "[ERROR][IMG " + __imgCtx.id + "]";
                 if (__imgCtx){{
                   var __imgPrev = __imgCtx.preview ? String(__imgCtx.preview) : "";
                   if (__imgPrev.length > 80) __imgPrev = __imgPrev.substring(0,80) + "...";
@@ -4658,6 +4820,11 @@ class ImageSpec:
                   }}
                 }} else {{
                   log(__imgWarnTag + " missing: {src_for_log}");
+                }}
+                try{{
+                  var __imgDetail = (__imgCtx && __imgCtx.id) ? ("id=" + __imgCtx.id) : ("src=" + (spec && spec.src ? spec.src : ""));
+                  __progressBump("IMG", __imgDetail);
+                }}catch(_){{
                 }}
               }} catch(e) {{
                 log(__imgWarnTag + " exception " + e);
@@ -4830,7 +4997,7 @@ def _preflight_snippet(text: str, limit: int = 120) -> str:
 def _report_preflight_issue(style: str, text: str, reason: str):
     snippet = _preflight_snippet(text)
     label = style or "Body"
-    _user_log(f"[WARN][PRECHECK] style={label} reason={reason}; snippet={snippet}")
+    _user_log(f"[ERROR][PRECHECK] style={label} reason={reason}; snippet={snippet}")
     _debug_log(f"[PRECHECK] style={label} reason={reason} text={text}")
 
 
@@ -5170,6 +5337,7 @@ def write_jsx(jsx_path, paragraphs):
     levels_used = set()
     table_seq = 0
     image_seq = 0
+    para_chunks = 0
 
     add_lines.append("function onNewLevel1(){ var pkt = startNewChapter(story, page, tf); story=pkt.story; page=pkt.page; tf=pkt.frame; }")
     add_lines.append("firstChapterSeen = false;")
@@ -5186,7 +5354,7 @@ def write_jsx(jsx_path, paragraphs):
             preview = escape_js(_preflight_snippet(normalized_text))
             js_reason = escape_js(f"preflight: {reason}")
             add_lines.append(f'__logSkipParagraph(__nextParaSeq(), "{sty}", "{js_reason}", "{preview}")')
-            print(f"[WARN] 段落 {idx+1} ({style}) 预检查失败：{reason}，已跳过")
+            print(f"[ERROR] 段落 {idx+1} ({style}) 预检查失败：{reason}，已跳过")
             continue
 
         expanded = _prepare_paragraphs_for_jsx([(sty, normalized_text)], img_pattern)
@@ -5230,6 +5398,14 @@ def write_jsx(jsx_path, paragraphs):
                 continue
 
             _append_default_paragraph(add_lines, sty_chunk, esc)
+            para_chunks += 1
+
+    progress_total = para_chunks + table_seq + image_seq
+    if progress_total <= 0:
+        progress_total = len(paragraphs)
+    _debug_log(
+        f"[WRITE-JSX] progress units para={para_chunks} table={table_seq} img={image_seq} total={progress_total}"
+    )
 
     style_lines = build_style_lines(levels_used)
 
@@ -5261,6 +5437,8 @@ def write_jsx(jsx_path, paragraphs):
     jsx = jsx.replace("%FN_FALLBACK_LEAD%", str(FN_FALLBACK_LEAD))
     jsx = jsx.replace("%EVENT_LOG_PATH%", LOG_PATH.replace("\\", "/"))
     jsx = jsx.replace("%LOG_WRITE%", "true" if LOG_WRITE else "false")  # ← 新增
+    jsx = jsx.replace("%PROGRESS_TOTAL%", str(max(progress_total, 0)))
+    jsx = jsx.replace("%PROGRESS_HEARTBEAT%", str(PROGRESS_HEARTBEAT_MS))
     jsx = jsx.replace("__STYLE_LINES__", style_lines)
     jsx = jsx.replace("__ADD_LINES__", "\n    ".join(add_lines))
     jsx = jsx.replace("%IMG_DIRS_JSON%", json.dumps(_norm).replace("\\", "\\\\"))
@@ -5294,6 +5472,7 @@ def run_indesign_windows(jsx_path):
         print("[ERR] 未找到 InDesign COM 接口")
         return False
 
+    monitor = _start_progress_monitor()
     try:
         app.DoScript(jsx_path, 1246973031)  # 1246973031 = JavaScript
         print("[OK] 已执行 JSX")
@@ -5301,6 +5480,8 @@ def run_indesign_windows(jsx_path):
     except Exception as e:
         print("[ERR] DoScript 执行失败：", e)
         return False
+    finally:
+        _stop_progress_monitor(monitor)
 
 
 def run_indesign_macos(jsx_path):
@@ -5338,6 +5519,7 @@ def run_indesign_macos(jsx_path):
             do script (POSIX file "{jsx_escaped}") language javascript
         end tell'''
         print(f"[macOS] 尝试调用 InDesign: {app_name}")
+        monitor = _start_progress_monitor()
         try:
             p = subprocess.Popen(["osascript", "-e", osa], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             out, err = p.communicate()
@@ -5353,6 +5535,8 @@ def run_indesign_macos(jsx_path):
         except Exception as e:
             print(f"[ERR] 调用 {app_name} 失败：{e}")
 
+        finally:
+            _stop_progress_monitor(monitor)
     print("[ERR] 无法调用任何已知的 InDesign 应用名。可设置环境变量 MAC_APP_NAME=你的应用名 再试。")
     return False
 
@@ -5544,3 +5728,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
