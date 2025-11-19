@@ -308,11 +308,12 @@ class NumericDepthSplitter(Splitter):
 class DOCXOutlineExporter:
     _NOTE_STYLE_HINTS = {"footnotereference", "endnotereference"}
     _MAX_NOTE_MARKER_LEN = 4
-    def __init__(self, input_path: str, mode: str = "heading"):
+    def __init__(self, input_path: str, mode: str = "heading", skip_images: bool = False):
         assert mode in ("heading", "regex", "hybrid"), "mode must be 'heading', 'regex', or 'hybrid'"
         self.mode = mode
         self.input_path = input_path
         self.doc = Document(input_path)
+        self.skip_images = bool(skip_images)
         self.footnotes: Dict[str, str] = {}
         self.endnotes: Dict[str, str] = {}
         self.root = MyDOCNode("root", level=0, index=0, parent=None, element_type="root")
@@ -1556,10 +1557,12 @@ class DOCXOutlineExporter:
                 has_page_break = False
 
             # ---------- IMAGES (high-fidelity [[IMG ...]] placeholder) ----------
-            try:
-                blips = XP_RUN_BLIPS(r_el) or []
-            except Exception:
-                blips = []
+            blips = []
+            if not self.skip_images:
+                try:
+                    blips = XP_RUN_BLIPS(r_el) or []
+                except Exception:
+                    blips = []
             if blips:
                 import os
                 os.makedirs(self.assets_dir or ".", exist_ok=True)

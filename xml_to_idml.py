@@ -4808,16 +4808,8 @@ class FrameSpec:
             }})();'''
 
 
-def _prepare_paragraphs_for_jsx(paragraphs, img_pattern, skip_images):
-    """Normalize paragraphs list: optionally drop images and split texts around image markers."""
-    if skip_images:
-        paragraphs = [
-            (style, img_pattern.sub(" ", text))
-            for style, text in paragraphs
-        ]
-        _debug_log(f"[PARA-SPLIT] skip_images sanitized {len(paragraphs)} paragraphs")
-        return paragraphs
-
+def _prepare_paragraphs_for_jsx(paragraphs, img_pattern):
+    """Normalize paragraphs list: split texts around image markers."""
     expanded = []
     for idx, (style, text) in enumerate(paragraphs, 1):
         chunks = _split_media_chunks(style, text)
@@ -5051,11 +5043,7 @@ def _handle_table_marker(text, add_lines, ctx=None):
     return True
 
 
-def _handle_img_marker(text, skip_images, add_lines, ctx=None):
-    if skip_images:
-        label = _ctx_label(ctx)
-        _debug_log(f"[IMG]{label} skip_images flag set; ignore [[IMG]] marker")
-        return False
+def _handle_img_marker(text, add_lines, ctx=None):
     match, only_img = _match_img_marker(text)
     if not match:
         return False
@@ -5075,11 +5063,7 @@ def _handle_img_marker(text, skip_images, add_lines, ctx=None):
     return True
 
 
-def _handle_html_table(text, skip_images, add_lines, ctx=None):
-    if skip_images:
-        label = _ctx_label(ctx)
-        _debug_log(f"[HTML-TABLE]{label} skip_images flag set; ignore <table> block")
-        return False
+def _handle_html_table(text, add_lines, ctx=None):
     if not re.match(r'^\s*<table\b[\s\S]*</table>\s*$', text, flags=re.I):
         return False
     try:
@@ -5157,11 +5141,7 @@ def _build_html_image_spec(text):
     }
     return ImageSpec.from_mapping(attrs)
 
-def _handle_html_image(text, skip_images, add_lines, ctx=None):
-    if skip_images:
-        label = _ctx_label(ctx)
-        _debug_log(f"[HTML-IMG]{label} skip_images flag set; ignore <img> block")
-        return False
+def _handle_html_image(text, add_lines, ctx=None):
     spec = _build_html_image_spec(text)
     if not spec:
         return False
@@ -5185,7 +5165,7 @@ def _append_default_paragraph(add_lines, sty, esc):
     add_lines.append(f'addParaWithNotes(story, "{sty}", "{esc}");')
 
 
-def write_jsx(jsx_path, paragraphs, skip_images=False):
+def write_jsx(jsx_path, paragraphs):
     add_lines = []
     levels_used = set()
     table_seq = 0
@@ -5195,7 +5175,7 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
     add_lines.append("firstChapterSeen = false;")
 
     img_pattern = re.compile(r'\[\[IMG\s+[^\]]+\]\]', re.I)
-    _debug_log(f"[WRITE-JSX] totalParas={len(paragraphs)} skip_images={skip_images}")
+    _debug_log(f"[WRITE-JSX] totalParas={len(paragraphs)}")
     for idx, (style, text) in enumerate(paragraphs, 1):
         sty = _normalize_style_name(style, levels_used)
         normalized_text = text or ""
@@ -5209,7 +5189,7 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
             print(f"[WARN] 段落 {idx+1} ({style}) 预检查失败：{reason}，已跳过")
             continue
 
-        expanded = _prepare_paragraphs_for_jsx([(sty, normalized_text)], img_pattern, skip_images)
+        expanded = _prepare_paragraphs_for_jsx([(sty, normalized_text)], img_pattern)
         if not expanded:
             expanded = [(sty, normalized_text)]
 
@@ -5239,13 +5219,13 @@ def write_jsx(jsx_path, paragraphs, skip_images=False):
                 table_seq += 1
                 continue
             img_ctx = _make_chunk_context("img", image_seq + 1, idx, sty_chunk, text_chunk)
-            if _handle_img_marker(text_chunk, skip_images, add_lines, ctx=img_ctx):
+            if _handle_img_marker(text_chunk, add_lines, ctx=img_ctx):
                 image_seq += 1
                 continue
-            if _handle_html_table(text_chunk, skip_images, add_lines, ctx=table_ctx):
+            if _handle_html_table(text_chunk, add_lines, ctx=table_ctx):
                 table_seq += 1
                 continue
-            if _handle_html_image(text_chunk, skip_images, add_lines, ctx=img_ctx):
+            if _handle_html_image(text_chunk, add_lines, ctx=img_ctx):
                 image_seq += 1
                 continue
 
@@ -5467,11 +5447,6 @@ def main():
         help="仅生成 XML/JSX，不实际调用 InDesign",
     )
     parser.add_argument(
-        "--no-images",
-        action="store_true",
-        help="生成 JSX 时忽略图片",
-    )
-    parser.add_argument(
         "--log-dir",
         help="指定日志输出目录（默认写入脚本目录下的 logs）",
     )
@@ -5532,7 +5507,7 @@ def main():
     print(para_msg)
     PIPELINE_LOGGER.user(para_msg)
 
-    write_jsx(JSX_PATH, paragraphs, skip_images=args.no_images)
+    write_jsx(JSX_PATH, paragraphs)
     PIPELINE_LOGGER.user(f"[JSX] 已生成 {JSX_PATH}")
 
     ran = False

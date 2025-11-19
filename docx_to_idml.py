@@ -232,7 +232,7 @@ def main(argv=None):
         sys.exit(1)
 
     global PIPELINE_LOGGER, LOG_PATH
-    log_source = input_path
+    log_source = input_path or XML_PATH
     PIPELINE_LOGGER = PipelineLogger(
         log_source,
         log_root=args.log_dir,
@@ -250,7 +250,7 @@ def main(argv=None):
 
     # ====== 原有流程 ======
     # 1) 生成 XML
-    exporter = DOCXOutlineExporter(input_path, mode=args.mode)
+    exporter = DOCXOutlineExporter(input_path, mode=args.mode, skip_images=args.no_images)
     exporter.process(XML_PATH)
     _log_user(f"[OK] mode={args.mode} XML saved -> {XML_PATH}")
 
@@ -261,7 +261,7 @@ def main(argv=None):
         PIPELINE_LOGGER.debug(f"[DOCX2IDML] skip_images flag={args.no_images}")
 
     # 3) 生成 JSX（模板 + 每 Level1 新 story + TOC + 脚注/尾注 + i/b/u + 日志 + 脚注/尾注正文样式）
-    write_jsx(JSX_PATH, paragraphs, skip_images=args.no_images)
+    write_jsx(JSX_PATH, paragraphs)
 
     # 4) 调 InDesign
     ran = False
