@@ -308,12 +308,14 @@ class NumericDepthSplitter(Splitter):
 class DOCXOutlineExporter:
     _NOTE_STYLE_HINTS = {"footnotereference", "endnotereference"}
     _MAX_NOTE_MARKER_LEN = 4
-    def __init__(self, input_path: str, mode: str = "heading", skip_images: bool = False):
+    def __init__(self, input_path: str, mode: str = "heading", skip_images: bool = False, skip_tables: bool = False, skip_textboxes: bool = False):
         assert mode in ("heading", "regex", "hybrid"), "mode must be 'heading', 'regex', or 'hybrid'"
         self.mode = mode
         self.input_path = input_path
         self.doc = Document(input_path)
         self.skip_images = bool(skip_images)
+        self.skip_tables = bool(skip_tables)
+        self.skip_textboxes = bool(skip_textboxes)
         self.footnotes: Dict[str, str] = {}
         self.endnotes: Dict[str, str] = {}
         self.root = MyDOCNode("root", level=0, index=0, parent=None, element_type="root")
@@ -911,7 +913,8 @@ class DOCXOutlineExporter:
                 items.append(('p', p_idx, state))
                 p_idx += 1
             elif tag.endswith('}tbl'):
-                items.append(('tbl', t_idx, state))
+                if not self.skip_tables:
+                    items.append(('tbl', t_idx, state))
                 t_idx += 1
             elif tag.endswith('}sdt'):
                 content = child.find("./w:sdtContent", NSMAP)
@@ -1769,7 +1772,7 @@ class DOCXOutlineExporter:
                     fmt_vals["wordPageSeq"] = str(self._word_page_seq)
                     chunks.append(img_tpl.format(**fmt_vals))
 
-            frame_markers = self._extract_textboxes_from_run(r_el)
+            frame_markers = [] if self.skip_textboxes else self._extract_textboxes_from_run(r_el)
             if frame_markers:
                 chunks.extend(frame_markers)
                 for marker in frame_markers:
@@ -2056,6 +2059,8 @@ class DOCXOutlineExporter:
             if kind == 'p':
                 yield ('p', self._doc_paragraphs[index], self._copy_section_state(state))
             elif kind == 'tbl':
+                if self.skip_tables:
+                    continue
                 yield ('tbl', self._doc_tables[index], self._copy_section_state(state))
 
     def _build_tree_heading_mode(self):

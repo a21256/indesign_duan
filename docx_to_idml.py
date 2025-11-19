@@ -190,7 +190,9 @@ def main(argv=None):
     parser.add_argument("--template", "-t", dest="template", default=None, help="覆盖 TEMPLATE_PATH（模板 .idml 的路径）")
     parser.add_argument("--out", "-o", dest="out", default=None, help="覆盖 IDML_OUT_PATH（导出的 .idml 路径）")
     parser.add_argument("input", nargs="?", help="Input .docx path")
-    parser.add_argument("--no-images", action="store_true", help="skip embedding images when generating JSX")
+    parser.add_argument("--no-images", action="store_true", help="生成 XML 时跳过 Word 图片")
+    parser.add_argument("--no-tables", action="store_true", help="生成 XML 时跳过 Word 表格")
+    parser.add_argument("--no-textboxes", action="store_true", help="生成 XML 时跳过文本框/框架")
     parser.add_argument("--log-dir", help="指定日志目录，默认写入脚本目录的 logs")
     parser.add_argument("--debug-log", action="store_true", help="开启 debug 日志记录")
     args = parser.parse_args(argv)
@@ -250,7 +252,13 @@ def main(argv=None):
 
     # ====== 原有流程 ======
     # 1) 生成 XML
-    exporter = DOCXOutlineExporter(input_path, mode=args.mode, skip_images=args.no_images)
+    exporter = DOCXOutlineExporter(
+        input_path,
+        mode=args.mode,
+        skip_images=args.no_images,
+        skip_tables=args.no_tables,
+        skip_textboxes=args.no_textboxes,
+    )
     exporter.process(XML_PATH)
     _log_user(f"[OK] mode={args.mode} XML saved -> {XML_PATH}")
 
@@ -258,7 +266,9 @@ def main(argv=None):
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
     _log_user(f"[INFO] 解析到 {len(paragraphs)} 段；示例前3段: {paragraphs[:3]}")
     if PIPELINE_LOGGER and args.debug_log:
-        PIPELINE_LOGGER.debug(f"[DOCX2IDML] skip_images flag={args.no_images}")
+        PIPELINE_LOGGER.debug(
+            f"[DOCX2IDML] skip_flags images={args.no_images} tables={args.no_tables} textboxes={args.no_textboxes}"
+        )
 
     # 3) 生成 JSX（模板 + 每 Level1 新 story + TOC + 脚注/尾注 + i/b/u + 日志 + 脚注/尾注正文样式）
     write_jsx(JSX_PATH, paragraphs)
