@@ -325,6 +325,7 @@ def main(argv=None):
     export_summary = exporter.process(XML_PATH)
     if not export_summary:
         export_summary = exporter.summary()
+    image_stats = export_summary.get("image_fragments", 0) or 0
     _log_user(f"[OK] mode={args.mode} XML saved -> {XML_PATH}")
 
     # 2) 解析 XML -> 段落
@@ -369,6 +370,7 @@ def main(argv=None):
             continue
         converted_tables += text.count("[[TABLE")
     converted_paragraphs = len(paragraphs)
+    converted_images = image_stats
     converted_pages = None
     if ran:
         converted_pages = _count_idml_pages(getattr(X, "IDML_OUT_PATH", ""))
@@ -388,6 +390,7 @@ def main(argv=None):
         f"wordParagraphs={word_paragraphs if word_paragraphs is not None else 'N/A'} "
         f"convertedPages={converted_pages if converted_pages is not None else 'N/A'} "
         f"convertedTables={converted_tables} convertedParagraphs={converted_paragraphs} "
+        f"convertedImages={converted_images} "
         f"elapsed={total_elapsed:.2f}s"
     )
     print(summary_report)

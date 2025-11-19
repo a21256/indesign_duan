@@ -26,6 +26,11 @@ AUTO_EXPORT_IDML = True  # 如需脚本结束自动导出 output.idml，改 True
 # 是否把运行日志写入文件：开发=True，商用=False，也可用环境变量 INDESIGN_LOG=0/1 覆盖
 LOG_WRITE = False
 
+TABLE_BODY_PAR_STYLE = "TableBody"
+TABLE_BODY_PAR_STYLE_FALLBACK = "DocxTable"
+TABLE_BODY_PAR_STYLE_BASE = "Body"
+TABLE_BODY_PAR_STYLE_AUTO = "__DocxTableAuto"
+
 PROGRESS_HEARTBEAT_MS = 15000  # JSX 粗略进度心跳频率（毫秒）
 PROGRESS_CONSOLE_ACTIVE = False
 PROGRESS_CONSOLE_LEN = 0
@@ -3113,6 +3118,10 @@ function _holderInnerBounds(holder){
       try{
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
+        var __tableBodyStylePrimary = %TABLE_BODY_STYLE%;
+        var __tableBodyStyleFallback = %TABLE_BODY_STYLE_FALLBACK%;
+        var __tableBodyStyleBase = %TABLE_BODY_STYLE_BASE%;
+        var __tableBodyStyleAuto = %TABLE_BODY_STYLE_AUTO%;
         var __tableCtx = (obj && obj.logContext) ? obj.logContext : null;
         var __tableTag = "[TABLE]";
         var __tableWarnTag = "[WARN]";
@@ -3121,6 +3130,44 @@ function _holderInnerBounds(holder){
           __tableTag = "[TABLE][" + __tableCtx.id + "]";
           __tableWarnTag = "[WARN][TABLE " + __tableCtx.id + "]";
           __tableErrTag = "[ERROR][TABLE " + __tableCtx.id + "]";
+        }
+        function __resolveTableParaStyle(styleName){
+          if (!styleName || styleName === "null" || styleName === "undefined") return null;
+          try{
+            var st = app.activeDocument.paragraphStyles.itemByName(styleName);
+            if (st && st.isValid) return st;
+          }catch(_){}
+          return null;
+        }
+        function __ensureAutoTableStyle(styleName, baseName){
+          if (!styleName || styleName === "null" || styleName === "undefined") return null;
+          var existing = __resolveTableParaStyle(styleName);
+          if (existing) return existing;
+          try{
+            var doc = app.activeDocument;
+            var base = __resolveTableParaStyle(baseName);
+            var spec = { name: styleName };
+            var baseSize = 10;
+            var baseLeading = 12;
+            if (base && base.isValid){
+              try{ spec.basedOn = base; }catch(_){}
+              var ps = parseFloat(base.pointSize);
+              if (isFinite(ps) && ps > 0) baseSize = ps;
+              var ld = base.leading;
+              var ldVal = parseFloat(ld);
+              if (isFinite(ldVal) && ldVal > 0){ baseLeading = ldVal; }
+              else { baseLeading = baseSize + 2; }
+              spec.pointSize = Math.max(5, baseSize * 0.9);
+              spec.leading = Math.max(spec.pointSize + 1, baseLeading * 0.9);
+              try{ spec.appliedFont = base.appliedFont; }catch(_){}
+            }else{
+              spec.pointSize = 9;
+              spec.leading = 11;
+            }
+            var created = doc.paragraphStyles.add(spec);
+            if (created && created.isValid) return created;
+          }catch(_){}
+          return __resolveTableParaStyle(baseName);
         }
         if (__tableCtx){
           try{
@@ -3889,6 +3936,22 @@ function _holderInnerBounds(holder){
         }
 
         try{ tbl.recompose(); }catch(__){}
+        try{
+          var __resolvedTblStyle = __resolveTableParaStyle(__tableBodyStylePrimary)
+                                   || __resolveTableParaStyle(__tableBodyStyleFallback);
+          if (!__resolvedTblStyle){
+            __resolvedTblStyle = __ensureAutoTableStyle(__tableBodyStyleAuto, __tableBodyStyleBase);
+          }
+          if (!__resolvedTblStyle){
+            __resolvedTblStyle = __resolveTableParaStyle(__tableBodyStyleBase)
+                                 || __resolveTableParaStyle("Body");
+          }
+          if (__resolvedTblStyle && __resolvedTblStyle.isValid){
+            try{
+              tbl.cells.everyItem().texts[0].paragraphs.everyItem().appliedParagraphStyle = __resolvedTblStyle;
+            }catch(__applyTblStyle){}
+          }
+        }catch(__tableStyleErr){}
         try{ fit(FitOptions.FRAME_TO_CONTENT); }catch(__){}
         try{
           var __gbFit = geometricBounds;
@@ -5439,6 +5502,10 @@ def write_jsx(jsx_path, paragraphs):
     jsx = jsx.replace("%LOG_WRITE%", "true" if LOG_WRITE else "false")  # ← 新增
     jsx = jsx.replace("%PROGRESS_TOTAL%", str(max(progress_total, 0)))
     jsx = jsx.replace("%PROGRESS_HEARTBEAT%", str(PROGRESS_HEARTBEAT_MS))
+    jsx = jsx.replace("%TABLE_BODY_STYLE%", json.dumps(TABLE_BODY_PAR_STYLE))
+    jsx = jsx.replace("%TABLE_BODY_STYLE_FALLBACK%", json.dumps(TABLE_BODY_PAR_STYLE_FALLBACK))
+    jsx = jsx.replace("%TABLE_BODY_STYLE_BASE%", json.dumps(TABLE_BODY_PAR_STYLE_BASE))
+    jsx = jsx.replace("%TABLE_BODY_STYLE_AUTO%", json.dumps(TABLE_BODY_PAR_STYLE_AUTO))
     jsx = jsx.replace("__STYLE_LINES__", style_lines)
     jsx = jsx.replace("__ADD_LINES__", "\n    ".join(add_lines))
     jsx = jsx.replace("%IMG_DIRS_JSON%", json.dumps(_norm).replace("\\", "\\\\"))

@@ -322,6 +322,7 @@ class DOCXOutlineExporter:
         self._stats = {
             "body_fragments": 0,
             "table_fragments": 0,
+            "image_fragments": 0,
         }
         self._last_summary: Dict[str, Any] = {}
 
@@ -342,6 +343,7 @@ class DOCXOutlineExporter:
         self._stats = {
             "body_fragments": 0,
             "table_fragments": 0,
+            "image_fragments": 0,
         }
         self._last_summary: Dict[str, Any] = {}
 
@@ -414,6 +416,7 @@ class DOCXOutlineExporter:
             "mode": self.mode,
             "word_paragraphs": len(self.doc.paragraphs),
             "word_tables": len(self.doc.tables),
+            "image_fragments": self._stats.get("image_fragments", 0),
             "footnotes": len(self.footnotes),
             "endnotes": len(self.endnotes),
             "body_fragments": self._stats.get("body_fragments", 0),
@@ -1771,6 +1774,10 @@ class DOCXOutlineExporter:
                     fmt_vals.update(self._word_page_size_attrs())
                     fmt_vals["wordPageSeq"] = str(self._word_page_seq)
                     chunks.append(img_tpl.format(**fmt_vals))
+                    try:
+                        self._stats["image_fragments"] = self._stats.get("image_fragments", 0) + 1
+                    except Exception:
+                        self._stats["image_fragments"] = self._stats.get("image_fragments", 0) + 1
 
             frame_markers = [] if self.skip_textboxes else self._extract_textboxes_from_run(r_el)
             if frame_markers:
@@ -2242,6 +2249,7 @@ class DOCXOutlineExporter:
             "mode": self.mode,
             "word_paragraphs": len(self.doc.paragraphs),
             "word_tables": len(self.doc.tables),
+            "image_fragments": self._stats.get("image_fragments", 0),
             "footnotes": len(self.footnotes),
             "endnotes": len(self.endnotes),
             "body_fragments": self._stats.get("body_fragments", 0),
