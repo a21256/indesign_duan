@@ -118,6 +118,10 @@ def _log_error(message: str):
     if PIPELINE_LOGGER:
         PIPELINE_LOGGER.error(message)
 
+def _debug_log(message: str):
+    if PIPELINE_LOGGER:
+        PIPELINE_LOGGER.debug(message)
+
 
 def _prompt_hidden(prompt_text: str) -> str:
     try:
@@ -201,6 +205,7 @@ def main(argv=None):
     parser.add_argument("--no-textboxes", action="store_true", help="生成 XML 时跳过文本框/框架")
     parser.add_argument("--log-dir", help="指定日志目录，默认写入脚本目录的 logs")
     parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     # —— 在输入密码之前：先校验 input 和 实际生效的 TEMPLATE_PATH ——
@@ -229,6 +234,11 @@ def main(argv=None):
 
     # 覆盖 xml_to_idml 的全局变量（模板路径与导出路径），确保后续 write_jsx 生效
     _apply_overrides(args.template, args.out)
+    arg_debug_line = (
+        f"[ARGS] mode={args.mode} skip_images={args.no_images} skip_tables={args.no_tables} "
+        f"skip_textboxes={args.no_textboxes} template={eff_template} out={getattr(X, 'IDML_OUT_PATH', None)} "
+        f"log_dir={args.log_dir or '(default)'} no_run={args.no_run}"
+    )
 
     # 仅执行修改密码功能（可在未校验密码之前执行）
     if args.set_password:
@@ -255,6 +265,8 @@ def main(argv=None):
     _log_user(f"[LOG] 用户日志: {PIPELINE_LOGGER.user_log_path}")
     if args.debug_log:
         _log_user(f"[LOG] 调试日志: {PIPELINE_LOGGER.debug_log_path}")
+    PIPELINE_LOGGER.user(arg_debug_line)
+    _debug_log(arg_debug_line)
 
     # ====== 原有流程 ======
     # 1) 生成 XML
