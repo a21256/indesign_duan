@@ -19,6 +19,9 @@ import argparse
 import getpass
 import base64
 import hashlib
+import time
+import zipfile
+from xml.etree import ElementTree as ET
 from typing import Optional
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -123,6 +126,45 @@ def _debug_log(message: str):
         PIPELINE_LOGGER.debug(message)
 
 
+def _read_docx_app_props(docx_path: str) -> dict:
+    stats = {"pages": None, "paragraphs": None, "tables": None}
+    try:
+        with zipfile.ZipFile(docx_path) as zf:
+            data = zf.read("docProps/app.xml")
+        root = ET.fromstring(data)
+        for node in root.iter():
+            tag = node.tag.split("}", 1)[-1]
+            if tag == "Pages":
+                stats["pages"] = int(node.text or 0)
+            elif tag == "Paragraphs":
+                stats["paragraphs"] = int(node.text or 0)
+            elif tag == "Tables":
+                stats["tables"] = int(node.text or 0)
+    except Exception:
+        pass
+    return stats
+
+
+def _count_idml_pages(idml_path: str) -> Optional[int]:
+    if not idml_path or not os.path.exists(idml_path):
+        return None
+    try:
+        total = 0
+        with zipfile.ZipFile(idml_path) as zf:
+            for name in zf.namelist():
+                if not name.lower().startswith("spreads/") or not name.lower().endswith(".xml"):
+                    continue
+                data = zf.read(name)
+                try:
+                    root = ET.fromstring(data)
+                    total += sum(1 for _ in root.iter() if _.tag.split("}", 1)[-1] == "Page")
+                except Exception:
+                    continue
+        return total if total > 0 else None
+    except Exception:
+        return None
+
+
 def _prompt_hidden(prompt_text: str) -> str:
     try:
         return getpass.getpass(prompt_text)
@@ -186,6 +228,7 @@ def _apply_overrides(cli_template: str | None, cli_out: str | None) -> None:
 
 
 def main(argv=None):
+    start_ts = time.time()
     # ====== 命令行解析（新增跨平台与模板/输出覆盖） ======
     parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex/hybrid) with style switches + Password Protection + Cross-platform paths")
     parser.add_argument(
@@ -270,6 +313,8 @@ def main(argv=None):
 
     # ====== 原有流程 ======
     # 1) 生成 XML
+    docx_meta = _read_docx_app_props(input_path)
+
     exporter = DOCXOutlineExporter(
         input_path,
         mode=args.mode,
@@ -277,7 +322,9 @@ def main(argv=None):
         skip_tables=args.no_tables,
         skip_textboxes=args.no_textboxes,
     )
-    exporter.process(XML_PATH)
+    export_summary = exporter.process(XML_PATH)
+    if not export_summary:
+        export_summary = exporter.summary()
     _log_user(f"[OK] mode={args.mode} XML saved -> {XML_PATH}")
 
     # 2) 解析 XML -> 段落
@@ -314,7 +361,38 @@ def main(argv=None):
     )
     _log_user(summary_line)
     if ran:
-        _log_user("InDesign 已执行 JSX。若设置 AUTO_EXPORT_IDML=True，将在脚本目录生成 output.idml。")
+        _log_user("InDesign 已执行 JSX；若设置 AUTO_EXPORT_IDML=True，将在脚本目录生成 output.idml。")
+
+    converted_tables = 0
+    for _, text in paragraphs:
+        if not text:
+            continue
+        converted_tables += text.count("[[TABLE")
+    converted_paragraphs = len(paragraphs)
+    converted_pages = None
+    if ran:
+        converted_pages = _count_idml_pages(getattr(X, "IDML_OUT_PATH", ""))
+
+    word_pages = docx_meta.get("pages") or export_summary.get("word_pages")
+    word_tables = export_summary.get("word_tables") or docx_meta.get("tables")
+    word_paragraphs = export_summary.get("word_paragraphs") or docx_meta.get("paragraphs")
+
+    total_elapsed = time.time() - start_ts
+    elapsed_msg = f"[TIME] total={total_elapsed:.2f}s"
+    print(elapsed_msg)
+    _log_user(elapsed_msg)
+
+    summary_report = (
+        f"[REPORT][SUMMARY] wordPages={word_pages if word_pages is not None else 'N/A'} "
+        f"wordTables={word_tables if word_tables is not None else 'N/A'} "
+        f"wordParagraphs={word_paragraphs if word_paragraphs is not None else 'N/A'} "
+        f"convertedPages={converted_pages if converted_pages is not None else 'N/A'} "
+        f"convertedTables={converted_tables} convertedParagraphs={converted_paragraphs} "
+        f"elapsed={total_elapsed:.2f}s"
+    )
+    print(summary_report)
+    _log_user(summary_report)
+
 
 
 if __name__ == "__main__":
