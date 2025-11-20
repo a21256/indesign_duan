@@ -2850,3 +2850,4 @@ function fixAllTables(){
         try { log("[LOG] fixAllTables done"); } catch(_){}
     }catch(e){ try{ log("[DBG] fixAllTables: "+e); }catch(__){} }
 }
+})();
