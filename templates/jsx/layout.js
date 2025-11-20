@@ -1,1 +1,1 @@
-// layout.js placeholder
+// layout.js placeholder (pending extraction)
