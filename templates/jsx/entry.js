@@ -2681,7 +2681,7 @@ function _holderInnerBounds(holder){
             }
         }catch(_){ }
         return __cloneLayoutState(state);
-})();
+;
     __CURRENT_LAYOUT = __cloneLayoutState(__DEFAULT_LAYOUT);
 
 
@@ -2819,7 +2819,7 @@ function _holderInnerBounds(holder){
             if (__origViewH !== null) app.viewPreferences.horizontalMeasurementUnits = __origViewH;
             if (__origViewV !== null) app.viewPreferences.verticalMeasurementUnits = __origViewV;
         }catch(_){}
-    })();
+    ;
 
 function fixAllTables(){
     try{
@@ -2850,4 +2850,4 @@ function fixAllTables(){
         try { log("[LOG] fixAllTables done"); } catch(_){}
     }catch(e){ try{ log("[DBG] fixAllTables: "+e); }catch(__){} }
 }
-})();
+}})();
