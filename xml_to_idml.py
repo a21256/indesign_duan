@@ -20,6 +20,14 @@ LOG_PATH = os.path.join(OUT_DIR, "inline_style_debug.log")  # 行内样式&脚�
 # 始终覆盖同名脚本（不再生成带时间戳）
 JSX_PATH = os.path.join(OUT_DIR, "indesign_autoflow_map_levels.jsx")
 JSX_TEMPLATE_PATH = os.path.join(OUT_DIR, "templates", "indesign_autoflow_map_levels.tpl.jsx")  # optional external JSX template
+JSX_FRAGMENT_DIR = os.path.join(OUT_DIR, "templates", "jsx")
+JSX_FRAGMENTS = {
+    "UTIL": "util.js",
+    "LAYOUT": "layout.js",
+    "TABLE": "table.js",
+    "IMAGE": "image.js",
+    "ENTRY": "entry.js",
+}
 
 AUTO_RUN_WINDOWS = True
 AUTO_RUN_MACOS = True
@@ -460,15 +468,30 @@ def _load_jsx_template():
     tpl_path = os.environ.get("JSX_TEMPLATE_PATH", JSX_TEMPLATE_PATH)
     tpl_abs = os.path.abspath(tpl_path) if tpl_path else None
     if not tpl_abs:
-        raise FileNotFoundError("未指定 JSX 模板路径；请设置 JSX_TEMPLATE_PATH 或使用 --dump-jsx-template 查看默认路径")
+        raise FileNotFoundError("JSX template path is not set. Set JSX_TEMPLATE_PATH or run --dump-jsx-template to see the default path.")
     try:
         with open(tpl_abs, "r", encoding="utf-8") as fh:
-            return fh.read(), tpl_abs
+            base_text = fh.read()
     except FileNotFoundError:
-        raise FileNotFoundError(f"未找到 JSX 模板: {tpl_abs}，请确保模板文件存在")
+        raise FileNotFoundError(f"JSX template not found: {tpl_abs}")
     except Exception as exc:
-        raise RuntimeError(f"读取 JSX 模板失败: {tpl_abs} err={exc}")
+        raise RuntimeError(f"Failed to read JSX template: {tpl_abs} err={exc}")
 
+    frag_dir = os.environ.get("JSX_FRAGMENT_DIR", JSX_FRAGMENT_DIR)
+    frag_dir = os.path.abspath(frag_dir)
+    fragments = {}
+    for key, fname in JSX_FRAGMENTS.items():
+        frag_path = os.path.join(frag_dir, fname)
+        try:
+            with open(frag_path, "r", encoding="utf-8") as fh:
+                fragments[key] = fh.read()
+        except Exception as exc:
+            raise FileNotFoundError(f"Missing JSX fragment {key}: {frag_path} ({exc})")
+
+    composed = base_text
+    for key, content in fragments.items():
+        composed = composed.replace(f'{{{{{key}}}}}', content)
+    return composed, tpl_abs
 
 def _dump_jsx_template(path: str):
     tpl_abs = os.path.abspath(path)
@@ -477,7 +500,6 @@ def _dump_jsx_template(path: str):
         return True
     print("[ERR] JSX template missing and inline template has been removed. Please place templates/indesign_autoflow_map_levels.tpl.jsx at:", tpl_abs)
     return False
-
 
 
 
