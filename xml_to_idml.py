@@ -488,19 +488,6 @@ def _load_jsx_template():
         except Exception as exc:
             raise FileNotFoundError(f"Missing JSX fragment {key}: {frag_path} ({exc})")
 
-    entry_body = fragments.get("ENTRY", "")
-    inject = "\n\n".join([fragments.get("LAYOUT", ""), fragments.get("TABLE", ""), fragments.get("IMAGE", "")]).strip()
-    if inject:
-        close_pos = entry_body.rfind("})();")
-        if close_pos != -1:
-            entry_body = entry_body[:close_pos] + inject + "\n" + entry_body[close_pos:]
-        else:
-            entry_body = entry_body + "\n" + inject
-    fragments["ENTRY"] = entry_body
-    fragments["LAYOUT"] = ""
-    fragments["TABLE"] = ""
-    fragments["IMAGE"] = ""
-
     composed = base_text
     for key, content in fragments.items():
         composed = composed.replace(f'{{{{{key}}}}}', content)

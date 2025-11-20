@@ -1,3 +1,6 @@
+// Wrapper to keep everything scoped in one IIFE
+(function () {
+
 // === util ===
 {{UTIL}}
 
@@ -12,3 +15,5 @@
 
 // === entry ===
 {{ENTRY}}
+
+})(); // end IIFE
