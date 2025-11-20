@@ -1,14 +1,16 @@
 # Ignore everything by default, then whitelist the few files we want to track
 /*
 
-# Keep .gitignore itself and allow these three main scripts
+# Keep .gitignore itself and allow tracked scripts/resources
 !.gitignore
 !docx_to_idml.py
 !xml_to_idml.py
 !docx_to_xml_outline_notes_v13.py
+!regex_rules.py
+!pipeline_logger.py
 !README.md
-!builders/
-!builders/*.py
+!templates/
+!templates/**
 
 # (Keep Git metadata always)
 !.git/
