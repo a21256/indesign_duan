@@ -5612,7 +5612,7 @@ def _relay_jsx_events(
     logger: PipelineLogger,
     log_path: str,
     warn_missing: bool = True,
-    cleanup: bool = True,
+    cleanup: bool = False,
 ):
     stats = {"info": 0, "warn": 0, "error": 0, "debug": 0}
     if logger is None:
