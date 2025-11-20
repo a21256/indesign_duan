@@ -491,12 +491,11 @@ def _load_jsx_template():
     entry_body = fragments.get("ENTRY", "")
     inject = "\n\n".join([fragments.get("LAYOUT", ""), fragments.get("TABLE", ""), fragments.get("IMAGE", "")]).strip()
     if inject:
-        marker = entry_body.find("(function")
-        if marker != -1:
-            pos = entry_body.find("\n", marker)
-            if pos == -1:
-                pos = len(entry_body)
-            entry_body = entry_body[:pos+1] + inject + "\n\n" + entry_body[pos+1:]
+        close_pos = entry_body.rfind("})();")
+        if close_pos != -1:
+            entry_body = entry_body[:close_pos] + inject + "\n" + entry_body[close_pos:]
+        else:
+            entry_body = entry_body + "\n" + inject
     fragments["ENTRY"] = entry_body
     fragments["LAYOUT"] = ""
     fragments["TABLE"] = ""
