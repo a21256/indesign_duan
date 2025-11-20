@@ -353,7 +353,7 @@ def main(argv=None):
 
     _log_user(f"IDML: {getattr(X, 'IDML_OUT_PATH', None)}")
     stats = X._relay_jsx_events(
-        PIPELINE_LOGGER, LOG_PATH, warn_missing=not ran, cleanup=True
+        PIPELINE_LOGGER, LOG_PATH, warn_missing=not ran, cleanup=False
     )
     summary_line = (
         f"[REPORT] JSX 事件统计 info={stats.get('info', 0)} "

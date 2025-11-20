@@ -19,6 +19,7 @@ LOG_PATH = os.path.join(OUT_DIR, "inline_style_debug.log")  # 行内样式&脚�
 
 # 始终覆盖同名脚本（不再生成带时间戳）
 JSX_PATH = os.path.join(OUT_DIR, "indesign_autoflow_map_levels.jsx")
+JSX_TEMPLATE_PATH = os.path.join(OUT_DIR, "templates", "indesign_autoflow_map_levels.tpl.jsx")  # optional external JSX template
 
 AUTO_RUN_WINDOWS = True
 AUTO_RUN_MACOS = True
@@ -447,17 +448,20 @@ JSX_TEMPLATE = r"""function smartWrapStr(s){
 }
 
 
-// ExtendScript 没有 Date#toISOString，自己拼一个
+// ExtendScript ?? Date#toISOString???????? UTC+8 (Beijing)
 function iso() {
   var d = new Date();
-  function pad(n){ return (n < 10 ? "0" : "") + n; }
-  return d.getUTCFullYear() + "-" +
-         pad(d.getUTCMonth() + 1) + "-" +
-         pad(d.getUTCDate()) + "T" +
-         pad(d.getUTCHours()) + ":" +
-         pad(d.getUTCMinutes()) + ":" +
-         pad(d.getUTCSeconds()) + "Z";
+  var utcMs = d.getTime() + (d.getTimezoneOffset() * 60000);
+  var bj = new Date(utcMs + 8 * 3600000);;
+    function pad(n){ return (n < 10 ? "0" : "" ) + n; }
+  return bj.getFullYear() + "-" +
+         pad(bj.getMonth() + 1) + "-" +
+         pad(bj.getDate()) + "T" +
+         pad(bj.getHours()) + "::" +
+         pad(bj.getMinutes()) + "::" +
+         pad(bj.getSeconds()) + "+08:00";
 }
+
 (function () {
     app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
     var __origScriptUnit = null, __origViewH = null, __origViewV = null;
@@ -4777,6 +4781,32 @@ def build_toc_entries(levels_used):
     return ""
 
 
+
+def _load_jsx_template():
+    """Load external JSX template if present; otherwise fallback to embedded string."""
+    tpl_path = os.environ.get("JSX_TEMPLATE_PATH", JSX_TEMPLATE_PATH)
+    if tpl_path:
+        try:
+            with open(tpl_path, "r", encoding="utf-8") as fh:
+                return fh.read(), tpl_path
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            _debug_log(f"[JSX] template load failed path={tpl_path} err={exc}")
+    return JSX_TEMPLATE, None
+
+
+def _dump_jsx_template(path: str):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(JSX_TEMPLATE)
+        print("[OK] JSX template exported:", path)
+        return True
+    except Exception as exc:
+        print("[ERR] JSX template export failed:", exc)
+        return False
+
 IMG_PLACEHOLDER_FULL_RE = re.compile(r'^\s*(\[\[IMG\s+.+?\]\])\s*$', re.I)
 IMG_PLACEHOLDER_ANY_RE = re.compile(r'\[\[IMG\s+(.+?)\]\]', re.I)
 IMG_KV_PATTERN = r'(\w+)=["\'\u201c\u201d]([^"\'\u201c\u201d]*)["\'\u201c\u201d]'
@@ -5489,7 +5519,7 @@ def write_jsx(jsx_path, paragraphs):
             _seen.add(dd);
             _norm.append(dd)
 
-    jsx = JSX_TEMPLATE
+    jsx, tpl_used = _load_jsx_template()
     jsx = jsx.replace("%TEMPLATE_PATH%", TEMPLATE_PATH.replace("\\", "\\\\"))
     jsx = jsx.replace("%OUT_IDML%", IDML_OUT_PATH.replace("\\", "\\\\"))
     jsx = jsx.replace("%AUTO_EXPORT%", "true" if AUTO_EXPORT_IDML else "false")
@@ -5513,6 +5543,8 @@ def write_jsx(jsx_path, paragraphs):
     with open(jsx_path, "w", encoding="utf-8") as f:
         f.write(jsx)
     print("[OK] JSX 写入:", jsx_path)
+    if tpl_used:
+        print("[INFO] JSX 模板来源:", tpl_used)
     print(f"[INFO] JSX 事件日志: {LOG_PATH}")
     # 在 write_jsx() 末尾、写完 add_lines 之后临时加一行：
     print("[DEBUG] JSX 是否包含 addImageAtV2：", any("addImageAtV2(" in ln for ln in add_lines))
@@ -5698,15 +5730,25 @@ def main():
         help="仅生成 XML/JSX，不实际调用 InDesign",
     )
     parser.add_argument(
+        "--dump-jsx-template",
+        action="store_true",
+        help="Export embedded JSX template to templates/indesign_autoflow_map_levels.tpl.jsx and exit",
+    )
+    parser.add_argument(
         "--log-dir",
-        help="指定日志输出目录（默认写入脚本目录下的 logs）",
+        help="Specify log root directory (default: ./logs)",
     )
     parser.add_argument(
         "--debug-log",
         action="store_true",
-        help="开启 debug 日志输出",
+        help="Enable debug logging",
     )
     args = parser.parse_args()
+    if args.dump_jsx_template:
+        target_tpl = os.environ.get("JSX_TEMPLATE_PATH", JSX_TEMPLATE_PATH)
+        _dump_jsx_template(target_tpl)
+        return
+
 
     global XML_PATH, LOG_PATH, LOG_WRITE, PIPELINE_LOGGER
     if args.xml_path:
@@ -5778,7 +5820,7 @@ def main():
     PIPELINE_LOGGER.user(f"[OUTPUT] IDML: {IDML_OUT_PATH}")
 
     stats = _relay_jsx_events(
-        PIPELINE_LOGGER, LOG_PATH, warn_missing=not args.no_run, cleanup=True
+        PIPELINE_LOGGER, LOG_PATH, warn_missing=not args.no_run, cleanup=False
     )
     summary_line = (
         f"[REPORT] JSX 事件统计 info={stats.get('info', 0)} "
