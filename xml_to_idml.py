@@ -4790,7 +4790,13 @@ def _load_jsx_template():
             with open(tpl_path, "r", encoding="utf-8") as fh:
                 return fh.read(), tpl_path
         except FileNotFoundError:
-            pass
+            # 自动导出一份，再读
+            try:
+                _dump_jsx_template(tpl_path)
+                with open(tpl_path, "r", encoding="utf-8") as fh2:
+                    return fh2.read(), tpl_path
+            except Exception as exc:
+                _debug_log(f"[JSX] template auto-dump failed path={tpl_path} err={exc}")
         except Exception as exc:
             _debug_log(f"[JSX] template load failed path={tpl_path} err={exc}")
     return JSX_TEMPLATE, None
