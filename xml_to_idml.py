@@ -1236,6 +1236,11 @@ def write_jsx(jsx_path, paragraphs):
     jsx = jsx.replace("__ADD_LINES__", "\n    ".join(add_lines))
     jsx = jsx.replace("%IMG_DIRS_JSON%", json.dumps(_norm).replace("\\", "\\\\"))
 
+    # 基础自检：占位符是否残留，避免 InDesign 报 “% does not have a value”
+    leftovers = sorted(set(m.group(0) for m in re.finditer(r"%[A-Z0-9_]+%", jsx)))
+    if leftovers:
+        raise RuntimeError(f"JSX placeholder not replaced: {leftovers}")
+
     with open(jsx_path, "w", encoding="utf-8") as f:
         f.write(jsx)
     print("[OK] JSX 写入:", jsx_path)
