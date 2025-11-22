@@ -6,6 +6,15 @@ function addTableHiFi(obj){
         var __tableBodyStyleFallback = %TABLE_BODY_STYLE_FALLBACK%;
         var __tableBodyStyleBase = %TABLE_BODY_STYLE_BASE%;
         var __tableBodyStyleAuto = %TABLE_BODY_STYLE_AUTO%;
+        function __sanitizeStyleName(name){
+          if (!name) return "[None]";
+          if (typeof name === "string" && name.length && name.charAt(0) === "%") return "[None]";
+          return name;
+        }
+        __tableBodyStylePrimary = __sanitizeStyleName(__tableBodyStylePrimary);
+        __tableBodyStyleFallback = __sanitizeStyleName(__tableBodyStyleFallback);
+        __tableBodyStyleBase = __sanitizeStyleName(__tableBodyStyleBase);
+        __tableBodyStyleAuto = __sanitizeStyleName(__tableBodyStyleAuto);
         var __tableCtx = (obj && obj.logContext) ? obj.logContext : null;
         var __tableTag = "[TABLE]";
         var __tableWarnTag = "[WARN]";

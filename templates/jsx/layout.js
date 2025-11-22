@@ -1,3 +1,264 @@
+// 全局布局状态（在模板 IIFE 作用域内共享）
+var __DEFAULT_LAYOUT = null;
+var __CURRENT_LAYOUT = null;
+var __DEFAULT_INNER_WIDTH = null;
+var __DEFAULT_INNER_HEIGHT = null;
+var __ENABLE_TRAILING_TRIM = false;
+
+function __cloneLayoutState(src){
+  var out = {};
+  if (!src) return out;
+  if (src.pageOrientation){
+    out.pageOrientation = String(src.pageOrientation).toLowerCase();
+  }
+  function _num(v){
+    if (v === undefined || v === null) return null;
+    var n = parseFloat(v);
+    return isFinite(n) ? n : null;
+  }
+  var w = _num(src.pageWidthPt);
+  if (w !== null) out.pageWidthPt = w;
+  var h = _num(src.pageHeightPt);
+  if (h !== null) out.pageHeightPt = h;
+  var pmSrc = src.pageMarginsPt;
+  if (pmSrc && typeof pmSrc === "object"){
+    var pm = {};
+    var has = false;
+    var keys = ["top","bottom","left","right"];
+    for (var i=0;i<keys.length;i++){
+      var k = keys[i];
+      if (pmSrc.hasOwnProperty(k)){
+        var nv = _num(pmSrc[k]);
+        if (nv !== null){
+          pm[k] = nv;
+          has = true;
+        }
+      }
+    }
+    if (has) out.pageMarginsPt = pm;
+  }
+  return out;
+}
+
+function __layoutsEqual(a, b){
+  function _ori(x){ return (x && typeof x === "string") ? String(x).toLowerCase() : ""; }
+  function _diff(n1, n2){
+    if (n1 === undefined || n1 === null){
+      return !(n2 === undefined || n2 === null);
+    }
+    if (n2 === undefined || n2 === null) return true;
+    var v1 = parseFloat(n1), v2 = parseFloat(n2);
+    if (!isFinite(v1) || !isFinite(v2)) return false;
+    return Math.abs(v1 - v2) > 0.5;
+  }
+  a = a || {};
+  b = b || {};
+  if (_ori(a.pageOrientation) !== _ori(b.pageOrientation)) return false;
+  if (_diff(a.pageWidthPt, b.pageWidthPt)) return false;
+  if (_diff(a.pageHeightPt, b.pageHeightPt)) return false;
+  var keys = ["top","bottom","left","right"];
+  var am = a.pageMarginsPt || {};
+  var bm = b.pageMarginsPt || {};
+  for (var i=0;i<keys.length;i++){
+    var k = keys[i];
+    if (_diff(am[k], bm[k])) return false;
+  }
+  return true;
+}
+
+function __createLayoutFrame(layoutState, linkFromFrame, opts){
+  opts = opts || {};
+  var target = __cloneLayoutState(layoutState);
+  try{
+    if (!target.pageOrientation && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation){
+      target.pageOrientation = __DEFAULT_LAYOUT.pageOrientation;
+    }
+    if ((target.pageWidthPt === undefined || target.pageWidthPt === null) && __DEFAULT_LAYOUT){
+      target.pageWidthPt = __DEFAULT_LAYOUT.pageWidthPt;
+    }
+    if ((target.pageHeightPt === undefined || target.pageHeightPt === null) && __DEFAULT_LAYOUT){
+      target.pageHeightPt = __DEFAULT_LAYOUT.pageHeightPt;
+    }
+    if (!target.pageMarginsPt && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageMarginsPt){
+      target.pageMarginsPt = __cloneLayoutState({pageMarginsPt:__DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
+    }
+    var basePage = (opts.afterPage && opts.afterPage.isValid) ? opts.afterPage : (page && page.isValid ? page : doc.pages[doc.pages.length-1]);
+    var newPage = null;
+    try{
+      try{ doc.allowPageShuffle = true; }catch(_docShuf){}
+      if (basePage && basePage.parent && basePage.parent.isValid){
+        try{ basePage.parent.allowPageShuffle = true; }catch(_spShuf){}
+      }
+    }catch(_prep){}
+    var forceSpread = !!(opts && opts.forceNewSpread);
+    if (forceSpread){
+      try{
+        var targetSpread = null;
+        try{
+          var baseSpread = (basePage && basePage.parent && basePage.parent.isValid) ? basePage.parent : null;
+          if (baseSpread){
+            try{ log("[LAYOUT] base spread pages=" + baseSpread.pages.length + " name=" + baseSpread.name); }catch(__logBase){}
+            targetSpread = doc.spreads.add(LocationOptions.AFTER, baseSpread);
+          } else {
+            targetSpread = doc.spreads.add(LocationOptions.AT_END);
+          }
+        }catch(__baseInfo){
+          try{ targetSpread = doc.spreads.add(LocationOptions.AT_END); }catch(__spreadFallback){}
+        }
+        if (targetSpread && targetSpread.isValid){
+          try{ targetSpread.allowPageShuffle = true; }catch(__spAllow){}
+          try{
+            while(targetSpread.pages.length > 1){
+              targetSpread.pages[1].remove();
+            }
+          }catch(__trimSpread){}
+          if (targetSpread.pages.length > 0){
+            newPage = targetSpread.pages[0];
+          } else {
+            newPage = targetSpread.pages.add();
+          }
+        }
+        if (!newPage || !newPage.isValid){
+          newPage = doc.pages.add(LocationOptions.AT_END);
+        }
+      }catch(eAddForce){
+        try{ newPage = doc.pages.add(LocationOptions.AT_END); }catch(eAddForce2){ newPage = doc.pages.add(); }
+      }
+    } else {
+      try{
+        if (basePage && basePage.isValid){
+          newPage = doc.pages.add(LocationOptions.AFTER, basePage);
+        } else {
+          newPage = doc.pages.add(LocationOptions.AT_END);
+        }
+      }catch(eAdd){
+        try{ newPage = doc.pages.add(LocationOptions.AT_END); }catch(eAdd2){ newPage = doc.pages.add(); }
+      }
+    }
+    if (newPage && newPage.isValid){
+      try{ newPage.appliedMaster = NothingEnum.NOTHING; }catch(_master){}
+      try{
+        var pn = newPage.name;
+        try{ log("[LAYOUT] add page name=" + pn); }catch(_){}
+      }catch(_pn){}
+    }
+    if (newPage && newPage.isValid){
+      try{
+        var w = parseFloat(target.pageWidthPt), h = parseFloat(target.pageHeightPt);
+        if (isFinite(w) && isFinite(h) && w>0 && h>0){
+          if (w>h) target.pageOrientation = "landscape";
+          else if (w<h) target.pageOrientation = "portrait";
+          if (target.pageOrientation === "landscape"){
+            newPage.side = PageSideOptions.SINGLE_SIDED;
+          }
+          newPage.resize(
+            CoordinateSpaces.PASTEBOARD_COORDINATES,
+            AnchorPoint.TOP_LEFT_ANCHOR,
+            ResizeMethods.REPLACING_CURRENT_DIMENSIONS_WITH,
+            [w, h]
+          );
+        }
+      }catch(eResize){ try{ log("[WARN] layout page resize failed: " + eResize); }catch(_){ } }
+      try{
+        var mp = newPage.marginPreferences;
+        var margins = target.pageMarginsPt || {};
+        if (mp){
+          if (isFinite(margins.top)) mp.top = margins.top;
+          if (isFinite(margins.bottom)) mp.bottom = margins.bottom;
+          if (isFinite(margins.left)) mp.left = margins.left;
+          if (isFinite(margins.right)) mp.right = margins.right;
+        }
+      }catch(eMargin){ try{ log("[WARN] layout margin apply failed: " + eMargin); }catch(_){ } }
+      var newFrame = createTextFrameOnPage(newPage, target);
+      try{
+        if (newFrame && newFrame.isValid){
+          log("[LAYOUT] new frame id=" + newFrame.id + " orient=" + (target.pageOrientation||"") + " page=" + (newPage && newPage.name));
+        }
+      }catch(_){}
+      if (newFrame && newFrame.isValid && linkFromFrame && linkFromFrame.isValid){
+        try{ linkFromFrame.nextTextFrame = newFrame; }catch(eLink){ try{ log("[WARN] layout frame link failed: " + eLink); }catch(_){ } }
+      }
+      return { page: newPage, frame: newFrame };
+    }
+  }catch(e){ try{ log("[WARN] create layout frame failed: " + e); }catch(_){ } }
+  return null;
+}
+
+function __ensureLayout(targetState){
+  try{ log("[LAYOUT] ensure request orient=" + (targetState && targetState.pageOrientation) + " width=" + (targetState && targetState.pageWidthPt) + " height=" + (targetState && targetState.pageHeightPt)); }catch(_){}
+  var target = targetState ? __cloneLayoutState(targetState) : __cloneLayoutState(__DEFAULT_LAYOUT);
+  if ((target.pageWidthPt === undefined || target.pageWidthPt === null) && __DEFAULT_LAYOUT){
+    target.pageWidthPt = __DEFAULT_LAYOUT.pageWidthPt;
+  }
+  if ((target.pageHeightPt === undefined || target.pageHeightPt === null) && __DEFAULT_LAYOUT){
+    target.pageHeightPt = __DEFAULT_LAYOUT.pageHeightPt;
+  }
+  if (!target.pageMarginsPt && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageMarginsPt){
+    target.pageMarginsPt = __cloneLayoutState({pageMarginsPt:__DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
+  }
+  if (!__DEFAULT_LAYOUT) __DEFAULT_LAYOUT = __cloneLayoutState(target);
+  if (target.pageOrientation === "landscape" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt < target.pageHeightPt){
+    var tmpW = target.pageWidthPt;
+    target.pageWidthPt = target.pageHeightPt;
+    target.pageHeightPt = tmpW;
+  }else if (target.pageOrientation === "portrait" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt > target.pageHeightPt){
+    var tmpH = target.pageHeightPt;
+    target.pageHeightPt = target.pageWidthPt;
+    target.pageWidthPt = tmpH;
+  }
+  var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
+  var needNewSpread = !!(target.pageOrientation && prevOrientation && target.pageOrientation !== prevOrientation);
+  if (__layoutsEqual(__CURRENT_LAYOUT, target)){
+    try{
+      log("[LAYOUT] ensure skip orient=" + (target.pageOrientation||"") + " width=" + target.pageWidthPt + " height=" + target.pageHeightPt);
+    }catch(_){}
+    try{
+      if (target.pageOrientation && __CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation !== target.pageOrientation){
+        var __skipPayload = __cloneLayoutState(target);
+        __skipPayload.origin = "skip";
+        log("[LAYOUT] still skipping due to same state; page=" + (page && page.name) + " spec=" + JSON.stringify(__skipPayload));
+      }
+    }catch(__skipLog){}
+    return;
+  }
+  var prevFrame = (typeof tf !== "undefined" && tf && tf.isValid) ? tf : null;
+  var pkt = __createLayoutFrame(target, prevFrame, {forceNewSpread: needNewSpread});
+  if (pkt && pkt.frame && pkt.frame.isValid){
+    try{ log("[LAYOUT] ensure apply orient=" + (target.pageOrientation||"") + " page=" + (pkt.page && pkt.page.name) + " frame=" + pkt.frame.id); }catch(_){}
+    page = pkt.page;
+    tf = pkt.frame;
+    story = tf.parentStory;
+    curTextFrame = tf;
+    __CURRENT_LAYOUT = __cloneLayoutState(target);
+    try{ story.recompose(); }catch(_){}
+    try{ app.activeDocument.recompose(); }catch(_){}
+  }else{
+    try{ log("[LAYOUT] ensure failed - cannot allocate frame"); }catch(_){}
+  }
+}
+
+function __ensureLayoutDefault(){
+  var target = null;
+  try{
+    var dp = doc.documentPreferences;
+    var mpSource = null;
+    try{ if (doc.pages.length > 0){ mpSource = doc.pages[0].marginPreferences; } }catch(_){ }
+    if (!mpSource){ try{ mpSource = doc.marginPreferences; }catch(_){ } }
+    target = {
+      pageOrientation: (dp && dp.pageOrientation === PageOrientation.LANDSCAPE) ? "landscape" : "portrait",
+      pageWidthPt: dp ? parseFloat(dp.pageWidth) : null,
+      pageHeightPt: dp ? parseFloat(dp.pageHeight) : null,
+      pageMarginsPt: mpSource ? {
+        top: parseFloat(mpSource.top),
+        bottom: parseFloat(mpSource.bottom),
+        left: parseFloat(mpSource.left),
+        right: parseFloat(mpSource.right)
+      } : null
+    };
+  }catch(_){ }
+  __ensureLayout(target);
+}
+
 function createFootnoteAt(ip, content, idForDisplay){
         if(!ip || !ip.isValid) return null;
         var doc = app.activeDocument, story = ip.parentStory;
