@@ -564,8 +564,8 @@ class ImageSpec:
                 }}
                 log(__imgTag + " pyMeta src={src_for_log} inline={inline_for_log}");
                 // 0) 环境检查
-                log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
-                    + " typeof addImageAtV2=" + (typeof addImageAtV2)
+                log("[DBG] typeof __imgAddFloatingImage=" + (typeof __imgAddFloatingImage)
+                    + " typeof __imgAddImageAtV2=" + (typeof __imgAddImageAtV2)
                     + " typeof __imgNormPath=" + (typeof __imgNormPath));
                 log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
 
@@ -585,8 +585,8 @@ class ImageSpec:
                   log(__imgTag + " dispatch src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
 
                   if(inl==="0"||/^false$/i.test(inl)){{
-                    log("[DBG] dispatch -> addFloatingImage");
-                    var rect=addFloatingImage(tf,story,page,spec);
+                  log("[DBG] dispatch -> __imgAddFloatingImage");
+                    var rect=__imgAddFloatingImage(tf,story,page,spec);
                     if(rect&&rect.isValid) log(__imgTag + " ok (float): " + spec.src);
                     try{{
                       if (__FLOAT_CTX && __FLOAT_CTX.lastTf && __FLOAT_CTX.lastTf.isValid){{
@@ -610,8 +610,8 @@ class ImageSpec:
                     }}catch(_){{
                     }}
                   }} else {{
-                    log("[DBG] dispatch -> addImageAtV2");
-                    var rect=addImageAtV2(ip,spec);
+                  log("[DBG] dispatch -> __imgAddImageAtV2");
+                    var rect=__imgAddImageAtV2(ip,spec);
                     if(rect&&rect.isValid) log(__imgTag + " ok (inline): " + spec.src);
                   }}
                 }} else {{
@@ -746,10 +746,10 @@ class FrameSpec:
               log("[PY][frame] id={frame_id} len={len(self.text)}");
               try {{
                 var spec={spec_js};
-                if (typeof addFloatingFrame === "function") {{
-                  addFloatingFrame(tf, story, page, spec);
+                if (typeof __imgAddFloatingFrame === "function") {{
+                  __imgAddFloatingFrame(tf, story, page, spec);
                 }} else {{
-                  log("[FRAME][WARN] addFloatingFrame missing; fallback insert text only (typeof=" + (typeof addFloatingFrame) + ")");
+                  log("[FRAME][WARN] addFloatingFrame missing; fallback insert text only (typeof=" + (typeof __imgAddFloatingFrame) + ")");
                   try {{
                     var __ip = (typeof _safeIP==="function") ? _safeIP(tf) : null;
                     if (!__ip || !__ip.isValid) {{
