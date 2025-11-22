@@ -372,3 +372,830 @@ function addImageAtV2(ip, spec) {
       }
       return rect;
     }
+
+function addFloatingImage(tf, story, page, spec){
+  log("[IMGFLOAT6] enter src="+(spec&&spec.src)+" w="+(spec&&spec.w)+" h="+(spec&&spec.h));
+  function _toPtLocal(v){
+    var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
+    if (/mm$/i.test(s)) return parseFloat(s)*2.83464567;
+    if (/pt$/i.test(s)) return parseFloat(s);
+    if (/px$/i.test(s)) return parseFloat(s)*0.75;
+    if (s==="") return 0;
+    var n = parseFloat(s); return isNaN(n)?0:n*0.75;
+  }
+  function _cloneSpec(base){
+    var out = {};
+    if (!base || typeof base !== "object") return out;
+    for (var key in base){
+      try{ out[key] = base[key]; }catch(_){}
+    }
+    return out;
+  }
+  function _fallbackToClassic(reason, anchorIndex, rectRef){
+    try{ log("[IMGFLOAT6][FALLBACK] " + reason); }catch(_){}
+    try{
+      if (rectRef && rectRef.isValid){
+        rectRef.remove();
+      }
+    }catch(_){}
+    var ipFallback = null;
+    try{
+      if (tf && tf.isValid && tf.insertionPoints && tf.insertionPoints.length){
+        ipFallback = tf.insertionPoints[-1];
+      }
+    }catch(_){}
+    if ((!ipFallback || !ipFallback.isValid) && story && story.isValid){
+      try{
+        var safeIdx = (typeof anchorIndex === "number")
+          ? Math.max(0, Math.min(anchorIndex, story.insertionPoints.length-1))
+          : story.insertionPoints.length-1;
+        ipFallback = story.insertionPoints[safeIdx];
+      }catch(_){}
+    }
+    if (!ipFallback || !ipFallback.isValid){
+      try{
+        if (story && story.isValid && story.insertionPoints.length){
+          ipFallback = story.insertionPoints[-1];
+        }
+      }catch(_){}
+    }
+    var fallbackSpec = _cloneSpec(spec);
+    fallbackSpec.forceBlock = true;
+    fallbackSpec.inline = "0";
+    fallbackSpec.wrap = fallbackSpec.wrap || "none";
+    fallbackSpec.__floatFallback = (fallbackSpec.__floatFallback || 0) + 1;
+    return addImageAtV2(ipFallback, fallbackSpec);
+  }
+
+  var wordSeq = null;
+  try{
+    if (spec && spec.wordPageSeq){
+      var tmpSeq = parseInt(spec.wordPageSeq, 10);
+      if (!isNaN(tmpSeq) && isFinite(tmpSeq)) wordSeq = tmpSeq;
+    }
+  }catch(_){}
+  try{
+    if (!tf || !tf.isValid) { log("[IMGFLOAT6][ERR] tf invalid"); return null; }
+    var f = _normPath(spec && spec.src);
+    log("[IMGFLOAT6] resolved file="+(f?f.fsName:"NA"));
+    if(!f || !f.exists){ log("[IMGFLOAT6][ERR] file missing: "+(spec&&spec.src)); return null; }
+
+    function _lowerFlag(v){
+      var s = String(v||"");
+      return s ? s.toLowerCase() : "";
+    }
+
+    function _isPageAnchored(posHref, posVref){
+      try{
+        if (!(spec && spec.forceBlock)) return false;
+      }catch(_){ return false; }
+      var h = _lowerFlag(posHref);
+      var v = _lowerFlag(posVref);
+      var pageRefs = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
+      return !!(pageRefs[h] && pageRefs[v]);
+    }
+
+    function _placeOnPage(pageObj, stObj, anchorIdx, fileObj){
+      if (!pageObj || !pageObj.isValid){
+        log("[IMGFLOAT6][ERR] page invalid for page-level image");
+        return null;
+      }
+      var pb = pageObj.bounds || [0,0,0,0];
+      var mp = pageObj.marginPreferences || {};
+      var pageTop = pb[0], pageLeft = pb[1], pageBottom = pb[2], pageRight = pb[3];
+      var marginTop = parseFloat(mp.top)||0;
+      var marginBottom = parseFloat(mp.bottom)||0;
+      var marginLeft = parseFloat(mp.left)||0;
+      var marginRight = parseFloat(mp.right)||0;
+      var innerLeft = pageLeft + marginLeft;
+      var innerRight = pageRight - marginRight;
+      var innerTop = pageTop + marginTop;
+      var innerBottom = pageBottom - marginBottom;
+      var innerWidth = Math.max(1, innerRight - innerLeft);
+      var innerHeight = Math.max(1, innerBottom - innerTop);
+
+      var pageWidth = pageRight - pageLeft;
+      var pageHeight = pageBottom - pageTop;
+      var wordPageWidth = _toPtLocal(spec && spec.wordPageWidth);
+      var wordPageHeight = _toPtLocal(spec && spec.wordPageHeight);
+
+      var posHrefRaw = _lowerFlag(spec && spec.posHref);
+      var posVrefRaw = _lowerFlag(spec && spec.posVref);
+      var offXP = _toPtLocal(spec && spec.offX) || 0;
+      var offYP = _toPtLocal(spec && spec.offY) || 0;
+      if (wordPageWidth && wordPageWidth > 0){
+        offXP = offXP * (pageWidth / wordPageWidth);
+      }
+      if (wordPageHeight && wordPageHeight > 0){
+        offYP = offYP * (pageHeight / wordPageHeight);
+      }
+      var pageRefKeys = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
+      var useInnerH = !!pageRefKeys[posHrefRaw];
+      var useInnerV = !!pageRefKeys[posVrefRaw] || posVrefRaw==="paragraph";
+
+      var baseX = useInnerH ? innerLeft : pageLeft;
+      if (posHrefRaw==="column") baseX = pageLeft + marginLeft;
+      var baseY = useInnerV ? innerTop : pageTop;
+
+      var maxWidth = useInnerH ? innerWidth : (pageRight - pageLeft);
+      var maxHeight = useInnerV ? innerHeight : (pageBottom - pageTop);
+      var targetW = wPt>0 ? Math.min(wPt, maxWidth) : maxWidth;
+      var targetH = hPt>0 ? Math.min(hPt, maxHeight) : maxHeight;
+      if (targetW <= 0) targetW = maxWidth;
+      if (targetH <= 0) targetH = maxHeight;
+
+      var guardL = Math.max(0, _toPtLocal(spec && spec.distL) || 0);
+      var guardR = Math.max(0, _toPtLocal(spec && spec.distR) || 0);
+      var guardTotal = guardL + guardR;
+      if (guardTotal > 0){
+        var availableW = Math.max(12, maxWidth - guardTotal);
+        if (targetW > availableW) targetW = availableW;
+      }
+
+      var left = baseX + offXP;
+      var top = baseY + offYP;
+      var maxBottom = baseY + maxHeight;
+
+      var innerLimitLeft = (useInnerH ? innerLeft : pageLeft) + guardL;
+      var innerLimitRight = (useInnerH ? innerRight : pageRight) - guardR;
+      if (innerLimitRight <= innerLimitLeft){
+        innerLimitRight = innerLimitLeft + Math.max(10, targetW);
+      }
+      if (left < innerLimitLeft) left = innerLimitLeft;
+      if (left > innerLimitRight - targetW) left = Math.max(innerLimitLeft, innerLimitRight - targetW);
+      if (top < pageTop) top = pageTop;
+      if (targetH > (maxBottom - top)) targetH = Math.max(10, maxBottom - top);
+      var right = Math.min(innerLimitRight, left + targetW);
+      targetW = Math.max(10, right - left);
+      var bottom = top + targetH;
+
+      var rect = pageObj.rectangles.add();
+      try{ rect.strokeWeight = 0; rect.fillOpacity = 100; }catch(_){}
+      rect.geometricBounds = [top, left, bottom, right];
+      var placed = null;
+      try{
+        placed = rect.place(fileObj);
+      }catch(ePlacePage){
+        log("[IMGFLOAT6][ERR] page place failed: "+ePlacePage);
+        try{ rect.remove(); }catch(__){}
+        return null;
+      }
+      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)){
+        try{ rect.remove(); }catch(__){}
+        log("[IMGFLOAT6][ERR] page place invalid result");
+        return null;
+      }
+      try{ rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); }catch(_){}
+      _applyFloatTextWrap(rect);
+      try{
+        log("[IMGFLOAT6][PAGE] gb="+rect.geometricBounds+" w="+targetW.toFixed(2)+" h="+targetH.toFixed(2)
+            +" offX="+offXP.toFixed(2)+" offY="+offYP.toFixed(2)+" page="+(pageObj.name||"NA"));
+      }catch(_){}
+      try{ rect.label = "PAGE-FLOAT"; }catch(_){}
+
+      // 在 story 中依旧插入段落分隔，避免下一段落堆叠
+      try{
+        var aft1 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
+          ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+1)]
+          : null;
+        if (aft1 && aft1.isValid) aft1.contents = "\r";
+        var aft2 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
+          ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+2)]
+          : null;
+        if (aft2 && aft2.isValid) aft2.contents = "\u200B";
+        try{ stObj.recompose(); }catch(__re){}
+      }catch(_){}
+
+      return rect;
+    }
+
+    function _applyFloatTextWrap(rectObj){
+      try{
+        if (!rectObj || !rectObj.isValid) return;
+        var tw = rectObj.textWrapPreferences;
+        if (!tw) return;
+        var wrapKey = _lowerFlag(spec && spec.wrap);
+        var wrapMode = TextWrapModes.NONE;
+        if (wrapKey === "wrapsquare" || wrapKey === "square"){
+          wrapMode = TextWrapModes.BOUNDING_BOX_TEXT_WRAP;
+        } else if (wrapKey === "wraptight" || wrapKey === "tight" || wrapKey === "wrapthrough"){
+          wrapMode = TextWrapModes.OBJECT_SHAPE_TEXT_WRAP;
+        } else if (wrapKey === "wraptopbottom" || wrapKey === "topbottom"){
+          wrapMode = TextWrapModes.JUMP_OBJECT_TEXT_WRAP;
+        } else if (wrapKey === "wrapbehind"){
+          wrapMode = TextWrapModes.NONE;
+        }
+        tw.textWrapMode = wrapMode;
+        if (wrapMode !== TextWrapModes.NONE){
+          var distT = _toPtLocal(spec && spec.distT) || 0;
+          var distB = _toPtLocal(spec && spec.distB) || 0;
+          var distL = _toPtLocal(spec && spec.distL);
+          var distR = _toPtLocal(spec && spec.distR);
+          if (!distL && distL !== 0) distL = 12;
+          if (!distR && distR !== 0) distR = 12;
+          tw.textWrapOffset = [distT, distL, distB, distR];
+        }
+      }catch(_){}
+    }
+
+    var wPt=_toPtLocal(spec&&spec.w), hPt=_toPtLocal(spec&&spec.h);
+    var posH=String((spec&&spec.posH)||"center").toLowerCase();
+    var alignMode=String((spec&&spec.align)||"").toLowerCase();
+    if (!alignMode){ alignMode = posH || "center"; }
+    var wrap=String((spec&&spec.wrap)||"none").toLowerCase();
+    var spB=_toPtLocal(spec&&spec.spaceBefore)||0;
+    var spA=_toPtLocal(spec&&spec.spaceAfter); if (spA===0) spA = 2;
+    var distT=_toPtLocal(spec&&spec.distT)||0, distB=_toPtLocal(spec&&spec.distB)||0,
+        distL=_toPtLocal(spec&&spec.distL)||0, distR=_toPtLocal(spec&&spec.distR)||0;
+
+    var st = tf.parentStory;
+    try{
+      var endIP=tf.insertionPoints[-1];
+      var prev=(endIP&&endIP.isValid&&endIP.index>0)?st.insertionPoints[endIP.index-1]:null;
+      var prevIsCR=false; try{ prevIsCR=(prev&&String(prev.contents)==="\r"); }catch(_){}
+      if(!prevIsCR){ endIP.contents="\r"; try{ st.recompose(); }catch(__){} }
+    }catch(_){}
+      var ip = null;
+      try{
+        if (tf && tf.isValid){
+          if (typeof _safeIP === "function"){
+            ip = _safeIP(tf);
+          }
+          if (!ip || !ip.isValid){
+            ip = tf.insertionPoints[-1];
+          }
+        }
+      }catch(_){}
+      if ((!ip || !ip.isValid) && st && st.isValid){
+        try{ ip = st.insertionPoints[-1]; }catch(__){}
+      }
+      try{
+        var ipIdx = "NA";
+        if (ip && ip.isValid) ipIdx = ip.index;
+        log("[IMGFLOAT6][DBG] dispatch ip.index=" + ipIdx);
+      }catch(_){}
+    if (!ip || !ip.isValid) { log("[IMGFLOAT6][ERR] invalid ip"); return null; }
+    var anchorIndex = ip.index;
+    var posHrefRaw = _lowerFlag(spec && spec.posHref);
+    var posVrefRaw = _lowerFlag(spec && spec.posVref);
+    var posVRaw = _lowerFlag(spec && spec.posV);
+    try{
+      log("[IMGFLOAT6][DBG] anchorFlags posHref="+posHrefRaw+" posVref="+posVrefRaw+" posV="+posVRaw+" inline="+(spec&&spec.inline));
+    }catch(_){}
+    var isPageAnchor = _isPageAnchored(posHrefRaw, posVrefRaw);
+    try{
+      log("[IMGFLOAT6][DBG] isPageAnchor="+isPageAnchor);
+    }catch(_){}
+
+    function _ensureNextPageFrame(basePage){
+      try{
+        if (!basePage || !basePage.isValid || typeof __createLayoutFrame !== "function") return null;
+        var pkt = __createLayoutFrame(__CURRENT_LAYOUT, tf, {afterPage: basePage, forceBreak: true});
+        if (pkt && pkt.frame && pkt.page){
+          page  = pkt.page;
+          tf    = pkt.frame;
+          story = tf.parentStory;
+          curTextFrame = tf;
+          try{
+            log("[IMGFLOAT6][PAGE] newFrame=" + tf.id + " page=" + (page?page.name:"NA"));
+          }catch(_){}
+          try{
+            __FLOAT_CTX.lastTf = tf;
+            __FLOAT_CTX.lastPage = page;
+          }catch(_){}
+          return pkt;
+        }
+      }catch(_){}
+      return null;
+    }
+
+    if (isPageAnchor){
+      var targetPage = page;
+      try{
+        if (!targetPage || !targetPage.isValid){
+          var docPages = app.activeDocument.pages;
+          if (docPages.length){
+            targetPage = docPages[0];
+          }
+        }
+        if (!targetPage || !targetPage.isValid){
+          targetPage = (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid) ? tf.parentPage : null;
+        }
+      }catch(_){}
+      var pageRect = _placeOnPage(targetPage, st, anchorIndex, f);
+          if (pageRect){
+            try{
+              var thisPage = (pageRect.parentPage && pageRect.parentPage.isValid) ? pageRect.parentPage : targetPage;
+              if (thisPage && thisPage.isValid) page = thisPage;
+              try{
+                __recordWordSeqPage(wordSeq, thisPage);
+              }catch(_){}
+              try{
+                if (__FLOAT_CTX){
+                  if (!__FLOAT_CTX.imgAnchors) __FLOAT_CTX.imgAnchors = {};
+                  var anchorHintKey = spec.anchorId || spec.docPrId || "";
+                  if (anchorHintKey){
+                    __FLOAT_CTX.imgAnchors[anchorHintKey] = {
+                      page: page,
+                      anchorX: (ip && ip.isValid) ? ip.horizontalOffset : null,
+                      anchorY: (ip && ip.isValid) ? ip.baseline : null,
+                      wordSeq: wordSeq
+                    };
+                    try{
+                      log("[IMGFLOAT6][DBG] store ctx key=" + anchorHintKey + " page=" + (page?page.name:"NA"));
+                    }catch(_){}
+                  }
+            }
+          }catch(_){}
+        }catch(_){}
+        try{
+          if (st && st.isValid){
+            var afterPara = st.insertionPoints[Math.min(st.insertionPoints.length-1, anchorIndex+1)];
+            if (afterPara && afterPara.isValid) afterPara.contents = "\r";
+            var ztail = st.insertionPoints[Math.min(st.insertionPoints.length-1, anchorIndex+2)];
+            if (ztail && ztail.isValid) ztail.contents = "\u200B";
+            try{ st.recompose(); }catch(__re){}
+          }
+        }catch(_){}
+        var nextPkt = _ensureNextPageFrame(page);
+        if (nextPkt && nextPkt.frame && nextPkt.page){
+          page = nextPkt.page;
+          tf = nextPkt.frame;
+          story = tf.parentStory;
+          curTextFrame = tf;
+          try{
+            if (typeof _safeIP === "function"){
+              ip = _safeIP(tf);
+            }
+            if ((!ip || !ip.isValid) && tf && tf.isValid && tf.insertionPoints && tf.insertionPoints.length){
+              ip = tf.insertionPoints[-1];
+            }
+          }catch(_){}
+        }
+        try{ __LAST_IMG_ANCHOR_IDX = anchorIndex; }catch(_){}
+        return pageRect;
+      }
+      // 若页面放置失败，继续走原浮动逻辑
+    }
+
+      var placed = null;
+      try { placed = ip.place(f); } catch(ePl){ log("[IMGFLOAT6][ERR] place failed(ip): " + ePl); return null; }
+      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[IMGFLOAT6][ERR] place returned invalid"); return null; }
+
+      var item = placed[0], rect = null, cname = "";
+    try { cname = String(item.constructor.name); } catch(_){}
+    if (cname === "Rectangle") rect = item;
+    else {
+      try {
+        var cur = item;
+        for (var g=0; g<6 && cur && cur.isValid; g++){
+          var nm=""; try{ nm=String(cur.constructor.name); }catch(__){}
+          if (nm==="Rectangle"){ rect=cur; break; }
+          cur = cur.parent;
+        }
+      } catch(_){}
+    }
+    if (!rect || !rect.isValid) { log("[IMGFLOAT6][ERR] no rectangle after place"); return null; }
+
+    try {
+      var _aos = rect.anchoredObjectSettings;
+      if (_aos && _aos.isValid){
+        _aos.anchoredPosition = AnchorPosition.ABOVE_LINE;
+        _aos.anchorPoint      = AnchorPoint.TOP_LEFT_ANCHOR;
+        try{ _aos.lockPosition = false; }catch(_){}
+      }
+    } catch(_){}
+    _applyFloatTextWrap(rect);
+    try{ rect.fittingOptions.autoFit=false; rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
+    try{
+      var _imgCount = null, _gCount = null, _cid = null, _pid = null;
+      try{ _imgCount = rect.images ? rect.images.length : "NA"; }catch(__){ _imgCount="ERR"; }
+      try{ _gCount = rect.graphics ? rect.graphics.length : "NA"; }catch(___){ _gCount="ERR"; }
+      try{ _cid = rect.id; }catch(__4){}
+      try{ _pid = item && item.isValid ? item.id : "NA"; }catch(__5){}
+      log("[IMGFLOAT6][DBG] container id="+_cid+" from item id="+_pid+" images="+_imgCount+" graphics="+_gCount);
+    }catch(_){}
+
+    try { var _gbF = rect.geometricBounds; var _wF = (_gbF[3]-_gbF[1]).toFixed(2), _hF = (_gbF[2]-_gbF[0]).toFixed(2);
+          log("[IMGFLOAT6][FINAL] gb=["+_gbF.join(",")+"] W="+_wF+" H="+_hF); } catch(_){}
+    log("[IMGFLOAT6] place() ok");
+
+    try{
+      try{ rect.fit(FitOptions.CENTER_CONTENT);}catch(_){}
+      try{ rect.fittingOptions.autoFit=false; }catch(_){}
+
+      var holder = null;
+      try { if (rect.parentTextFrames && rect.parentTextFrames.length) holder = rect.parentTextFrames[0]; } catch(_){}
+      if ((!holder || !holder.isValid) && tf && tf.isValid) holder = tf;
+
+      var innerInfo = _holderInnerBounds(holder);
+      var innerW = innerInfo.innerW;
+      var innerH = innerInfo.innerH;
+      try{
+        log("[IMGFLOAT6][DBG] holderInner id=" + (holder && holder.isValid ? holder.id : "NA")
+            + " innerW=" + innerW.toFixed(2) + " innerH=" + innerH.toFixed(2));
+      }catch(_){}
+      if (innerW <= 0){
+        try{
+          var hb = holder ? holder.geometricBounds : null;
+          var inset = holder ? holder.textFramePreferences.insetSpacing : null;
+          var li = (inset && inset.length>=2)? inset[1] : 0;
+          var ri = (inset && inset.length>=4)? inset[3] : 0;
+          innerW = (hb ? (hb[3]-hb[1]) : 0) - li - ri;
+        }catch(_){}
+      }
+
+
+      // 优先使用单栏宽度（多栏情况下用 textColumnFixedWidth，保证与 Word 类似的列宽约束）
+      try {
+        var _colW = (holder && holder.isValid) ? holder.textFramePreferences.textColumnFixedWidth : 0;
+        var _colN = (holder && holder.isValid) ? holder.textFramePreferences.textColumnCount       : 1;
+        if (_colN > 1 && _colW > 0) innerW = _colW;
+      } catch(_){ }
+try{ st.recompose(); }catch(_){ }
+var gb = null;
+function _rectifyCandidate(obj){
+  if (!obj || !obj.isValid) return null;
+  var nm = "";
+  try{ nm = String(obj.constructor.name); }catch(_){}
+  if (nm === "Rectangle") return obj;
+  try{
+    if (obj.parent && obj.parent.isValid && String(obj.parent.constructor.name) === "Rectangle") {
+      return obj.parent;
+    }
+  }catch(_){}
+  try{
+    if (obj.graphics && obj.graphics.length){
+      var g = obj.graphics[0];
+      if (g && g.isValid && g.parent && g.parent.isValid && String(g.parent.constructor.name) === "Rectangle") {
+        return g.parent;
+      }
+    }
+  }catch(_){}
+  return null;
+}
+
+function _setRect(candidate, tag){
+  if (!candidate || !candidate.isValid) return false;
+  rect = candidate;
+  try{ log("[IMGFLOAT6][RECT] " + tag); }catch(_){}
+  return true;
+}
+function _ensureRectValid(_retry){
+  var candidate = _rectifyCandidate(rect);
+  if (candidate && _setRect(candidate, "reuse")){ return true; }
+
+  try{
+    var p0 = (placed && placed.length) ? placed[0] : null;
+    candidate = _rectifyCandidate(p0);
+    if (candidate && _setRect(candidate, "from placed[0]")){ return true; }
+  }catch(_){}
+
+  try{
+    if (placed && placed.length){
+      for (var ii=0; ii<placed.length; ii++){
+        candidate = _rectifyCandidate(placed[ii]);
+        if (candidate && _setRect(candidate, "from placed["+ii+"]")){ return true; }
+      }
+    }
+  }catch(_){}
+
+  try{
+    if (st && st.isValid && typeof anchorIndex === "number"){
+      var idx = Math.min(Math.max(anchorIndex, 0), st.insertionPoints.length-1);
+      var anchorIP = st.insertionPoints[idx];
+      if (anchorIP && anchorIP.isValid){
+        try{
+          var ao = anchorIP.anchoredObjects;
+          if (ao && ao.length){
+            for (var jj=0;jj<ao.length;jj++){
+              candidate = _rectifyCandidate(ao[jj]);
+              if (candidate && _setRect(candidate, "from anchoredObjects["+jj+"]")){ return true; }
+            }
+          }
+        }catch(_){}
+        try{
+          var recs = anchorIP.rectangles;
+          if (recs && recs.length){
+            for (var kk=0;kk<recs.length;kk++){
+              candidate = _rectifyCandidate(recs[kk]);
+              if (candidate && _setRect(candidate, "from ip.rectangles["+kk+"]")){ return true; }
+            }
+          }
+        }catch(_){}
+      }
+    }
+  }catch(_){}
+
+  try{
+    if ((!rect || !rect.isValid) && st && st.isValid){
+      st.recompose();
+      try{ app.activeDocument.recompose(); }catch(__){}
+      candidate = _rectifyCandidate(rect);
+      if (candidate && _setRect(candidate, "after recompose")){ return true; }
+    }
+  }catch(_){}
+
+  if ((!rect || !rect.isValid) && !_retry){
+    try{
+      log("[IMGFLOAT6][RECT] wait redraw");
+    }catch(_){}
+    try{ app.waitForRedraw(); }catch(__){}
+    return _ensureRectValid(true);
+  }
+
+  return !!(rect && rect.isValid);
+}
+if (_ensureRectValid()){
+  try { gb = rect.geometricBounds; }
+  catch(eGB){
+    if (_ensureRectValid()){
+      try { gb = rect.geometricBounds; } catch(__){}
+    }
+  }
+}
+if (!gb){
+  try{
+    log('[IMGFLOAT6][DBG] gb invalid, use fallback sizing');
+  }catch(_){}
+  try{
+    var dbgAbsW = null, dbgAbsH = null, dbgRectValid = (rect && rect.isValid);
+    try{ dbgAbsW = rect.width; dbgAbsH = rect.height; }catch(__){}
+    log('[IMGFLOAT6][DBG] before fallback rectValid=' + dbgRectValid
+        + ' width=' + (dbgAbsW||'NA') + ' height=' + (dbgAbsH||'NA')
+        + ' absScale=' + (rect?rect.absoluteHorizontalScale:'NA') + '/'
+        + (rect?rect.absoluteVerticalScale:'NA'));
+  }catch(___){}
+}
+      var curW = (gb ? Math.max(1e-6, gb[3]-gb[1]) : (wPt>0?wPt:innerW>0?innerW:(rect&&rect.isValid&&rect.width?rect.width:1)));
+      var curH = (gb ? Math.max(1e-6, gb[2]-gb[0]) : (hPt>0?hPt:(rect&&rect.isValid&&rect.height?rect.height:(curW>0?curW:1))));
+      var ratio = curW / Math.max(1e-6, curH);
+
+      var targetW = curW;
+      if (wPt>0){
+        targetW = wPt;
+        if (innerW>0) targetW = Math.min(targetW, innerW);
+      } else if (innerW>0){
+        targetW = Math.min(curW, innerW);
+      }
+      var targetH = curH;
+      if (hPt>0 && wPt>0){
+        targetH = hPt;
+      } else if (hPt>0){
+        targetH = hPt;
+        if (wPt<=0) targetW = targetH * (ratio || 1);
+      } else {
+        targetH = targetW / (ratio || 1);
+      }
+
+      var targetRatio = targetW / Math.max(1e-6, targetH);
+      if (innerH > 0 && targetH > innerH){
+        targetH = innerH;
+        targetW = targetH * targetRatio;
+      }
+      if (innerW > 0 && targetW > innerW){
+        targetW = innerW;
+        targetH = targetW / Math.max(1e-6, targetRatio);
+      }
+
+      var pageInnerH = 0;
+      try{
+        if (page && page.isValid){
+          var pb = page.bounds;
+          var mp = page.marginPreferences;
+          if (pb && pb.length === 4){
+            var topMargin = (mp && mp.top) ? parseFloat(mp.top) || 0 : 0;
+            var bottomMargin = (mp && mp.bottom) ? parseFloat(mp.bottom) || 0 : 0;
+            pageInnerH = (pb[2]-pb[0]) - topMargin - bottomMargin;
+          }
+        }
+        if (pageInnerH > 0 && targetH > pageInnerH){
+          targetH = pageInnerH;
+          targetW = targetH * targetRatio;
+        }
+      }catch(_pageClamp){}
+      try{
+        log("[IMGFLOAT6][DBG] targetClamp W=" + targetW.toFixed(2)
+            + " H=" + targetH.toFixed(2)
+            + " pageInnerH=" + pageInnerH.toFixed(2)
+            + " ratio=" + targetRatio.toFixed(2));
+      }catch(_targetLog){}
+
+      try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
+      var _graphic = null;
+      try{
+        if (rect.images && rect.images.length) _graphic = rect.images[0];
+        else if (rect.graphics && rect.graphics.length) _graphic = rect.graphics[0];
+      }catch(_){}
+      if (_graphic && _graphic.isValid){
+        try{ _graphic.absoluteHorizontalScale = 100; }catch(__){}
+        try{ _graphic.absoluteVerticalScale = 100; }catch(__){}
+      }
+      var _boundsApplied = false;
+      var _boundsErr = null;
+      if (gb){
+        try{
+          rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
+          _boundsApplied = true;
+        }catch(eBounds){
+          _boundsErr = eBounds;
+        }
+      }
+      if (!_boundsApplied){
+        try{
+          var _holderGB = holder && holder.isValid ? holder.geometricBounds : null;
+          if (_holderGB && _holderGB.length === 4){
+            var topBase = _holderGB[0] + spB;
+            var leftInset = (holder.textFramePreferences && holder.textFramePreferences.insetSpacing && holder.textFramePreferences.insetSpacing.length>=2)
+                              ? holder.textFramePreferences.insetSpacing[1] : 0;
+            var leftBase = _holderGB[1] + leftInset;
+            try{
+              rect.geometricBounds = [topBase, leftBase, topBase + targetH, leftBase + targetW];
+              _boundsApplied = true;
+            }catch(__gbManual){
+              _boundsErr = __gbManual;
+            }
+          }
+        }catch(__manualBounds){}
+      }
+      if (!_boundsApplied){
+        if (_boundsErr){
+          try{
+            log("[IMGFLOAT6][FALLBACK] setBounds fallback: " + _boundsErr);
+          }catch(_){}
+        }
+        try{
+          var _aos = rect.anchoredObjectSettings;
+          if (_aos && _aos.isValid){
+            try{ _aos.anchoredObjectSizeOption = AnchorSize.HEIGHT_AND_WIDTH; }catch(__){}
+            try{ _aos.width  = targetW; }catch(__){}
+            try{ _aos.height = targetH; }catch(__){}
+            _boundsApplied = true;
+          }
+        }catch(_){}
+      }
+      if (_boundsApplied){
+        try{ st.recompose(); }catch(_){}
+        try{ app.waitForRedraw(); }catch(_){}
+      }
+      if (!_boundsApplied){
+        try{
+          var scaleX = targetW / Math.max(1e-6, curW);
+          var scaleY = targetH / Math.max(1e-6, curH);
+          rect.absoluteHorizontalScale = scaleX * 100;
+          rect.absoluteVerticalScale   = scaleY * 100;
+        }catch(_){}
+      }
+      try { rect.fit(FitOptions.CENTER_CONTENT); } catch(_){ }
+      try{
+        var _gbPath = rect.geometricBounds;
+        if (_gbPath && _gbPath.length === 4 && rect.paths && rect.paths.length){
+          var _top = _gbPath[0], _left = _gbPath[1], _bottom = _gbPath[2], _right = _gbPath[3];
+          rect.paths[0].entirePath = [
+            [_left, _top],
+            [_left, _bottom],
+            [_right, _bottom],
+            [_right, _top]
+          ];
+        }
+      }catch(_){}
+      try{
+        log('[IMGFLOAT6][DBG] after fallback width=' + (rect.width||'NA')
+            + ' height=' + (rect.height||'NA')
+            + ' absScale=' + (rect.absoluteHorizontalScale||'NA') + '/'
+            + (rect.absoluteVerticalScale||'NA'));
+      }catch(_){}
+      try{
+        rect.frameFittingOptions.leftCrop   = 0;
+        rect.frameFittingOptions.rightCrop  = 0;
+        rect.frameFittingOptions.topCrop    = 0;
+        rect.frameFittingOptions.bottomCrop = 0;
+      }catch(_){}
+      try{
+        var host = rect.parent;
+        var hop = 0;
+        var gbFinal = null;
+        try{ gbFinal = rect.geometricBounds; }catch(__gbFinal){}
+        while (host && host.isValid && hop < 3){
+          var cname="";
+          try{ cname = String(host.constructor.name); }catch(__c){ cname=""; }
+          try{ log("[IMGFLOAT6][DBG] host chain level="+hop+" name="+cname); }catch(__hc){}
+          if (cname === "Rectangle" || cname === "Polygon"){
+            try{
+              if (gbFinal){
+                host.geometricBounds = [gbFinal[0], gbFinal[1], gbFinal[2], gbFinal[3]];
+                if (host.paths && host.paths.length){
+                  host.paths[0].entirePath = [
+                    [gbFinal[1], gbFinal[0]],
+                    [gbFinal[1], gbFinal[2]],
+                    [gbFinal[3], gbFinal[2]],
+                    [gbFinal[3], gbFinal[0]]
+                  ];
+                }
+              }
+              host.frameFittingOptions.leftCrop   = 0;
+              host.frameFittingOptions.rightCrop  = 0;
+              host.frameFittingOptions.topCrop    = 0;
+              host.frameFittingOptions.bottomCrop = 0;
+            }catch(__adj){}
+            try{ log("[IMGFLOAT6][DBG] shrink host level="+hop+" name="+cname); }catch(__log){}
+          }
+          try{ host = host.parent; }catch(__p){ host = null; }
+          hop++;
+        }
+      }catch(__host){}
+
+      try{
+        var alignInfo = _alignFloatingRect(rect, holder, innerW, alignMode);
+        if (alignInfo){
+          log("[IMGFLOAT6][ALIGN] align="+alignInfo.align+" offset="+alignInfo.offset.toFixed(2)
+              + " innerW="+(alignInfo.innerW||0)+" holder="+(alignInfo.holder?alignInfo.holder.id:'NA'));
+        }
+      }catch(_){}
+
+      try { var _gb2 = rect.geometricBounds; var _w2 = (_gb2[3]-_gb2[1]).toFixed(2), _h2 = (_gb2[2]-_gb2[0]).toFixed(2);
+            log("[IMGFLOAT6][POST] gb="+_gb2+" W="+_w2+" H="+_h2+" innerW="+(innerW||0)); } catch(_){
+        try{
+          app.waitForRedraw();
+          var _gb3 = rect.geometricBounds;
+          var _w3 = (_gb3[3]-_gb3[1]).toFixed(2), _h3 = (_gb3[2]-_gb3[0]).toFixed(2);
+          log("[IMGFLOAT6][POST2] gb="+_gb3+" W="+_w3+" H="+_h3+" innerW="+(innerW||0));
+        }catch(__){
+          try{ log("[IMGFLOAT6][POST2] gb still invalid"); }catch(___){}
+        }
+      }
+
+      log("[IMGFLOAT6] size W=" + (targetW||0).toFixed(2)
+          + " H=" + (targetH||0).toFixed(2)
+          + " innerW=" + (innerW||0).toFixed(2));
+      var finalGb = null;
+      try{ finalGb = rect.geometricBounds; }catch(_){}
+      if (!finalGb || finalGb.length !== 4){
+        return _fallbackToClassic("geometricBounds invalid", anchorIndex, rect);
+      }
+    } catch(eSz){ log("[IMGFLOAT6][DBG] size "+eSz); }
+
+    try{
+      var p = (st && st.isValid) ? st.insertionPoints[anchorIndex].paragraphs[0] : null;
+      if(p && p.isValid){
+        p.justification=(posH==="right")?Justification.RIGHT_ALIGN:(posH==="center"?Justification.CENTER_ALIGN:Justification.LEFT_ALIGN);
+        p.spaceBefore=spB; p.spaceAfter=spA;
+        p.keepOptions.keepWithNext=false; p.keepOptions.keepLinesTogether=false;
+      }
+    }catch(_){}
+
+    try{
+      var aft1 = st.insertionPoints[Math.min(st.insertionPoints.length-1, anchorIndex+1)];
+      if(aft1 && aft1.isValid){ aft1.contents = "\r"; }
+      var aft2 = st.insertionPoints[Math.min(st.insertionPoints.length-1, anchorIndex+2)];
+      if(aft2 && aft2.isValid){ aft2.contents = "\u200B"; }
+      try{ st.recompose(); }catch(__){}
+      try{
+        var holderNext = (aft2 && aft2.isValid && aft2.parentTextFrames && aft2.parentTextFrames.length)
+                           ? aft2.parentTextFrames[0] : null;
+        if (holderNext && holderNext.isValid){
+          tf = holderNext; curTextFrame = holderNext; story = holderNext.parentStory;
+        }
+      }catch(__){}
+    }catch(_){}
+
+    try{
+      var _tfLog = (rect.parentTextFrames && rect.parentTextFrames.length) ? rect.parentTextFrames[0] : tf;
+      var _pgLog = (_tfLog && _tfLog.isValid) ? _tfLog.parentPage : null;
+      var _gbNow = rect.geometricBounds;
+      log("[IMGFLOAT6] placed tf="+(_tfLog?_tfLog.id:"NA")+" page="+(_pgLog?_pgLog.name:"NA")+" gb="+[_gbNow[0],_gbNow[1],_gbNow[2],_gbNow[3]].join(","));
+    }catch(_){}
+
+    try {
+      if (st && st.isValid) st.recompose();
+      if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
+      if (typeof flushOverflow === "function") {
+        var fl = flushOverflow(story, page, tf);
+        if (fl && fl.frame && fl.page) {
+          page  = fl.page;
+          tf    = fl.frame;
+          story = tf.parentStory;
+          curTextFrame = tf;
+        }
+        try{
+          log("[IMG] after.flush  tf=" + (tf&&tf.isValid?tf.id:"NA")
+              + " page=" + (page?page.name:"NA")
+              + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
+              + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
+        }catch(_){}
+      }
+    } catch(eFlush){ log("[WARN] flush after image: " + eFlush); }
+
+    try{ rect.label="ANCHOR-FLOAT"; }catch(_){}
+    try{
+      var finalPage = (rect && rect.isValid && rect.parentPage && rect.parentPage.isValid)
+        ? rect.parentPage
+        : (page && page.isValid ? page : null);
+      __recordWordSeqPage(wordSeq, finalPage);
+    }catch(_){}
+    return rect;
+  }catch(e){
+    log("[IMGFLOAT6][ERR] "+e);
+    return null;
+  }
+}

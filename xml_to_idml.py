@@ -105,6 +105,13 @@ def _watch_jsx_progress(log_path: str, stop_event: "threading.Event"):
                     fh.seek(0, os.SEEK_END)
                 line = fh.readline()
                 if not line:
+                    # 文件可能被重新创建/截断，位置落在文件尾之外时重置到开头
+                    try:
+                        size = os.path.getsize(log_path)
+                        if fh.tell() > size:
+                            fh.seek(0)
+                    except Exception:
+                        pass
                     if stop_event.wait(0.5):
                         break
                     continue
