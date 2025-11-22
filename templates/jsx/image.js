@@ -1,5 +1,5 @@
 // ==== path helpers migrated from entry ====
-function _normPath(p){
+function __imgNormPath(p){
         if(!p) return null;
         p = String(p).replace(/^\s+|\s+$/g,"").replace(/\\/g,"/");
         // 直接支持 http(s) & data:，交给 InDesign 自己处理
@@ -42,7 +42,7 @@ function _normPath(p){
         p = String(p).replace(/\\/g, "/");   // ← 新增：统一为正斜杠
         return File(p);
     }
-function logStep(s){ log("[IMGSTEP] " + s); }
+function __imgLogStep(s){ log("[IMGSTEP] " + s); }
 // ===== 浮动图/框的共享上下文 =====
 var __FLOAT_CTX = __FLOAT_CTX || {};
 __FLOAT_CTX.imgAnchors = __FLOAT_CTX.imgAnchors || {};
@@ -54,7 +54,7 @@ var __ALLOW_IMG_EXT_FALLBACK = (typeof __ALLOW_IMG_EXT_FALLBACK !== "undefined")
                                ? __ALLOW_IMG_EXT_FALLBACK
                                : (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean"
                                   ? CONFIG.flags.allowImgExtFallback : true);
-function __recordWordSeqPage(wordSeqVal, pageObj){
+function __imgRecordWordSeqPage(wordSeqVal, pageObj){
   try{
     if (!wordSeqVal || !pageObj || !pageObj.isValid) return;
     if (!__FLOAT_CTX) return;
@@ -66,7 +66,7 @@ function __recordWordSeqPage(wordSeqVal, pageObj){
     }
   }catch(_){}
 }
-function __pageForWordSeq(wordSeqVal){
+function __imgPageForWordSeq(wordSeqVal){
   try{
     if (!wordSeqVal) return null;
     var docRef = app && app.activeDocument;
@@ -86,14 +86,14 @@ function __pageForWordSeq(wordSeqVal){
     }
     var pageObj = docRef.pages[wordSeqVal-1];
     if (pageObj && pageObj.isValid){
-      __recordWordSeqPage(wordSeqVal, pageObj);
+      __imgRecordWordSeqPage(wordSeqVal, pageObj);
       return pageObj;
     }
   }catch(_pageSeq){}
   return null;
 }
 
-function _alignFloatingRect(rect, holder, innerW, alignMode){
+function __imgAlignFloatingRect(rect, holder, innerW, alignMode){
   if (!rect || !holder || !holder.isValid || innerW <= 0) return null;
   var gb = rect.geometricBounds;
   if (!gb || gb.length !== 4) return null;
@@ -111,10 +111,10 @@ function _alignFloatingRect(rect, holder, innerW, alignMode){
   return {holder: holder, innerW: innerW, align: alignMode, offset: offset};
 }
 
-function addImageAtV2(ip, spec) {
+function __imgAddImageAtV2(ip, spec) {
       var doc = app.activeDocument;
       try{
-        log("[IMG] begin addImageAtV2 src=" + (spec&&spec.src)
+        log("[IMG] begin __imgAddImageAtV2 src=" + (spec&&spec.src)
             + " w=" + (spec&&spec.w) + " h=" + (spec&&spec.h)
             + " align=" + (spec&&spec.align) + " sb=" + (spec&&spec.spaceBefore) + " sa=" + (spec&&spec.spaceAfter));
       }catch(_){}
@@ -130,7 +130,7 @@ function addImageAtV2(ip, spec) {
 
       // 1) 校验文件
       var f = File(spec && spec.src);
-      if (!f || !f.exists) { log("[ERR] addImageAtV2: file missing: " + (spec && spec.src)); return null; }
+      if (!f || !f.exists) { log("[ERR] __imgAddImageAtV2: file missing: " + (spec && spec.src)); return null; }
 
       // 2) story / 安全插入点
       var st = null;
@@ -139,7 +139,7 @@ function addImageAtV2(ip, spec) {
            : (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid && curTextFrame.parentStory && curTextFrame.parentStory.isValid) ? curTextFrame.parentStory
            : (doc.stories.length ? doc.stories[0] : null);
       } catch(_){}
-      if (!st) { log("[ERR] addImageAtV2: no valid story"); return null; }
+      if (!st) { log("[ERR] __imgAddImageAtV2: no valid story"); return null; }
       try { st.recompose(); } catch(_){}
 
       var inlineFlag = String((spec && spec.inline)||"").toLowerCase();
@@ -249,12 +249,12 @@ function addImageAtV2(ip, spec) {
         log("[IMG] anchor.pre  tf=" + (_tf0?_tf0.id:"NA") + " page=" + (_pg0?_pg0.name:"NA")
             + " storyLen=" + (st?st.characters.length:"NA"));
       }catch(_){}
-      if (!ip2 || !ip2.isValid) { log("[ERR] addImageAtV2: invalid insertion point"); return null; }
+      if (!ip2 || !ip2.isValid) { log("[ERR] __imgAddImageAtV2: invalid insertion point"); return null; }
 
       // 3) place
       var placed = null;
-      try { placed = ip2.place(f); } catch(ePlace){ log("[ERR] addImageAtV2: place failed: " + ePlace); return null; }
-      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] addImageAtV2: place returned invalid"); return null; }
+      try { placed = ip2.place(f); } catch(ePlace){ log("[ERR] __imgAddImageAtV2: place failed: " + ePlace); return null; }
+      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] __imgAddImageAtV2: place returned invalid"); return null; }
 
       // 4) 取矩形
       var item = placed[0], rect=null, cname="";
@@ -263,7 +263,7 @@ function addImageAtV2(ip, spec) {
       else {
         try { if (item && item.parent && item.parent.isValid && String(item.parent.constructor.name)==="Rectangle") rect=item.parent; } catch(_){}
       }
-      if (!rect || !rect.isValid) { log("[ERR] addImageAtV2: no rectangle after place"); return null; }
+      if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
 
       // 记录最近一次图片锚点，用于下一次“同位放图”检测
       try{
@@ -440,7 +440,7 @@ function addImageAtV2(ip, spec) {
       return rect;
     }
 
-function addFloatingImage(tf, story, page, spec){
+function __imgAddFloatingImage(tf, story, page, spec){
   log("[IMGFLOAT6] enter src="+(spec&&spec.src)+" w="+(spec&&spec.w)+" h="+(spec&&spec.h));
   function _toPtLocal(v){
     var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
@@ -491,7 +491,7 @@ function addFloatingImage(tf, story, page, spec){
     fallbackSpec.inline = "0";
     fallbackSpec.wrap = fallbackSpec.wrap || "none";
     fallbackSpec.__floatFallback = (fallbackSpec.__floatFallback || 0) + 1;
-    return addImageAtV2(ipFallback, fallbackSpec);
+    return __imgAddImageAtV2(ipFallback, fallbackSpec);
   }
 
   var wordSeq = null;
@@ -503,7 +503,7 @@ function addFloatingImage(tf, story, page, spec){
   }catch(_){}
   try{
     if (!tf || !tf.isValid) { log("[IMGFLOAT6][ERR] tf invalid"); return null; }
-    var f = _normPath(spec && spec.src);
+    var f = __imgNormPath(spec && spec.src);
     log("[IMGFLOAT6] resolved file="+(f?f.fsName:"NA"));
     if(!f || !f.exists){ log("[IMGFLOAT6][ERR] file missing: "+(spec&&spec.src)); return null; }
 
@@ -755,7 +755,7 @@ function addFloatingImage(tf, story, page, spec){
               var thisPage = (pageRect.parentPage && pageRect.parentPage.isValid) ? pageRect.parentPage : targetPage;
               if (thisPage && thisPage.isValid) page = thisPage;
               try{
-                __recordWordSeqPage(wordSeq, thisPage);
+                __imgRecordWordSeqPage(wordSeq, thisPage);
               }catch(_){}
               try{
                 if (__FLOAT_CTX){
@@ -881,7 +881,7 @@ function addFloatingImage(tf, story, page, spec){
       } catch(_){ }
 try{ st.recompose(); }catch(_){ }
 var gb = null;
-function _rectifyCandidate(obj){
+function __imgRectifyCandidate(obj){
   if (!obj || !obj.isValid) return null;
   var nm = "";
   try{ nm = String(obj.constructor.name); }catch(_){}
@@ -902,27 +902,27 @@ function _rectifyCandidate(obj){
   return null;
 }
 
-function _setRect(candidate, tag){
+function __imgSetRect(candidate, tag){
   if (!candidate || !candidate.isValid) return false;
   rect = candidate;
   try{ log("[IMGFLOAT6][RECT] " + tag); }catch(_){}
   return true;
 }
-function _ensureRectValid(_retry){
-  var candidate = _rectifyCandidate(rect);
-  if (candidate && _setRect(candidate, "reuse")){ return true; }
+function __imgEnsureRectValid(_retry){
+  var candidate = __imgRectifyCandidate(rect);
+  if (candidate && __imgSetRect(candidate, "reuse")){ return true; }
 
   try{
     var p0 = (placed && placed.length) ? placed[0] : null;
-    candidate = _rectifyCandidate(p0);
-    if (candidate && _setRect(candidate, "from placed[0]")){ return true; }
+    candidate = __imgRectifyCandidate(p0);
+    if (candidate && __imgSetRect(candidate, "from placed[0]")){ return true; }
   }catch(_){}
 
   try{
     if (placed && placed.length){
       for (var ii=0; ii<placed.length; ii++){
-        candidate = _rectifyCandidate(placed[ii]);
-        if (candidate && _setRect(candidate, "from placed["+ii+"]")){ return true; }
+        candidate = __imgRectifyCandidate(placed[ii]);
+        if (candidate && __imgSetRect(candidate, "from placed["+ii+"]")){ return true; }
       }
     }
   }catch(_){}
@@ -936,8 +936,8 @@ function _ensureRectValid(_retry){
           var ao = anchorIP.anchoredObjects;
           if (ao && ao.length){
             for (var jj=0;jj<ao.length;jj++){
-              candidate = _rectifyCandidate(ao[jj]);
-              if (candidate && _setRect(candidate, "from anchoredObjects["+jj+"]")){ return true; }
+              candidate = __imgRectifyCandidate(ao[jj]);
+              if (candidate && __imgSetRect(candidate, "from anchoredObjects["+jj+"]")){ return true; }
             }
           }
         }catch(_){}
@@ -945,8 +945,8 @@ function _ensureRectValid(_retry){
           var recs = anchorIP.rectangles;
           if (recs && recs.length){
             for (var kk=0;kk<recs.length;kk++){
-              candidate = _rectifyCandidate(recs[kk]);
-              if (candidate && _setRect(candidate, "from ip.rectangles["+kk+"]")){ return true; }
+              candidate = __imgRectifyCandidate(recs[kk]);
+              if (candidate && __imgSetRect(candidate, "from ip.rectangles["+kk+"]")){ return true; }
             }
           }
         }catch(_){}
@@ -958,8 +958,8 @@ function _ensureRectValid(_retry){
     if ((!rect || !rect.isValid) && st && st.isValid){
       st.recompose();
       try{ app.activeDocument.recompose(); }catch(__){}
-      candidate = _rectifyCandidate(rect);
-      if (candidate && _setRect(candidate, "after recompose")){ return true; }
+      candidate = __imgRectifyCandidate(rect);
+      if (candidate && __imgSetRect(candidate, "after recompose")){ return true; }
     }
   }catch(_){}
 
@@ -968,15 +968,15 @@ function _ensureRectValid(_retry){
       log("[IMGFLOAT6][RECT] wait redraw");
     }catch(_){}
     try{ app.waitForRedraw(); }catch(__){}
-    return _ensureRectValid(true);
+    return __imgEnsureRectValid(true);
   }
 
   return !!(rect && rect.isValid);
 }
-if (_ensureRectValid()){
+if (__imgEnsureRectValid()){
   try { gb = rect.geometricBounds; }
   catch(eGB){
-    if (_ensureRectValid()){
+    if (__imgEnsureRectValid()){
       try { gb = rect.geometricBounds; } catch(__){}
     }
   }
@@ -1173,7 +1173,7 @@ if (!gb){
       }catch(__host){}
 
       try{
-        var alignInfo = _alignFloatingRect(rect, holder, innerW, alignMode);
+        var alignInfo = __imgAlignFloatingRect(rect, holder, innerW, alignMode);
         if (alignInfo){
           log("[IMGFLOAT6][ALIGN] align="+alignInfo.align+" offset="+alignInfo.offset.toFixed(2)
               + " innerW="+(alignInfo.innerW||0)+" holder="+(alignInfo.holder?alignInfo.holder.id:'NA'));
@@ -1258,7 +1258,7 @@ if (!gb){
       var finalPage = (rect && rect.isValid && rect.parentPage && rect.parentPage.isValid)
         ? rect.parentPage
         : (page && page.isValid ? page : null);
-      __recordWordSeqPage(wordSeq, finalPage);
+      __imgRecordWordSeqPage(wordSeq, finalPage);
     }catch(_){}
     return rect;
   }catch(e){
@@ -1267,7 +1267,7 @@ if (!gb){
   }
 }
 
-function addFloatingFrame(tf, story, page, spec){
+function __imgAddFloatingFrame(tf, story, page, spec){
   try{
   try{ log("[FRAMEFLOAT] enter id="+(spec&&spec.id)+" textLen="+((spec&&spec.text)||"").length); }catch(_){}
   function _toPtLocal(v){
@@ -1338,7 +1338,7 @@ function addFloatingFrame(tf, story, page, spec){
   }catch(_){}
   if (!pageFromSeq && wantsSeqAutoPage){
     try{
-      pageFromSeq = __pageForWordSeq(wordSeq);
+      pageFromSeq = __imgPageForWordSeq(wordSeq);
     }catch(_autoSeq){}
   }
   try{
@@ -1656,7 +1656,7 @@ function addFloatingFrame(tf, story, page, spec){
     ];
   }catch(_){}
   try{
-    __recordWordSeqPage(wordSeq, targetPage);
+    __imgRecordWordSeqPage(wordSeq, targetPage);
   }catch(_){}
   function _applyFrameStyles(frameObj){
     var appliedParagraph = false;

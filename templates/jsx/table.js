@@ -1,4 +1,4 @@
-function addTableHiFi(obj){
+function __tblAddTableHiFi(obj){
       try{
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
@@ -175,7 +175,7 @@ function addTableHiFi(obj){
           }catch(_){ }
         }
         if (!storyRef || !storyRef.isValid){
-          try{ log("[ERR] addTableHiFi: no valid story"); }catch(__){}
+          try{ log("[ERR] __tblAddTableHiFi: no valid story"); }catch(__){}
           return;
         }
         story = storyRef;
@@ -385,7 +385,7 @@ function addTableHiFi(obj){
 
         var baseFrame = _ensureWritableFrameLocal(story);
         if (!baseFrame || !baseFrame.isValid){
-          try{ log("[ERR] addTableHiFi: no writable frame"); }catch(__){}
+          try{ log("[ERR] __tblAddTableHiFi: no writable frame"); }catch(__){}
           return;
         }
         try{ curTextFrame = baseFrame; }catch(_){ }
@@ -418,13 +418,13 @@ function addTableHiFi(obj){
           try{ story.insertionPoints[-1].contents = "\r"; anchorParagraph = story.paragraphs[-1]; }catch(__){ }
         }
         if (!anchorParagraph || !anchorParagraph.isValid){
-          try{ log("[ERR] addTableHiFi: cannot resolve anchor paragraph"); }catch(__){}
+          try{ log("[ERR] __tblAddTableHiFi: cannot resolve anchor paragraph"); }catch(__){}
           return;
         }
         var anchorIP = null;
         try{ anchorIP = anchorParagraph.insertionPoints[0]; }catch(_){ }
         if (!anchorIP || !anchorIP.isValid){
-          try{ log("[ERR] addTableHiFi: invalid anchor insertion point"); }catch(__){}
+          try{ log("[ERR] __tblAddTableHiFi: invalid anchor insertion point"); }catch(__){}
           return;
         }
 
@@ -448,7 +448,7 @@ function addTableHiFi(obj){
           insertIP = (typeof _safeIP==='function') ? _safeIP(baseFrame) : baseFrame.insertionPoints[-1];
         }
         if (!insertIP || !insertIP.isValid){
-          try{ log('[ERR] addTableHiFi: cannot resolve inline insertion point'); }catch(__){}
+          try{ log('[ERR] __tblAddTableHiFi: cannot resolve inline insertion point'); }catch(__){}
           return;
         }
         try{
@@ -464,7 +464,7 @@ function addTableHiFi(obj){
         try {
           tbl = insertIP.tables.add({ bodyRowCount: rows, columnCount: cols });
         } catch(eAdd) {
-          try{ log('[ERR] addTableHiFi: table create failed ' + eAdd); }catch(__){}
+          try{ log('[ERR] __tblAddTableHiFi: table create failed ' + eAdd); }catch(__){}
           return;
         }
         try{
@@ -961,7 +961,7 @@ function addTableHiFi(obj){
           }
         }
       }catch(e){
-        log("[ERR] addTableHiFi " + e);
+        log("[ERR] __tblAddTableHiFi " + e);
       }
       try{
         var __tblDetail = (__tableCtx && __tableCtx.id) ? ("id=" + __tableCtx.id) : ("rows=" + rows + " cols=" + cols);

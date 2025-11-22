@@ -1105,13 +1105,13 @@ function _holderInnerBounds(holder){
                 }catch(_){}
 
                 // 规范与校验路径（失败只记一行，不抛）
-                var fsrc = _normPath(spec.src);
+                var fsrc = __imgNormPath(spec.src);
                 if (fsrc && fsrc.exists) {
                   spec.src = fsrc.fsName;
                   // 入口调用加一层必要 try，避免整套流程被图片单点中断
                   try {
                     // 规范与校验路径（失败只记一行，不抛）
-                    var fsrc = _normPath(spec.src);
+                    var fsrc = __imgNormPath(spec.src);
                     if (fsrc && fsrc.exists) {
                       spec.src = fsrc.fsName;
 
@@ -1126,12 +1126,12 @@ function _holderInnerBounds(holder){
                   }catch(_){ }
                       try{
                         if (inl==="0" || /^false$/i.test(inl)){
-                          // 浮动：使用刚加入的 addFloatingImage（遵循 posH/posV/offX/offY/wrap/dist*）
-                          var rect = addFloatingImage(tf, story, page, spec);
+                          // 浮动：使用刚加入的 __imgAddFloatingImage（遵循 posH/posV/offX/offY/wrap/dist*）
+                          var rect = __imgAddFloatingImage(tf, story, page, spec);
                           if (rect && rect.isValid) log("[IMG] ok (float): " + spec.src);
                         } else {
-                          // 内联：仍走你原先的稳妥链路（addImageAtV2）
-                          var rect = addImageAtV2(ipNow, spec);
+                          // 内联：仍走你原先的稳妥链路（__imgAddImageAtV2）
+                          var rect = __imgAddImageAtV2(ipNow, spec);
                           if (rect && rect.isValid) log("[IMG] ok (inline): " + spec.src);
                         }
                       } catch(e) {
@@ -1157,9 +1157,9 @@ function _holderInnerBounds(holder){
                 try {
                     var obj = JSON.parse(m[7]);
                     // 使用高保真表格构造：按 colWidthsPt 设置列宽、处理合并/覆盖格
-                    addTableHiFi(obj);
+                    __tblAddTableHiFi(obj);
                 } catch(e){
-                    try { var obj2 = eval("("+m[7]+")"); addTableHiFi(obj2); } catch(__){}
+                    try { var obj2 = eval("("+m[7]+")"); __tblAddTableHiFi(obj2); } catch(__){}
                 }
             } else {
                 var closing = !!m[4];
