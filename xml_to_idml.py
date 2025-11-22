@@ -566,7 +566,7 @@ class ImageSpec:
                 // 0) 环境检查
                 log("[DBG] typeof addFloatingImage=" + (typeof addFloatingImage)
                     + " typeof addImageAtV2=" + (typeof addImageAtV2)
-                    + " typeof _normPath=" + (typeof _normPath));
+                    + " typeof __imgNormPath=" + (typeof __imgNormPath));
                 log("[DBG] tf=" + (tf&&tf.isValid) + " story=" + (story&&story.isValid) + " page=" + (page&&page.isValid));
 
                 // 1) 排版溢出
@@ -577,8 +577,8 @@ class ImageSpec:
                 // 2) 锚点
                 var ip=(tf&&tf.isValid)?_safeIP(tf):story.insertionPoints[-1];
                 // 3) 路径
-                var f=_normPath("{_js_escape_simple(src_for_log)}");
-                log("[DBG] _normPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
+                var f=__imgNormPath("{_js_escape_simple(src_for_log)}");
+                log("[DBG] __imgNormPath ok=" + (!!f) + " exists=" + (f&&f.exists ? "Y":"N") + " fsName=" + (f?f.fsName:"NA"));
 
                 if(f&&f.exists){{
                   var inl=_trim(spec.inline); // 兼容 InDesign 2020
