@@ -1349,7 +1349,7 @@ function _holderInnerBounds(holder){
             doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
         } catch(ex) { alert("?? IDML ???" + ex); }
     }
-    }
+}
     try{
         if (__origScriptUnit !== null) app.scriptPreferences.measurementUnit = __origScriptUnit;
     }catch(_){ }
