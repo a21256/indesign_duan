@@ -2770,36 +2770,6 @@ function _holderInnerBounds(holder){
         }catch(_){}
     }
 
-    function fixAllTables(){
-        try{
-            var doc = app.activeDocument;
-            var stories = doc.stories;
-            for (var si=0; si<stories.length; si++){
-                var tbs = stories[si].tables;
-                for (var ti=0; ti<tbs.length; ti++){
-                    var T = tbs[ti];
-                    try { T.rows.everyItem().autoGrow = true; } catch(_){}
-                    try { T.rows.everyItem().height = RowAutoHeight.AUTO; } catch(_){}
-                    try { T.rows.everyItem().heightType = RowHeightType.AT_LEAST; } catch(_){}
-                    try { T.rows.everyItem().minimumHeight = 0; } catch(_){}
-                    try { T.rows.everyItem().maximumHeight = 1000000; } catch(_){}
-                    try { T.rows.everyItem().keepWithNext = false; } catch(_){}
-                    try { T.rows.everyItem().keepTogether = false; } catch(_){}
-                    try {
-                        var paras = T.cells.everyItem().texts[0].paragraphs.everyItem();
-                        paras.keepOptions.keepLinesTogether = false;
-                        paras.keepOptions.keepWithNext = false;
-                        try { paras.composer = ComposerTypes.ADOBE_PARAGRAPH_COMPOSER; } catch(_){}
-                        try { paras.spaceBefore = Math.min( paras.spaceBefore, 6 ); } catch(_){}
-                        try { paras.spaceAfter  = Math.min( paras.spaceAfter,  6 ); } catch(_){}
-                    } catch(_){}
-                    try { T.recompose(); } catch(_){}
-                }
-            }
-            try { log("[LOG] fixAllTables done"); } catch(_){}
-        }catch(e){ try{ log("[DBG] fixAllTables: "+e); }catch(__){} }
-    }
-
     function createTextFrameOnPage(page, layoutState) {
         var gb = frameBoundsForPage2(page, doc);
         var tf = page.textFrames.add();
