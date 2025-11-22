@@ -1275,7 +1275,7 @@ def write_jsx(jsx_path, paragraphs):
         print("[INFO] JSX 模板来源:", tpl_used)
     print(f"[INFO] JSX 事件日志: {LOG_PATH}")
     # 在 write_jsx() 末尾、写完 add_lines 之后临时加一行：
-    print("[DEBUG] JSX 是否包含 addImageAtV2：", any("addImageAtV2(" in ln for ln in add_lines))
+    print("[DEBUG] JSX 是否包含 addImageAtV2：", any("__imgAddImageAtV2(" in ln for ln in add_lines))
 
 
 # ========== 调用 InDesign ==========
