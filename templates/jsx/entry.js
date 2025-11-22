@@ -568,53 +568,7 @@
     // ==== 图片路径解析（新增） ====
     // 这些目录会被依次尝试：脚本目录、脚本目录的 assets、XML 同目录、XML 同目录的 assets
     var IMG_DIRS = %IMG_DIRS_JSON%;
-    function _normPath(p){
-        if(!p) return null;
-        p = String(p).replace(/^\s+|\s+$/g,"").replace(/\\/g,"/");
-        // 直接支持 http(s) & data:，交给 InDesign 自己处理
-        if (/^(https?:|data:)/i.test(p)) return File(p);
-        // 先尝试原始路径
-        try { var f0 = File(p); if (f0.exists) return f0; } catch(_){}
-        // 仅文件名时，逐目录拼接
-        var baseName = p.split("/").pop();
-        function _alts(name){
-            var i = name.lastIndexOf(".");
-            if (i < 0) return [name, name+".png", name+".jpg", name+".jpeg"];
-            if (!__ALLOW_IMG_EXT_FALLBACK) return [name];
-            var stem = name.substring(0,i), ext = name.substring(i+1).toLowerCase();
-            if (ext==="jpg")  return [name, stem+".jpeg", stem+".png"];
-            if (ext==="jpeg") return [name, stem+".jpg",  stem+".png"];
-            if (ext==="png")  return [name, stem+".jpg",  stem+".jpeg"];
-            return [name];
-        }
-        var candNames = _alts(baseName);
-
-        for (var i=0;i<IMG_DIRS.length;i++){
-            try{
-                for (var n=0;n<candNames.length;n++){
-                    var f1 = File(IMG_DIRS[i]+"/"+candNames[n]);
-                    if (f1.exists) {
-                      if (__ALLOW_IMG_EXT_FALLBACK && candNames[n].toLowerCase() !== baseName.toLowerCase()) {
-                        try{
-                          log("[IMG] fallback ext hit base=" + baseName + " -> " + candNames[n] + " dir=" + IMG_DIRS[i]);
-                        }catch(_){}
-                      }
-                      return f1;
-                    }
-                }
-                var f2 = File(IMG_DIRS[i]+"/"+p);
-                if (f2.exists) return f2;
-            }catch(_){}
-        }
-        // …函数结尾附近
-        try { p = decodeURI(p); } catch(_){}
-        p = String(p).replace(/\\/g, "/");   // ← 新增：统一为正斜杠
-        return File(p);
-    }
-
-    function logStep(s){ log("[IMGSTEP] " + s); }
-
-    function addFloatingImage(tf, story, page, spec){
+function addFloatingImage(tf, story, page, spec){
   log("[IMGFLOAT6] enter src="+(spec&&spec.src)+" w="+(spec&&spec.w)+" h="+(spec&&spec.h));
   function _toPtLocal(v){
     var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
