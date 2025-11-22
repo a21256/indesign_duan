@@ -43,6 +43,49 @@ function _normPath(p){
         return File(p);
     }
 function logStep(s){ log("[IMGSTEP] " + s); }
+// ===== 浮动图/框的共享上下文 =====
+var __FLOAT_CTX = __FLOAT_CTX || {};
+__FLOAT_CTX.imgAnchors = __FLOAT_CTX.imgAnchors || {};
+var __LAST_IMG_ANCHOR_IDX = (typeof __LAST_IMG_ANCHOR_IDX !== "undefined") ? __LAST_IMG_ANCHOR_IDX : -1;
+var __SAFE_PAGE_LIMIT = (typeof __SAFE_PAGE_LIMIT !== "undefined") ? __SAFE_PAGE_LIMIT : 2000;
+function __recordWordSeqPage(wordSeqVal, pageObj){
+  try{
+    if (!wordSeqVal || !pageObj || !pageObj.isValid) return;
+    if (!__FLOAT_CTX) return;
+    if (!__FLOAT_CTX.wordSeqPages) __FLOAT_CTX.wordSeqPages = {};
+    __FLOAT_CTX.wordSeqPages[wordSeqVal] = {page: pageObj};
+    if (__FLOAT_CTX.wordSeqBaseSeq == null){
+      __FLOAT_CTX.wordSeqBaseSeq = wordSeqVal;
+      __FLOAT_CTX.wordSeqBasePage = pageObj;
+    }
+  }catch(_){}
+}
+function __pageForWordSeq(wordSeqVal){
+  try{
+    if (!wordSeqVal) return null;
+    var docRef = app && app.activeDocument;
+    if (!docRef || !docRef.pages) return null;
+    var extendGuard = 0;
+    while (wordSeqVal > docRef.pages.length){
+      if (__SAFE_PAGE_LIMIT && docRef.pages.length >= __SAFE_PAGE_LIMIT){
+        try{ log("[ERROR] seq page request exceeds limit seq=" + wordSeqVal + " limit=" + __SAFE_PAGE_LIMIT); }catch(_){ }
+        return null;
+      }
+      docRef.pages.add(LocationOptions.AT_END);
+      extendGuard++;
+      if (extendGuard > 50){
+        try{ log("[ERROR] seq page request guard tripped seq=" + wordSeqVal); }catch(_){ }
+        break;
+      }
+    }
+    var pageObj = docRef.pages[wordSeqVal-1];
+    if (pageObj && pageObj.isValid){
+      __recordWordSeqPage(wordSeqVal, pageObj);
+      return pageObj;
+    }
+  }catch(_pageSeq){}
+  return null;
+}
 
 function _alignFloatingRect(rect, holder, innerW, alignMode){
   if (!rect || !holder || !holder.isValid || innerW <= 0) return null;
