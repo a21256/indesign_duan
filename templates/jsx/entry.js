@@ -2082,23 +2082,6 @@ function _holderInnerBounds(holder){
       }
     }
 
-    function _innerFrameWidth(frame){
-        if (!frame || !frame.isValid) return 0;
-        try{
-            var tfp = frame.textFramePreferences;
-            if (tfp){
-                var cw = parseFloat(tfp.textColumnFixedWidth);
-                if (isFinite(cw) && cw > 0) return cw;
-            }
-        }catch(_){}
-        var gb = null;
-        try{ gb = frame.geometricBounds; }catch(_){}
-        var w = (gb && gb.length>=4) ? (gb[3]-gb[1]) : 0;
-        var inset = null;
-        try{ inset = frame.textFramePreferences.insetSpacing; }catch(_){}
-        var insetWidth = (inset && inset.length>=4) ? ( (parseFloat(inset[1])||0) + (parseFloat(inset[3])||0) ) : 0;
-        return w - insetWidth;
-    }
     function _mapAlign(h){ if(h=="center") return Justification.CENTER_ALIGN; if(h=="right") return Justification.RIGHT_ALIGN; return Justification.LEFT_ALIGN; }
     function _mapVAlign(v){ if(v=="bottom") return VerticalJustification.BOTTOM_ALIGN; if(v=="center"||v=="middle") return VerticalJustification.CENTER_ALIGN; return VerticalJustification.TOP_ALIGN; }
 
@@ -2699,85 +2682,6 @@ function _holderInnerBounds(holder){
         return ps;
     }
     __STYLE_LINES__
-
-    function frameBoundsForPage2(page, doc) {
-        var pb = page.bounds, mp = page.marginPreferences;
-        return [pb[0] + mp.top, pb[1] + mp.left, pb[2] - mp.bottom, pb[3] - mp.right];
-    }
-
-    function _innerFrameHeight(frame){
-        if (!frame || !frame.isValid) return 0;
-        var gb = null;
-        try{ gb = frame.geometricBounds; }catch(_){}
-        var h = (gb && gb.length>=4) ? (gb[2]-gb[0]) : 0;
-        var inset = null;
-        try{ inset = frame.textFramePreferences.insetSpacing; }catch(_){}
-        var insetHeight = (inset && inset.length>=4) ? ( (parseFloat(inset[0])||0) + (parseFloat(inset[2])||0) ) : 0;
-        return h - insetHeight;
-    }
-
-    function __calcInnerWidthForLayout(layout){
-        if (!layout) return null;
-        var w = parseFloat(layout.pageWidthPt);
-        var margins = layout.pageMarginsPt || {};
-        if (isFinite(w)){
-            var left = parseFloat(margins.left) || 0;
-            var right = parseFloat(margins.right) || 0;
-            return w - left - right;
-        }
-        return null;
-    }
-
-    function __applyFrameLayout(frame, layoutState){
-        try{
-            if (!frame || !frame.isValid) return;
-            var tfp = frame.textFramePreferences;
-            if (!tfp) return;
-            try{ tfp.textColumnCount = 1; }catch(_){}
-            try{ tfp.textColumnGutter = 0; }catch(_){}
-            try{ tfp.useFixedColumnWidth = true; }catch(_){}
-            try{ tfp.textColumnFlexibleWidth = false; }catch(_){}
-            var leftInset = 0, rightInset = 0;
-            try{
-                var inset = tfp.insetSpacing;
-                if (inset && inset.length >= 4){
-                    leftInset = parseFloat(inset[1]) || 0;
-                    rightInset = parseFloat(inset[3]) || 0;
-                }
-            }catch(_){}
-            var gb = null;
-            try{ gb = frame.geometricBounds; }catch(_){}
-            var innerWidth = null;
-            if (gb && gb.length >= 4){
-                innerWidth = (gb[3] - gb[1]) - leftInset - rightInset;
-            }
-            if (!isFinite(innerWidth) || innerWidth <= 0){
-                var pageWidth = layoutState && layoutState.pageWidthPt;
-                var margins = layoutState && layoutState.pageMarginsPt;
-                if (isFinite(pageWidth)){
-                    innerWidth = pageWidth;
-                    if (margins){
-                        innerWidth -= (parseFloat(margins.left) || 0);
-                        innerWidth -= (parseFloat(margins.right) || 0);
-                    }
-                }
-            }
-            if (!isFinite(innerWidth) || innerWidth <= 0){
-                innerWidth = 400;
-            }
-            try{ tfp.textColumnFixedWidth = innerWidth; }catch(_){}
-            try{ log("[LAYOUT] apply frame id=" + frame.id + " innerWidth=" + innerWidth + " orient=" + (layoutState && layoutState.pageOrientation)); }catch(_log){}
-        }catch(_){}
-    }
-
-    function createTextFrameOnPage(page, layoutState) {
-        var gb = frameBoundsForPage2(page, doc);
-        var tf = page.textFrames.add();
-        tf.geometricBounds = gb;
-        __applyFrameLayout(tf, layoutState || __CURRENT_LAYOUT);
-        try{ tf.textFramePreferences.verticalJustification = VerticalJustification.TOP_ALIGN; }catch(_){}
-        return tf;
-    }
 
     var page  = doc.pages[0];
     try{ log("[LOG] script boot ok; page="+doc.pages.length); }catch(_){}
