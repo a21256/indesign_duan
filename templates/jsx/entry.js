@@ -20,6 +20,16 @@
     var LOG_WRITE  = %LOG_WRITE%;   // true=记录 debug；false=仅保留 warn/error/info
     var __EVENT_LINES = [];
 
+    // 每次执行先清空旧事件日志，避免多次运行叠加
+    try{
+      if (EVENT_FILE){
+        EVENT_FILE.encoding = "UTF-8";
+        EVENT_FILE.open("w");
+        EVENT_FILE.writeln(""); // 写一空行确保文件被截断创建
+        EVENT_FILE.close();
+      }
+    }catch(_){}
+
     function __sanitizeLogMessage(m){
       var txt = String(m == null ? "" : m);
       txt = txt.replace(/[\r\n]+/g, " ").replace(/\t/g, " ");
