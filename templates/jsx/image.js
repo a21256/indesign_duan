@@ -47,7 +47,13 @@ function logStep(s){ log("[IMGSTEP] " + s); }
 var __FLOAT_CTX = __FLOAT_CTX || {};
 __FLOAT_CTX.imgAnchors = __FLOAT_CTX.imgAnchors || {};
 var __LAST_IMG_ANCHOR_IDX = (typeof __LAST_IMG_ANCHOR_IDX !== "undefined") ? __LAST_IMG_ANCHOR_IDX : -1;
-var __SAFE_PAGE_LIMIT = (typeof __SAFE_PAGE_LIMIT !== "undefined") ? __SAFE_PAGE_LIMIT : 2000;
+var __SAFE_PAGE_LIMIT = (CONFIG && CONFIG.flags && typeof CONFIG.flags.safePageLimit === "number" && isFinite(CONFIG.flags.safePageLimit))
+                        ? CONFIG.flags.safePageLimit
+                        : ((typeof __SAFE_PAGE_LIMIT !== "undefined") ? __SAFE_PAGE_LIMIT : 2000);
+var __ALLOW_IMG_EXT_FALLBACK = (typeof __ALLOW_IMG_EXT_FALLBACK !== "undefined")
+                               ? __ALLOW_IMG_EXT_FALLBACK
+                               : (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean"
+                                  ? CONFIG.flags.allowImgExtFallback : true);
 function __recordWordSeqPage(wordSeqVal, pageObj){
   try{
     if (!wordSeqVal || !pageObj || !pageObj.isValid) return;

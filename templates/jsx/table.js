@@ -2,10 +2,11 @@ function addTableHiFi(obj){
       try{
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
-        var __tableBodyStylePrimary = %TABLE_BODY_STYLE%;
-        var __tableBodyStyleFallback = %TABLE_BODY_STYLE_FALLBACK%;
-        var __tableBodyStyleBase = %TABLE_BODY_STYLE_BASE%;
-        var __tableBodyStyleAuto = %TABLE_BODY_STYLE_AUTO%;
+        var __cfgStyles = (typeof CONFIG !== "undefined" && CONFIG.styles) ? CONFIG.styles : {};
+        var __tableBodyStylePrimary = __cfgStyles.tableBody || %TABLE_BODY_STYLE%;
+        var __tableBodyStyleFallback = __cfgStyles.tableBodyFallback || %TABLE_BODY_STYLE_FALLBACK%;
+        var __tableBodyStyleBase = __cfgStyles.tableBodyBase || %TABLE_BODY_STYLE_BASE%;
+        var __tableBodyStyleAuto = __cfgStyles.tableBodyAuto || %TABLE_BODY_STYLE_AUTO%;
         function __sanitizeStyleName(name){
           if (!name) return "[None]";
           if (typeof name === "string" && name.length && name.charAt(0) === "%") return "[None]";

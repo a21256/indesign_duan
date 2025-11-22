@@ -17,7 +17,8 @@
 
     // ====== 日志收集 ======
     var EVENT_FILE = File("%EVENT_LOG_PATH%");
-    var LOG_WRITE  = %LOG_WRITE%;   // true=记录 debug；false=仅保留 warn/error/info
+    var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
+                     ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=记录 debug；false=仅保留 warn/error/info
     var __EVENT_LINES = [];
 
     // 每次执行先清空旧事件日志，避免多次运行叠加
@@ -175,14 +176,19 @@
     var __DEFAULT_INNER_HEIGHT = null;
     var __ENABLE_TRAILING_TRIM = false;
     var __UNITVALUE_FAIL_ONCE = false;
-    var __ALLOW_IMG_EXT_FALLBACK = (typeof $.global.__ALLOW_IMG_EXT_FALLBACK !== "undefined")
-                                   ? !!$.global.__ALLOW_IMG_EXT_FALLBACK : true;
+    var __ALLOW_IMG_EXT_FALLBACK = (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean")
+                                   ? CONFIG.flags.allowImgExtFallback
+                                   : (typeof $.global.__ALLOW_IMG_EXT_FALLBACK !== "undefined"
+                                      ? !!$.global.__ALLOW_IMG_EXT_FALLBACK : true);
+    var __SAFE_PAGE_LIMIT = (CONFIG && CONFIG.flags && typeof CONFIG.flags.safePageLimit === "number" && isFinite(CONFIG.flags.safePageLimit))
+                             ? CONFIG.flags.safePageLimit : 2000;
     var __PARA_SEQ = 0;
     var __PROGRESS_TOTAL = %PROGRESS_TOTAL%;
     var __PROGRESS_DONE = 0;
     var __PROGRESS_LAST_PCT = -1;
     var __PROGRESS_LAST_TS = (new Date()).getTime();
-    var __PROGRESS_HEARTBEAT_MS = %PROGRESS_HEARTBEAT%;
+    var __PROGRESS_HEARTBEAT_MS = (CONFIG && CONFIG.progress && typeof CONFIG.progress.heartbeatMs === "number" && isFinite(CONFIG.progress.heartbeatMs))
+                                  ? CONFIG.progress.heartbeatMs : %PROGRESS_HEARTBEAT%;
     function __progressDetailText(detail){
       if (!detail) return "";
       try{
@@ -535,7 +541,7 @@
 
     // ==== 图片路径解析（新增） ====
     // 这些目录会被依次尝试：脚本目录、脚本目录的 assets、XML 同目录、XML 同目录的 assets
-    var IMG_DIRS = %IMG_DIRS_JSON%;
+    var IMG_DIRS = (CONFIG && CONFIG.imgDirs && CONFIG.imgDirs.length) ? CONFIG.imgDirs : %IMG_DIRS_JSON%;
 
 function _holderInnerBounds(holder){
   var innerW = 0;
@@ -1334,12 +1340,15 @@ function _holderInnerBounds(holder){
     try { fixAllTables(); } catch(_) {}
     try{ __progressFinalize(); }catch(_){ }
 
-    // （可选）导出 IDML
-    if (%AUTO_EXPORT%) {
+    // ?????? IDML
+    var __AUTO_EXPORT = (CONFIG && CONFIG.flags && typeof CONFIG.flags.autoExportIdml === "boolean")
+                        ? CONFIG.flags.autoExportIdml : %AUTO_EXPORT%;
+    if (__AUTO_EXPORT) {
         try {
             var outFile = File("%OUT_IDML%");
             doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
-        } catch(ex) { alert("导出 IDML 失败：" + ex); }
+        } catch(ex) { alert("?? IDML ???" + ex); }
+    }
     }
     try{
         if (__origScriptUnit !== null) app.scriptPreferences.measurementUnit = __origScriptUnit;

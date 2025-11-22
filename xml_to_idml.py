@@ -1222,6 +1222,25 @@ def write_jsx(jsx_path, paragraphs):
             _seen.add(dd);
             _norm.append(dd)
 
+    jsx_config = {
+        "styles": {
+            "tableBody": TABLE_BODY_PAR_STYLE,
+            "tableBodyFallback": TABLE_BODY_PAR_STYLE_FALLBACK,
+            "tableBodyBase": TABLE_BODY_PAR_STYLE_BASE,
+            "tableBodyAuto": TABLE_BODY_PAR_STYLE_AUTO,
+        },
+        "flags": {
+            "autoExportIdml": AUTO_EXPORT_IDML,
+            "logWrite": LOG_WRITE,
+            "allowImgExtFallback": True,
+            "safePageLimit": 2000,
+        },
+        "progress": {
+            "heartbeatMs": PROGRESS_HEARTBEAT_MS,
+        },
+        "imgDirs": _norm,
+    }
+
     jsx, tpl_used = _load_jsx_template()
     jsx = jsx.replace("%TEMPLATE_PATH%", TEMPLATE_PATH.replace("\\", "\\\\"))
     jsx = jsx.replace("%OUT_IDML%", IDML_OUT_PATH.replace("\\", "\\\\"))
@@ -1235,6 +1254,7 @@ def write_jsx(jsx_path, paragraphs):
     jsx = jsx.replace("%LOG_WRITE%", "true" if LOG_WRITE else "false")  # ← 新增
     jsx = jsx.replace("%PROGRESS_TOTAL%", str(max(progress_total, 0)))
     jsx = jsx.replace("%PROGRESS_HEARTBEAT%", str(PROGRESS_HEARTBEAT_MS))
+    jsx = jsx.replace("%JSX_CONFIG%", json.dumps(jsx_config, ensure_ascii=False))
     jsx = jsx.replace("%TABLE_BODY_STYLE%", json.dumps(TABLE_BODY_PAR_STYLE))
     jsx = jsx.replace("%TABLE_BODY_STYLE_FALLBACK%", json.dumps(TABLE_BODY_PAR_STYLE_FALLBACK))
     jsx = jsx.replace("%TABLE_BODY_STYLE_BASE%", json.dumps(TABLE_BODY_PAR_STYLE_BASE))

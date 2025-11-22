@@ -1,3 +1,7 @@
+// 全局配置（由 Python 注入）
+var CONFIG = %JSX_CONFIG%;
+if (!CONFIG) CONFIG = {};
+
 function smartWrapStr(s){
     try{
       var flushAllowed = true;
