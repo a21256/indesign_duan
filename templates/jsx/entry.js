@@ -579,24 +579,6 @@
     // 这些目录会被依次尝试：脚本目录、脚本目录的 assets、XML 同目录、XML 同目录的 assets
     var IMG_DIRS = %IMG_DIRS_JSON%;
 
-function _alignFloatingRect(rect, holder, innerW, alignMode){
-  if (!rect || !holder || !holder.isValid || innerW <= 0) return null;
-  var gb = rect.geometricBounds;
-  if (!gb || gb.length !== 4) return null;
-  var targetW = gb[3] - gb[1];
-  if (targetW <= 0) return null;
-  var inset = holder.textFramePreferences && holder.textFramePreferences.insetSpacing;
-  var leftBase = (holder.geometricBounds && holder.geometricBounds.length === 4) ? holder.geometricBounds[1] : 0;
-  if (inset && inset.length >= 2) leftBase += inset[1];
-  var space = Math.max(0, innerW - targetW);
-  var offset = 0;
-  if (alignMode === "right") offset = space;
-  else if (alignMode === "center") offset = space / 2;
-  var newLeft = leftBase + offset;
-  rect.geometricBounds = [gb[0], newLeft, gb[2], newLeft + targetW];
-  return {holder: holder, innerW: innerW, align: alignMode, offset: offset};
-}
-
 function _holderInnerBounds(holder){
   var innerW = 0;
   var innerH = 0;
