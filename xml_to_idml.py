@@ -1264,7 +1264,8 @@ def write_jsx(jsx_path, paragraphs):
     jsx = jsx.replace("%IMG_DIRS_JSON%", json.dumps(_norm).replace("\\", "\\\\"))
 
     # 基础自检：占位符是否残留，避免 InDesign 报 “% does not have a value”
-    leftovers = sorted(set(m.group(0) for m in re.finditer(r"%[A-Z0-9_]+%", jsx)))
+    # 仅检查以字母或下划线开头的占位符，避免误报正文中的 %20 等编码片段
+    leftovers = sorted(set(m.group(0) for m in re.finditer(r"%[A-Z_][A-Z0-9_]*%", jsx)))
     if leftovers:
         raise RuntimeError(f"JSX placeholder not replaced: {leftovers}")
 
