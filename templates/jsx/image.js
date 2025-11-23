@@ -54,6 +54,24 @@ var __ALLOW_IMG_EXT_FALLBACK = (typeof __ALLOW_IMG_EXT_FALLBACK !== "undefined")
                                ? __ALLOW_IMG_EXT_FALLBACK
                                : (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean"
                                   ? CONFIG.flags.allowImgExtFallback : true);
+// normalize common units to pt
+function __imgToPtLocal(v){
+  var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
+  if (/mm$/i.test(s)) return parseFloat(s)*2.83464567;
+  if (/pt$/i.test(s)) return parseFloat(s);
+  if (/px$/i.test(s)) return parseFloat(s)*0.75;
+  if (s==="") return 0;
+  var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
+}
+// normalize common units to pt
+function __imgToPtLocal(v){
+  var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
+  if (/mm$/i.test(s)) return parseFloat(s)*2.83464567;
+  if (/pt$/i.test(s)) return parseFloat(s);
+  if (/px$/i.test(s)) return parseFloat(s)*0.75;
+  if (s==="") return 0;
+  var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
+}
 function __imgRecordWordSeqPage(wordSeqVal, pageObj){
   try{
     if (!wordSeqVal || !pageObj || !pageObj.isValid) return;
@@ -118,15 +136,6 @@ function __imgAddImageAtV2(ip, spec) {
             + " w=" + (spec&&spec.w) + " h=" + (spec&&spec.h)
             + " align=" + (spec&&spec.align) + " sb=" + (spec&&spec.spaceBefore) + " sa=" + (spec&&spec.spaceAfter));
       }catch(_){}
-
-      function _toPtLocal(v){
-        var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
-        if (/mm$/i.test(s)) return parseFloat(s)*2.83464567;
-        if (/pt$/i.test(s)) return parseFloat(s);
-        if (/px$/i.test(s)) return parseFloat(s)*0.75;
-        if (s==="") return 0;
-        var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
-      }
 
       // 1) 校验文件
       var f = File(spec && spec.src);
@@ -307,8 +316,8 @@ function __imgAddImageAtV2(ip, spec) {
         try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
         try {
           try { rect.fittingOptions.autoFit=false; } catch(__){}
-          var wPt = _toPtLocal(spec && spec.w);
-          var hPt = _toPtLocal(spec && spec.h);
+          var wPt = __imgToPtLocal(spec && spec.w);
+          var hPt = __imgToPtLocal(spec && spec.h);
 
           var gb  = rect.geometricBounds;
           var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
@@ -361,8 +370,8 @@ function __imgAddImageAtV2(ip, spec) {
           var a = String((spec&&spec.align)||"center").toLowerCase();
           p.justification = (a==="right") ? Justification.RIGHT_ALIGN : (a==="center" ? Justification.CENTER_ALIGN : Justification.LEFT_ALIGN);
           if (!isInline) {
-            try { p.spaceBefore = _toPtLocal(spec&&spec.spaceBefore) || 0; } catch(_){}
-            try { p.spaceAfter  = _toPtLocal(spec&&spec.spaceAfter)  || 2; } catch(_){}
+            try { p.spaceBefore = __imgToPtLocal(spec&&spec.spaceBefore) || 0; } catch(_){}
+            try { p.spaceAfter  = __imgToPtLocal(spec&&spec.spaceAfter)  || 2; } catch(_){}
           }
           p.keepOptions.keepWithNext = false;
           p.keepOptions.keepLinesTogether = false;
@@ -442,14 +451,6 @@ function __imgAddImageAtV2(ip, spec) {
 
 function __imgAddFloatingImage(tf, story, page, spec){
   log("[IMGFLOAT6] enter src="+(spec&&spec.src)+" w="+(spec&&spec.w)+" h="+(spec&&spec.h));
-  function _toPtLocal(v){
-    var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
-    if (/mm$/i.test(s)) return parseFloat(s)*2.83464567;
-    if (/pt$/i.test(s)) return parseFloat(s);
-    if (/px$/i.test(s)) return parseFloat(s)*0.75;
-    if (s==="") return 0;
-    var n = parseFloat(s); return isNaN(n)?0:n*0.75;
-  }
   function _cloneSpec(base){
     var out = {};
     if (!base || typeof base !== "object") return out;
@@ -543,13 +544,13 @@ function __imgAddFloatingImage(tf, story, page, spec){
 
       var pageWidth = pageRight - pageLeft;
       var pageHeight = pageBottom - pageTop;
-      var wordPageWidth = _toPtLocal(spec && spec.wordPageWidth);
-      var wordPageHeight = _toPtLocal(spec && spec.wordPageHeight);
+      var wordPageWidth = __imgToPtLocal(spec && spec.wordPageWidth);
+      var wordPageHeight = __imgToPtLocal(spec && spec.wordPageHeight);
 
       var posHrefRaw = _lowerFlag(spec && spec.posHref);
       var posVrefRaw = _lowerFlag(spec && spec.posVref);
-      var offXP = _toPtLocal(spec && spec.offX) || 0;
-      var offYP = _toPtLocal(spec && spec.offY) || 0;
+      var offXP = __imgToPtLocal(spec && spec.offX) || 0;
+      var offYP = __imgToPtLocal(spec && spec.offY) || 0;
       if (wordPageWidth && wordPageWidth > 0){
         offXP = offXP * (pageWidth / wordPageWidth);
       }
@@ -571,8 +572,8 @@ function __imgAddFloatingImage(tf, story, page, spec){
       if (targetW <= 0) targetW = maxWidth;
       if (targetH <= 0) targetH = maxHeight;
 
-      var guardL = Math.max(0, _toPtLocal(spec && spec.distL) || 0);
-      var guardR = Math.max(0, _toPtLocal(spec && spec.distR) || 0);
+      var guardL = Math.max(0, __imgToPtLocal(spec && spec.distL) || 0);
+      var guardR = Math.max(0, __imgToPtLocal(spec && spec.distR) || 0);
       var guardTotal = guardL + guardR;
       if (guardTotal > 0){
         var availableW = Math.max(12, maxWidth - guardTotal);
@@ -654,10 +655,10 @@ function __imgAddFloatingImage(tf, story, page, spec){
         }
         tw.textWrapMode = wrapMode;
         if (wrapMode !== TextWrapModes.NONE){
-          var distT = _toPtLocal(spec && spec.distT) || 0;
-          var distB = _toPtLocal(spec && spec.distB) || 0;
-          var distL = _toPtLocal(spec && spec.distL);
-          var distR = _toPtLocal(spec && spec.distR);
+          var distT = __imgToPtLocal(spec && spec.distT) || 0;
+          var distB = __imgToPtLocal(spec && spec.distB) || 0;
+          var distL = __imgToPtLocal(spec && spec.distL);
+          var distR = __imgToPtLocal(spec && spec.distR);
           if (!distL && distL !== 0) distL = 12;
           if (!distR && distR !== 0) distR = 12;
           tw.textWrapOffset = [distT, distL, distB, distR];
@@ -665,15 +666,15 @@ function __imgAddFloatingImage(tf, story, page, spec){
       }catch(_){}
     }
 
-    var wPt=_toPtLocal(spec&&spec.w), hPt=_toPtLocal(spec&&spec.h);
+    var wPt=__imgToPtLocal(spec&&spec.w), hPt=__imgToPtLocal(spec&&spec.h);
     var posH=String((spec&&spec.posH)||"center").toLowerCase();
     var alignMode=String((spec&&spec.align)||"").toLowerCase();
     if (!alignMode){ alignMode = posH || "center"; }
     var wrap=String((spec&&spec.wrap)||"none").toLowerCase();
-    var spB=_toPtLocal(spec&&spec.spaceBefore)||0;
-    var spA=_toPtLocal(spec&&spec.spaceAfter); if (spA===0) spA = 2;
-    var distT=_toPtLocal(spec&&spec.distT)||0, distB=_toPtLocal(spec&&spec.distB)||0,
-        distL=_toPtLocal(spec&&spec.distL)||0, distR=_toPtLocal(spec&&spec.distR)||0;
+    var spB=__imgToPtLocal(spec&&spec.spaceBefore)||0;
+    var spA=__imgToPtLocal(spec&&spec.spaceAfter); if (spA===0) spA = 2;
+    var distT=__imgToPtLocal(spec&&spec.distT)||0, distB=__imgToPtLocal(spec&&spec.distB)||0,
+        distL=__imgToPtLocal(spec&&spec.distL)||0, distR=__imgToPtLocal(spec&&spec.distR)||0;
 
     var st = tf.parentStory;
     try{
@@ -1270,14 +1271,6 @@ if (!gb){
 function __imgAddFloatingFrame(tf, story, page, spec){
   try{
   try{ log("[FRAMEFLOAT] enter id="+(spec&&spec.id)+" textLen="+((spec&&spec.text)||"").length); }catch(_){}
-  function _toPtLocal(v){
-    var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
-    if (/mm$/i.test(s)) return parseFloat(s)*2.83464567;
-    if (/pt$/i.test(s)) return parseFloat(s);
-    if (/px$/i.test(s)) return parseFloat(s)*0.75;
-    if (s==="") return 0;
-    var n = parseFloat(s); return isNaN(n)?0:n*0.75;
-  }
   function _lowerFlag(v){
     if (v == null) return "";
     return String(v).replace(/^\s+|\s+$/g,"").toLowerCase();
@@ -1508,10 +1501,10 @@ function __imgAddFloatingFrame(tf, story, page, spec){
       return anchorY;
     }
 
-    var wPt=_toPtLocal(spec && spec.w);
-    var hPt=_toPtLocal(spec && spec.h);
-    var offXP=_toPtLocal(spec && spec.offX) || 0;
-    var offYP=_toPtLocal(spec && spec.offY) || 0;
+    var wPt=__imgToPtLocal(spec && spec.w);
+    var hPt=__imgToPtLocal(spec && spec.h);
+    var offXP=__imgToPtLocal(spec && spec.offX) || 0;
+    var offYP=__imgToPtLocal(spec && spec.offY) || 0;
     var pageRefMap = {"page":true,"pagearea":true,"pageedge":true,"margin":true,"spread":true};
     var posHrefCalc = posHrefRaw;
     var posVrefCalc = posVrefRaw;
@@ -1519,8 +1512,8 @@ function __imgAddFloatingFrame(tf, story, page, spec){
       if (!pageRefMap[posHrefCalc]) posHrefCalc = "page";
       if (!pageRefMap[posVrefCalc]) posVrefCalc = "page";
     }
-    var srcPageWidth = _toPtLocal(spec && spec.wordPageWidth);
-    var srcPageHeight = _toPtLocal(spec && spec.wordPageHeight);
+    var srcPageWidth = __imgToPtLocal(spec && spec.wordPageWidth);
+    var srcPageHeight = __imgToPtLocal(spec && spec.wordPageHeight);
     function _destWidthFor(ref, m){
       if (ref === "margin" || ref === "column") return m.innerWidth;
       return m.pageWidth;
@@ -1644,10 +1637,10 @@ function __imgAddFloatingFrame(tf, story, page, spec){
     }catch(__){}
   }
   try{
-    var insetTop = _toPtLocal(spec && spec.bodyInsetT);
-    var insetLeft = _toPtLocal(spec && spec.bodyInsetL);
-    var insetBottom = _toPtLocal(spec && spec.bodyInsetB);
-    var insetRight = _toPtLocal(spec && spec.bodyInsetR);
+    var insetTop = __imgToPtLocal(spec && spec.bodyInsetT);
+    var insetLeft = __imgToPtLocal(spec && spec.bodyInsetL);
+    var insetBottom = __imgToPtLocal(spec && spec.bodyInsetB);
+    var insetRight = __imgToPtLocal(spec && spec.bodyInsetR);
     frame.textFramePreferences.insetSpacing = [
       isFinite(insetTop)?insetTop:0,
       isFinite(insetLeft)?insetLeft:0,
@@ -1702,10 +1695,10 @@ function __imgAddFloatingFrame(tf, story, page, spec){
     }
     frame.textWrapPreferences.textWrapMode = wrapMode;
     if (wrapMode !== TextWrapModes.NONE){
-      var distT = _toPtLocal(spec && spec.distT) || 0;
-      var distB = _toPtLocal(spec && spec.distB) || 0;
-      var distL = _toPtLocal(spec && spec.distL);
-      var distR = _toPtLocal(spec && spec.distR);
+      var distT = __imgToPtLocal(spec && spec.distT) || 0;
+      var distB = __imgToPtLocal(spec && spec.distB) || 0;
+      var distL = __imgToPtLocal(spec && spec.distL);
+      var distR = __imgToPtLocal(spec && spec.distR);
       if (!distL && distL !== 0) distL = 12;
       if (!distR && distR !== 0) distR = 12;
       frame.textWrapPreferences.textWrapOffset = [distT, distL, distB, distR];
