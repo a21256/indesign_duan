@@ -63,6 +63,22 @@ function __imgToPtLocal(v){
   if (s==="") return 0;
   var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
 }
+// place an image inline and return its rectangle (or null on failure)
+function __imgPlaceInline(ip, fileObj){
+  if (!ip || !ip.isValid || !fileObj) return null;
+  var placed = null;
+  try { placed = ip.place(fileObj); } catch(ePlace){ log("[ERR] __imgAddImageAtV2: place failed: " + ePlace); return null; }
+  if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] __imgAddImageAtV2: place returned invalid"); return null; }
+
+  var item = placed[0], rect=null, cname="";
+  try { cname = String(item.constructor.name); } catch(_){}
+  if (cname==="Rectangle") rect = item;
+  else {
+    try { if (item && item.parent && item.parent.isValid && String(item.parent.constructor.name)==="Rectangle") rect=item.parent; } catch(_){}
+  }
+  if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
+  return rect;
+}
 // normalize common units to pt
 function __imgToPtLocal(v){
   var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
@@ -261,18 +277,8 @@ function __imgAddImageAtV2(ip, spec) {
       if (!ip2 || !ip2.isValid) { log("[ERR] __imgAddImageAtV2: invalid insertion point"); return null; }
 
       // 3) place
-      var placed = null;
-      try { placed = ip2.place(f); } catch(ePlace){ log("[ERR] __imgAddImageAtV2: place failed: " + ePlace); return null; }
-      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] __imgAddImageAtV2: place returned invalid"); return null; }
-
-      // 4) 取矩形
-      var item = placed[0], rect=null, cname="";
-      try { cname = String(item.constructor.name); } catch(_){}
-      if (cname==="Rectangle") rect = item;
-      else {
-        try { if (item && item.parent && item.parent.isValid && String(item.parent.constructor.name)==="Rectangle") rect=item.parent; } catch(_){}
-      }
-      if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
+      var rect = __imgPlaceInline(ip2, f);
+      if (!rect || !rect.isValid) { return null; }
 
       // 记录最近一次图片锚点，用于下一次“同位放图”检测
       try{
