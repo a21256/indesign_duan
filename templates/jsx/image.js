@@ -167,6 +167,67 @@ function __imgEnsureAnchorAtTfTail(ip, st, tf){
   }catch(__){}
   return ip;
 }
+// ensure block image starts on new paragraph and returns updated ip
+function __imgEnsureParaBreak(storyRef, tfRef, ipRef){
+  var outIp = ipRef;
+  try{
+    var ipChk = (tfRef && tfRef.isValid) ? tfRef.insertionPoints[-1] : (storyRef ? storyRef.insertionPoints[-1] : null);
+    var prev = (ipChk && ipChk.isValid && ipChk.index>0) ? storyRef.insertionPoints[ipChk.index-1] : null;
+    var prevIsCR = false; try{ prevIsCR = (prev && prev.isValid && String(prev.contents)=="\r"); }catch(__){}
+    if (!prevIsCR) {
+      try { ipChk.contents = "\r"; } catch(__){}
+      __imgRecomposeSafe(storyRef);
+      outIp = __imgSafeLastIP(tfRef, storyRef);
+      try { log("[IMG-STACK][prebreak] force new para; ip.index=" + (outIp&&outIp.isValid?outIp.index:"NA")); } catch(__){}
+    }
+  }catch(__){}
+  return outIp;
+}
+// ensure anchor belongs to current frame; pull it forward if needed
+function __imgEnsureAnchorInFrame(storyRef, tfRef, ipRef){
+  var outIp = ipRef;
+  try{
+    if ((!ipRef || !ipRef.isValid) && tfRef && tfRef.isValid) {
+      var guard = 0;
+      while (guard++ < 3) {
+        var holder = (outIp && outIp.isValid && outIp.parentTextFrames && outIp.parentTextFrames.length)
+                     ? outIp.parentTextFrames[0] : null;
+        var ok = (holder && holder.isValid && tfRef && tfRef.isValid && holder.id === tfRef.id);
+        if (ok) break;
+        try { tfRef.insertionPoints[-1].contents = "\r"; } catch(_){ }
+        __imgRecomposeSafe(storyRef);
+        outIp = __imgSafeLastIP(tfRef, storyRef);
+      }
+      try{
+        var _h = (outIp && outIp.isValid && outIp.parentTextFrames && outIp.parentTextFrames.length)
+                 ? outIp.parentTextFrames[0] : null;
+        var _p = (_h && _h.isValid) ? _h.parentPage : null;
+        log("[IMG] ip2.adjust  tf=" + (_h?_h.id:"NA") + " page=" + (_p?_p.name:"NA"));
+      }catch(__){}
+    }
+  }catch(__){}
+  try{
+    if (outIp && outIp.isValid && tfRef && tfRef.isValid) {
+      var para = outIp.paragraphs[0];
+      var p0   = (para && para.isValid) ? para.insertionPoints[0] : null;
+      var h0   = (p0 && p0.isValid && p0.parentTextFrames && p0.parentTextFrames.length)
+                 ? p0.parentTextFrames[0] : null;
+      if (h0 && h0.isValid && h0.id !== tfRef.id) {
+        try { outIp.contents = "\r"; } catch(_){ }
+        __imgRecomposeSafe(storyRef);
+        outIp = __imgSafeLastIP(tfRef, storyRef);
+        try{
+          var _h2 = (outIp && outIp.isValid && outIp.parentTextFrames && outIp.parentTextFrames.length)
+                    ? outIp.parentTextFrames[0] : null;
+          var _p2 = (_h2 && _h2.isValid) ? _h2.parentPage : null;
+          log("[IMG] ip2.breakPara  tf=" + (_h2?_h2.id:"NA") + " page=" + (_p2?_p2.name:"NA"));
+        }catch(__){}
+      }
+      try{ log('[IMGDBG] breakPara ipIdx=' + (outIp?outIp.index:'NA')); }catch(_){}
+    }
+  }catch(__){}
+  return outIp;
+}
 // place an image inline and return its rectangle (or null on failure)
 // post-processing for block images: add CR/ZWS and flush overset
 function __imgFloatPostProcess(rect, st, page, tf){
@@ -538,65 +599,9 @@ function __imgAddImageAtV2(ip, spec) {
             // avoid stacking on the same anchor as previous image
       ip2 = __imgDedupeAnchor(ip2, st);
 
-if (!isInline) {
-        // --- 保障：每次放图前都新起一段，避免与上一张叠在同一锚点 ---
-        try{
-          var ipChk = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1];
-          var prev = (ipChk && ipChk.isValid && ipChk.index>0) ? st.insertionPoints[ipChk.index-1] : null;
-          var prevIsCR = false; try{ prevIsCR = (prev && prev.isValid && String(prev.contents)=="\r"); }catch(__){}
-          if (!prevIsCR) {
-            try { ipChk.contents = "\r"; } catch(__){}
-            __imgRecomposeSafe(st);
-            ip2 = __imgSafeLastIP((typeof tf!=="undefined"?tf:null), st);
-            try { log("[IMG-STACK][prebreak] force new para; ip.index=" + (ip2&&ip2.isValid?ip2.index:"NA")); } catch(__){}
-          }
-        }catch(__){}
-
-        // ---- 关键修正：确保插入点确实在“当前末尾文本框 tf 内”，而不是上一页的尾框 ----
-        try{
-          if ((!ip || !ip.isValid) && typeof tf!=="undefined" && tf && tf.isValid) {
-            var guard = 0;
-            while (guard++ < 3) {
-              var holder = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
-                           ? ip2.parentTextFrames[0] : null;
-              var ok = (holder && holder.isValid && tf && tf.isValid && holder.id === tf.id);
-              if (ok) break;
-              try { tf.insertionPoints[-1].contents = "\r"; } catch(_){ }
-              __imgRecomposeSafe(st);
-              ip2 = __imgSafeLastIP(tf, st);
-            }
-            try{
-              var _h = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
-                       ? ip2.parentTextFrames[0] : null;
-              var _p = (_h && _h.isValid) ? _h.parentPage : null;
-              log("[IMG] ip2.adjust  tf=" + (_h?_h.id:"NA") + " page=" + (_p?_p.name:"NA"));
-            }catch(__){}
-          }
-        }catch(__){}
-
-        // ---- 关键修正②：如果 ip2 处的“段落起点”不在当前文本框 tf（即本框是该段续行），
-        try{
-          if (ip2 && ip2.isValid && typeof tf!=="undefined" && tf && tf.isValid) {
-            var para = ip2.paragraphs[0];
-            var p0   = (para && para.isValid) ? para.insertionPoints[0] : null;
-            var h0   = (p0 && p0.isValid && p0.parentTextFrames && p0.parentTextFrames.length)
-                       ? p0.parentTextFrames[0] : null;
-            if (h0 && h0.isValid && h0.id !== tf.id) {
-              try { ip2.contents = "\r"; } catch(_){ }
-              __imgRecomposeSafe(st);
-              ip2 = __imgSafeLastIP(tf, st);
-              try{
-                var _h2 = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
-                          ? ip2.parentTextFrames[0] : null;
-                var _p2 = (_h2 && _h2.isValid) ? _h2.parentPage : null;
-                log("[IMG] ip2.breakPara  tf=" + (_h2?_h2.id:"NA") + " page=" + (_p2?_p2.name:"NA"));
-              }catch(__){}
-            }
-              try{
-                log('[IMGDBG] breakPara ipIdx=' + (ip2?ip2.index:'NA'));
-              }catch(_){ }
-          }
-        }catch(__){}
+      if (!isInline) {
+        ip2 = __imgEnsureParaBreak(st, tf, ip2);
+        ip2 = __imgEnsureAnchorInFrame(st, tf, ip2);
       } // end !isInline guard for prebreak/breakPara adjustments
 
       try{
