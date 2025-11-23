@@ -113,6 +113,13 @@ function __imgDedupeAnchor(ipCandidate, st){
   }catch(_){ }
   return ipCandidate;
 }
+// unify fetching/adjusting insertion point for block images
+function __imgGetValidInsertionPoint(storyRef, tfRef, ipRef){
+  var outIp = __imgDedupeAnchor(ipRef, storyRef);
+  outIp = __imgEnsureParaBreak(storyRef, tfRef, outIp);
+  outIp = __imgEnsureAnchorInFrame(storyRef, tfRef, outIp);
+  return outIp;
+}
 // ensure non-inline images start on a new paragraph to avoid stacking
 function __imgEnsureBreakBeforeFloat(st, tf, ip2){
   try{
@@ -652,12 +659,10 @@ function __imgAddImageAtV2(ip, spec) {
       // to avoid ending up in the last frame of the story on the previous page.
       var ip2 = (ip && ip.isValid) ? ip : __imgSafeLastIP((typeof tf!=="undefined"?tf:null), st);
 
-      // avoid stacking on the same anchor as previous image
-      ip2 = __imgDedupeAnchor(ip2, st);
-
       if (!isInline) {
-        ip2 = __imgEnsureParaBreak(st, tf, ip2);
-        ip2 = __imgEnsureAnchorInFrame(st, tf, ip2);
+        ip2 = __imgGetValidInsertionPoint(st, tf, ip2);
+      } else {
+        ip2 = __imgDedupeAnchor(ip2, st);
       } // end !isInline guard for prebreak/breakPara adjustments
 
       __imgLogAnchorPre(ip2, st);
