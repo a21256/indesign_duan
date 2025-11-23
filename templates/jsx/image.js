@@ -54,6 +54,25 @@ var __ALLOW_IMG_EXT_FALLBACK = (typeof __ALLOW_IMG_EXT_FALLBACK !== "undefined")
                                ? __ALLOW_IMG_EXT_FALLBACK
                                : (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean"
                                   ? CONFIG.flags.allowImgExtFallback : true);
+// safe recomposition wrapper
+function __imgRecomposeSafe(obj){
+  try{ if (obj && obj.isValid && typeof obj.recompose === "function"){ obj.recompose(); return true; } }catch(_){}
+  return false;
+}
+// safe fetch last insertion point from tf or fallback story
+function __imgSafeLastIP(tfMaybe, storyMaybe){
+  try{
+    if (tfMaybe && tfMaybe.isValid && tfMaybe.insertionPoints && tfMaybe.insertionPoints.length){
+      return tfMaybe.insertionPoints[-1];
+    }
+  }catch(_){}
+  try{
+    if (storyMaybe && storyMaybe.isValid && storyMaybe.insertionPoints && storyMaybe.insertionPoints.length){
+      return storyMaybe.insertionPoints[-1];
+    }
+  }catch(_){}
+  return null;
+}
 // place an image inline and return its rectangle (or null on failure)
 function __imgPlaceInline(ip, fileObj){
   if (!ip || !ip.isValid || !fileObj) return null;
@@ -498,10 +517,7 @@ function __imgAddImageAtV2(ip, spec) {
       if (spec && spec.forceBlock) isInline = false;
 
       // 关键：默认用“当前可写文本框 tf 的末尾插入点”，避免落到上一页的 story 尾框
-      var ip2 = (ip && ip.isValid) ? ip
-               : ((typeof tf!=="undefined" && tf && tf.isValid && tf.insertionPoints && tf.insertionPoints.length)
-                    ? tf.insertionPoints[-1]
-                    : st.insertionPoints[-1]);
+      var ip2 = (ip && ip.isValid) ? ip : __imgSafeLastIP((typeof tf!=="undefined"?tf:null), st);
 
       // --- FIX: 连续图片落在同一 IP 时，先推进一段，避免叠放 ---
             // avoid stacking on the same anchor as previous image
@@ -515,8 +531,8 @@ if (!isInline) {
           var prevIsCR = false; try{ prevIsCR = (prev && prev.isValid && String(prev.contents)=="\r"); }catch(__){}
           if (!prevIsCR) {
             try { ipChk.contents = "\r"; } catch(__){}
-            try { st.recompose(); } catch(__){}
-            try { ip2 = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1]; } catch(__){}
+            __imgRecomposeSafe(st);
+            ip2 = __imgSafeLastIP((typeof tf!=="undefined"?tf:null), st);
             try { log("[IMG-STACK][prebreak] force new para; ip.index=" + (ip2&&ip2.isValid?ip2.index:"NA")); } catch(__){}
           }
         }catch(__){}
@@ -531,8 +547,8 @@ if (!isInline) {
               var ok = (holder && holder.isValid && tf && tf.isValid && holder.id === tf.id);
               if (ok) break;
               try { tf.insertionPoints[-1].contents = "\r"; } catch(_){ }
-              try { st.recompose(); } catch(_){ }
-              try { ip2 = tf.insertionPoints[-1]; } catch(_){ }
+              __imgRecomposeSafe(st);
+              ip2 = __imgSafeLastIP(tf, st);
             }
             try{
               var _h = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
@@ -552,8 +568,8 @@ if (!isInline) {
                        ? p0.parentTextFrames[0] : null;
             if (h0 && h0.isValid && h0.id !== tf.id) {
               try { ip2.contents = "\r"; } catch(_){ }
-              try { st.recompose(); } catch(_){ }
-              try { ip2 = tf.insertionPoints[-1]; } catch(_){ }
+              __imgRecomposeSafe(st);
+              ip2 = __imgSafeLastIP(tf, st);
               try{
                 var _h2 = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)
                           ? ip2.parentTextFrames[0] : null;
