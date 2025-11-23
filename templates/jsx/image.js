@@ -874,24 +874,9 @@ function __imgAddFloatingImage(tf, story, page, spec){
       // 若页面放置失败，继续走原浮动逻辑
     }
 
-      var placed = null;
-      try { placed = ip.place(f); } catch(ePl){ log("[IMGFLOAT6][ERR] place failed(ip): " + ePl); return null; }
-      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[IMGFLOAT6][ERR] place returned invalid"); return null; }
-
-      var item = placed[0], rect = null, cname = "";
-    try { cname = String(item.constructor.name); } catch(_){}
-    if (cname === "Rectangle") rect = item;
-    else {
-      try {
-        var cur = item;
-        for (var g=0; g<6 && cur && cur.isValid; g++){
-          var nm=""; try{ nm=String(cur.constructor.name); }catch(__){}
-          if (nm==="Rectangle"){ rect=cur; break; }
-          cur = cur.parent;
-        }
-      } catch(_){}
-    }
-    if (!rect || !rect.isValid) { log("[IMGFLOAT6][ERR] no rectangle after place"); return null; }
+      // place anchored image and get its rectangle
+      var rect = __imgPlaceInline(ip, f);
+      if (!rect || !rect.isValid) { log("[IMGFLOAT6][ERR] no rectangle after place"); return null; }
 
     try {
       var _aos = rect.anchoredObjectSettings;
