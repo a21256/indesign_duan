@@ -776,44 +776,17 @@ function __imgAddFloatingImage(tf, story, page, spec){
       targetW = Math.max(10, right - left);
       var bottom = top + targetH;
 
-      var rect = pageObj.rectangles.add();
-      try{ rect.strokeWeight = 0; rect.fillOpacity = 100; }catch(_){}
-      rect.geometricBounds = [top, left, bottom, right];
-      var placed = null;
-      try{
-        placed = rect.place(fileObj);
-      }catch(ePlacePage){
-        log("[IMGFLOAT6][ERR] page place failed: "+ePlacePage);
-        try{ rect.remove(); }catch(__){}
-        return null;
+      var rect = __imgPlaceOnPage(pageObj, stObj, anchorIdx, fileObj, spec);
+      if (rect && rect.isValid) {
+        _applyFloatTextWrap(rect);
+        try{
+          log("[IMGFLOAT6][PAGE] gb="+rect.geometricBounds+" w="+targetW.toFixed(2)+" h="+targetH.toFixed(2)
+              +" offX="+offXP.toFixed(2)+" offY="+offYP.toFixed(2)+" page="+(pageObj.name||"NA"));
+        }catch(_){ }
+        try{ rect.label = "PAGE-FLOAT"; }catch(_){ }
       }
-      if (!placed || !placed.length || !(placed[0] && placed[0].isValid)){
-        try{ rect.remove(); }catch(__){}
-        log("[IMGFLOAT6][ERR] page place invalid result");
-        return null;
-      }
-      try{ rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); }catch(_){}
-      _applyFloatTextWrap(rect);
-      try{
-        log("[IMGFLOAT6][PAGE] gb="+rect.geometricBounds+" w="+targetW.toFixed(2)+" h="+targetH.toFixed(2)
-            +" offX="+offXP.toFixed(2)+" offY="+offYP.toFixed(2)+" page="+(pageObj.name||"NA"));
-      }catch(_){}
-      try{ rect.label = "PAGE-FLOAT"; }catch(_){}
-
-      // 在 story 中依旧插入段落分隔，避免下一段落堆叠
-      try{
-        var aft1 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
-          ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+1)]
-          : null;
-        if (aft1 && aft1.isValid) aft1.contents = "\r";
-        var aft2 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
-          ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+2)]
-          : null;
-        if (aft2 && aft2.isValid) aft2.contents = "\u200B";
-        try{ stObj.recompose(); }catch(__re){}
-      }catch(_){}
-
       return rect;
+
     }
 
     function _applyFloatTextWrap(rectObj){
