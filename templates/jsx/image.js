@@ -54,15 +54,6 @@ var __ALLOW_IMG_EXT_FALLBACK = (typeof __ALLOW_IMG_EXT_FALLBACK !== "undefined")
                                ? __ALLOW_IMG_EXT_FALLBACK
                                : (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean"
                                   ? CONFIG.flags.allowImgExtFallback : true);
-// normalize common units to pt
-function __imgToPtLocal(v){
-  var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
-  if (/mm$/i.test(s)) return parseFloat(s)*2.83464567;
-  if (/pt$/i.test(s)) return parseFloat(s);
-  if (/px$/i.test(s)) return parseFloat(s)*0.75;
-  if (s==="") return 0;
-  var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
-}
 // place an image inline and return its rectangle (or null on failure)
 function __imgPlaceInline(ip, fileObj){
   if (!ip || !ip.isValid || !fileObj) return null;
@@ -158,21 +149,6 @@ function __imgEnsureAnchorAtTfTail(ip, st, tf){
   return ip;
 }
 // place an image inline and return its rectangle (or null on failure)
-function __imgPlaceInline(ip, fileObj){
-  if (!ip || !ip.isValid || !fileObj) return null;
-  var placed = null;
-  try { placed = ip.place(fileObj); } catch(ePlace){ log("[ERR] __imgAddImageAtV2: place failed: " + ePlace); return null; }
-  if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] __imgAddImageAtV2: place returned invalid"); return null; }
-
-  var item = placed[0], rect=null, cname="";
-  try { cname = String(item.constructor.name); } catch(_){}
-  if (cname==="Rectangle") rect = item;
-  else {
-    try { if (item && item.parent && item.parent.isValid && String(item.parent.constructor.name)==="Rectangle") rect=item.parent; } catch(_){}
-  }
-  if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
-  return rect;
-}
 // post-processing for block images: add CR/ZWS and flush overset
 function __imgFloatPostProcess(rect, st, page, tf){
   var story = st;
@@ -345,6 +321,35 @@ function __imgPlaceOnPage(pageObj, stObj, anchorIdx, fileObj, spec){
   }catch(_){ }
   return rect;
 
+}
+// apply text wrap for floating rectangles (page-level or anchored)
+function __imgApplyFloatTextWrap(rectObj, spec){
+  try{
+    if (!rectObj || !rectObj.isValid) return;
+    var tw = rectObj.textWrapPreferences;
+    if (!tw) return;
+    var wrapKey = String((spec && spec.wrap)||"").toLowerCase();
+    var wrapMode = TextWrapModes.NONE;
+    if (wrapKey === "wrapsquare" || wrapKey === "square"){
+      wrapMode = TextWrapModes.BOUNDING_BOX_TEXT_WRAP;
+    } else if (wrapKey === "wraptight" || wrapKey === "tight" || wrapKey === "wrapthrough"){
+      wrapMode = TextWrapModes.OBJECT_SHAPE_TEXT_WRAP;
+    } else if (wrapKey === "wraptopbottom" || wrapKey === "topbottom"){
+      wrapMode = TextWrapModes.JUMP_OBJECT_TEXT_WRAP;
+    } else if (wrapKey === "wrapbehind"){
+      wrapMode = TextWrapModes.NONE;
+    }
+    tw.textWrapMode = wrapMode;
+    if (wrapMode !== TextWrapModes.NONE){
+      var distT = __imgToPtLocal(spec && spec.distT) || 0;
+      var distB = __imgToPtLocal(spec && spec.distB) || 0;
+      var distL = __imgToPtLocal(spec && spec.distL);
+      var distR = __imgToPtLocal(spec && spec.distR);
+      if (!distL && distL !== 0) distL = 12;
+      if (!distR && distR !== 0) distR = 12;
+      tw.textWrapOffset = [distT, distL, distB, distR];
+    }
+  }catch(_){}
 }
 function __imgFloatSizeAndWrap(rect, spec, isInline){
   if (!rect || !rect.isValid) return;
@@ -714,122 +719,6 @@ function __imgAddFloatingImage(tf, story, page, spec){
       return !!(pageRefs[h] && pageRefs[v]);
     }
 
-    function _placeOnPage(pageObj, stObj, anchorIdx, fileObj){
-      if (!pageObj || !pageObj.isValid){
-        log("[IMGFLOAT6][ERR] page invalid for page-level image");
-        return null;
-      }
-      var pb = pageObj.bounds || [0,0,0,0];
-      var mp = pageObj.marginPreferences || {};
-      var pageTop = pb[0], pageLeft = pb[1], pageBottom = pb[2], pageRight = pb[3];
-      var marginTop = parseFloat(mp.top)||0;
-      var marginBottom = parseFloat(mp.bottom)||0;
-      var marginLeft = parseFloat(mp.left)||0;
-      var marginRight = parseFloat(mp.right)||0;
-      var innerLeft = pageLeft + marginLeft;
-      var innerRight = pageRight - marginRight;
-      var innerTop = pageTop + marginTop;
-      var innerBottom = pageBottom - marginBottom;
-      var innerWidth = Math.max(1, innerRight - innerLeft);
-      var innerHeight = Math.max(1, innerBottom - innerTop);
-
-      var pageWidth = pageRight - pageLeft;
-      var pageHeight = pageBottom - pageTop;
-      var wordPageWidth = __imgToPtLocal(spec && spec.wordPageWidth);
-      var wordPageHeight = __imgToPtLocal(spec && spec.wordPageHeight);
-
-      var posHrefRaw = _lowerFlag(spec && spec.posHref);
-      var posVrefRaw = _lowerFlag(spec && spec.posVref);
-      var offXP = __imgToPtLocal(spec && spec.offX) || 0;
-      var offYP = __imgToPtLocal(spec && spec.offY) || 0;
-      if (wordPageWidth && wordPageWidth > 0){
-        offXP = offXP * (pageWidth / wordPageWidth);
-      }
-      if (wordPageHeight && wordPageHeight > 0){
-        offYP = offYP * (pageHeight / wordPageHeight);
-      }
-      var pageRefKeys = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
-      var useInnerH = !!pageRefKeys[posHrefRaw];
-      var useInnerV = !!pageRefKeys[posVrefRaw] || posVrefRaw==="paragraph";
-
-      var baseX = useInnerH ? innerLeft : pageLeft;
-      if (posHrefRaw==="column") baseX = pageLeft + marginLeft;
-      var baseY = useInnerV ? innerTop : pageTop;
-
-      var maxWidth = useInnerH ? innerWidth : (pageRight - pageLeft);
-      var maxHeight = useInnerV ? innerHeight : (pageBottom - pageTop);
-      var targetW = wPt>0 ? Math.min(wPt, maxWidth) : maxWidth;
-      var targetH = hPt>0 ? Math.min(hPt, maxHeight) : maxHeight;
-      if (targetW <= 0) targetW = maxWidth;
-      if (targetH <= 0) targetH = maxHeight;
-
-      var guardL = Math.max(0, __imgToPtLocal(spec && spec.distL) || 0);
-      var guardR = Math.max(0, __imgToPtLocal(spec && spec.distR) || 0);
-      var guardTotal = guardL + guardR;
-      if (guardTotal > 0){
-        var availableW = Math.max(12, maxWidth - guardTotal);
-        if (targetW > availableW) targetW = availableW;
-      }
-
-      var left = baseX + offXP;
-      var top = baseY + offYP;
-      var maxBottom = baseY + maxHeight;
-
-      var innerLimitLeft = (useInnerH ? innerLeft : pageLeft) + guardL;
-      var innerLimitRight = (useInnerH ? innerRight : pageRight) - guardR;
-      if (innerLimitRight <= innerLimitLeft){
-        innerLimitRight = innerLimitLeft + Math.max(10, targetW);
-      }
-      if (left < innerLimitLeft) left = innerLimitLeft;
-      if (left > innerLimitRight - targetW) left = Math.max(innerLimitLeft, innerLimitRight - targetW);
-      if (top < pageTop) top = pageTop;
-      if (targetH > (maxBottom - top)) targetH = Math.max(10, maxBottom - top);
-      var right = Math.min(innerLimitRight, left + targetW);
-      targetW = Math.max(10, right - left);
-      var bottom = top + targetH;
-
-      var rect = __imgPlaceOnPage(pageObj, stObj, anchorIdx, fileObj, spec);
-      if (rect && rect.isValid) {
-        _applyFloatTextWrap(rect);
-        try{
-          log("[IMGFLOAT6][PAGE] gb="+rect.geometricBounds+" w="+targetW.toFixed(2)+" h="+targetH.toFixed(2)
-              +" offX="+offXP.toFixed(2)+" offY="+offYP.toFixed(2)+" page="+(pageObj.name||"NA"));
-        }catch(_){ }
-        try{ rect.label = "PAGE-FLOAT"; }catch(_){ }
-      }
-      return rect;
-
-    }
-
-    function _applyFloatTextWrap(rectObj){
-      try{
-        if (!rectObj || !rectObj.isValid) return;
-        var tw = rectObj.textWrapPreferences;
-        if (!tw) return;
-        var wrapKey = _lowerFlag(spec && spec.wrap);
-        var wrapMode = TextWrapModes.NONE;
-        if (wrapKey === "wrapsquare" || wrapKey === "square"){
-          wrapMode = TextWrapModes.BOUNDING_BOX_TEXT_WRAP;
-        } else if (wrapKey === "wraptight" || wrapKey === "tight" || wrapKey === "wrapthrough"){
-          wrapMode = TextWrapModes.OBJECT_SHAPE_TEXT_WRAP;
-        } else if (wrapKey === "wraptopbottom" || wrapKey === "topbottom"){
-          wrapMode = TextWrapModes.JUMP_OBJECT_TEXT_WRAP;
-        } else if (wrapKey === "wrapbehind"){
-          wrapMode = TextWrapModes.NONE;
-        }
-        tw.textWrapMode = wrapMode;
-        if (wrapMode !== TextWrapModes.NONE){
-          var distT = __imgToPtLocal(spec && spec.distT) || 0;
-          var distB = __imgToPtLocal(spec && spec.distB) || 0;
-          var distL = __imgToPtLocal(spec && spec.distL);
-          var distR = __imgToPtLocal(spec && spec.distR);
-          if (!distL && distL !== 0) distL = 12;
-          if (!distR && distR !== 0) distR = 12;
-          tw.textWrapOffset = [distT, distL, distB, distR];
-        }
-      }catch(_){}
-    }
-
     var wPt=__imgToPtLocal(spec&&spec.w), hPt=__imgToPtLocal(spec&&spec.h);
     var posH=String((spec&&spec.posH)||"center").toLowerCase();
     var alignMode=String((spec&&spec.align)||"").toLowerCase();
@@ -914,41 +803,37 @@ function __imgAddFloatingImage(tf, story, page, spec){
           targetPage = (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid) ? tf.parentPage : null;
         }
       }catch(_){}
-      var pageRect = _placeOnPage(targetPage, st, anchorIndex, f);
-          if (pageRect){
-            try{
-              var thisPage = (pageRect.parentPage && pageRect.parentPage.isValid) ? pageRect.parentPage : targetPage;
-              if (thisPage && thisPage.isValid) page = thisPage;
-              try{
-                __imgRecordWordSeqPage(wordSeq, thisPage);
-              }catch(_){}
-              try{
-                if (__FLOAT_CTX){
-                  if (!__FLOAT_CTX.imgAnchors) __FLOAT_CTX.imgAnchors = {};
-                  var anchorHintKey = spec.anchorId || spec.docPrId || "";
-                  if (anchorHintKey){
-                    __FLOAT_CTX.imgAnchors[anchorHintKey] = {
-                      page: page,
-                      anchorX: (ip && ip.isValid) ? ip.horizontalOffset : null,
-                      anchorY: (ip && ip.isValid) ? ip.baseline : null,
-                      wordSeq: wordSeq
-                    };
-                    try{
-                      log("[IMGFLOAT6][DBG] store ctx key=" + anchorHintKey + " page=" + (page?page.name:"NA"));
-                    }catch(_){}
-                  }
+      var pageRect = __imgPlaceOnPage(targetPage, st, anchorIndex, f, spec);
+      if (pageRect && pageRect.isValid){
+        __imgApplyFloatTextWrap(pageRect, spec);
+        try{ pageRect.label = 'PAGE-FLOAT'; }catch(_){ }
+        try{
+          var thisPage = (pageRect.parentPage && pageRect.parentPage.isValid) ? pageRect.parentPage : targetPage;
+          if (thisPage && thisPage.isValid) page = thisPage;
+          __imgRecordWordSeqPage(wordSeq, thisPage);
+          if (__FLOAT_CTX){
+            if (!__FLOAT_CTX.imgAnchors) __FLOAT_CTX.imgAnchors = {};
+            var anchorHintKey = spec.anchorId || spec.docPrId || '';
+            if (anchorHintKey){
+              __FLOAT_CTX.imgAnchors[anchorHintKey] = {
+                page: page,
+                anchorX: (ip && ip.isValid) ? ip.horizontalOffset : null,
+                anchorY: (ip && ip.isValid) ? ip.baseline : null,
+                wordSeq: wordSeq
+              };
+              try{ log("[IMGFLOAT6][DBG] store ctx key=" + anchorHintKey + " page=" + (page ? page.name : "NA")); }catch(_){ }
             }
-          }catch(_){}
-        }catch(_){}
+          }
+        }catch(_){ }
         try{
           if (st && st.isValid){
             var afterPara = st.insertionPoints[Math.min(st.insertionPoints.length-1, anchorIndex+1)];
-            if (afterPara && afterPara.isValid) afterPara.contents = "\r";
+            if (afterPara && afterPara.isValid) afterPara.contents = '\r';
             var ztail = st.insertionPoints[Math.min(st.insertionPoints.length-1, anchorIndex+2)];
-            if (ztail && ztail.isValid) ztail.contents = "\u200B";
-            try{ st.recompose(); }catch(__re){}
+            if (ztail && ztail.isValid) ztail.contents = '\u200B';
+            try{ st.recompose(); }catch(__re){ }
           }
-        }catch(_){}
+        }catch(_){ }
         var nextPkt = _ensureNextPageFrame(page);
         if (nextPkt && nextPkt.frame && nextPkt.page){
           page = nextPkt.page;
@@ -956,18 +841,18 @@ function __imgAddFloatingImage(tf, story, page, spec){
           story = tf.parentStory;
           curTextFrame = tf;
           try{
-            if (typeof _safeIP === "function"){
+            if (typeof _safeIP === 'function'){
               ip = _safeIP(tf);
             }
             if ((!ip || !ip.isValid) && tf && tf.isValid && tf.insertionPoints && tf.insertionPoints.length){
               ip = tf.insertionPoints[-1];
             }
-          }catch(_){}
+          }catch(_){ }
         }
-        try{ __LAST_IMG_ANCHOR_IDX = anchorIndex; }catch(_){}
+        try{ __LAST_IMG_ANCHOR_IDX = anchorIndex; }catch(_){ }
         return pageRect;
       }
-      // 若页面放置失败，继续走原浮动逻辑
+      // page-anchor failed; continue with inline logic
     }
 
       // place anchored image and get its rectangle
@@ -982,7 +867,7 @@ function __imgAddFloatingImage(tf, story, page, spec){
         try{ _aos.lockPosition = false; }catch(_){}
       }
     } catch(_){}
-    _applyFloatTextWrap(rect);
+    __imgApplyFloatTextWrap(rect, spec);
     try{ rect.fittingOptions.autoFit=false; rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
     try{
       var _imgCount = null, _gCount = null, _cid = null, _pid = null;
@@ -1417,6 +1302,48 @@ if (!gb){
   }
 }
 
+// resolve target page and refs for floating frames
+function __imgResolveFloatFramePage(spec, anchorCtx, anchorIP, wordSeq, tf, curPage){
+  function _lower(v){
+    if (v == null) return "";
+    return String(v).replace(/^\s+|\s+$/g,"").toLowerCase();
+  }
+  var posHrefRaw = _lower(spec && spec.posHref) || "page";
+  var posVrefRaw = _lower(spec && spec.posVref) || "page";
+  var doc = app.activeDocument;
+  var targetPage = null;
+  var seqApplied = false;
+
+  try{
+    if (wordSeq){
+      var pSeq = __imgPageForWordSeq(wordSeq);
+      if (pSeq && pSeq.isValid){ targetPage = pSeq; seqApplied = true; }
+    }
+  }catch(_){}
+  try{
+    if (!targetPage && anchorCtx && anchorCtx.page && anchorCtx.page.isValid){
+      targetPage = anchorCtx.page;
+    }
+  }catch(_){}
+  try{
+    if (!targetPage && anchorIP && anchorIP.isValid){
+      var holder = (anchorIP.parentTextFrames && anchorIP.parentTextFrames.length) ? anchorIP.parentTextFrames[0] : null;
+      if (holder && holder.isValid && holder.parentPage && holder.parentPage.isValid){
+        targetPage = holder.parentPage;
+      }
+    }
+  }catch(_){}
+  try{
+    if (!targetPage && curPage && curPage.isValid) targetPage = curPage;
+  }catch(_){}
+  try{
+    if ((!targetPage || !targetPage.isValid) && doc && doc.pages && doc.pages.length){
+      targetPage = doc.pages[0];
+    }
+  }catch(_){}
+  return {page: targetPage, posHrefRaw: posHrefRaw, posVrefRaw: posVrefRaw, seqApplied: seqApplied};
+}
+
 function __imgAddFloatingFrame(tf, story, page, spec){
   try{
   try{ log("[FRAMEFLOAT] enter id="+(spec&&spec.id)+" textLen="+((spec&&spec.text)||"").length); }catch(_){}
@@ -1454,114 +1381,31 @@ function __imgAddFloatingFrame(tf, story, page, spec){
       if (!isNaN(tmpSeq) && isFinite(tmpSeq)) wordSeq = tmpSeq;
     }
   }catch(_){}
-  function _isPageRef(v){
-    return !!{"page":1,"pagearea":1,"pageedge":1,"margin":1,"spread":1}[v];
-  }
-  var posHrefRaw = _lowerFlag(spec && spec.posHref);
-  var posVrefRaw = _lowerFlag(spec && spec.posVref);
-  var posVRaw = _lowerFlag(spec && spec.posV);
-  var wantsSeqAutoPage = false;
-  if (wordSeq){
-    if (_isPageRef(posHrefRaw) && _isPageRef(posVrefRaw)){
-      wantsSeqAutoPage = true;
-    } else if (!anchorCtx || anchorWordSeq == null || anchorWordSeq !== wordSeq){
-      wantsSeqAutoPage = true;
-    }
-  }
-  var pageFromSeq = null;
-  var seqPageWasApplied = false;
-  try{
-    if (__FLOAT_CTX && __FLOAT_CTX.wordSeqPages && wordSeq){
-      var seqCtx = __FLOAT_CTX.wordSeqPages[wordSeq];
-      if (seqCtx && seqCtx.page && seqCtx.page.isValid){
-        pageFromSeq = seqCtx.page;
-      }
-    }
-  }catch(_){}
-  if (!pageFromSeq && wantsSeqAutoPage){
-    try{
-      pageFromSeq = __imgPageForWordSeq(wordSeq);
-    }catch(_autoSeq){}
-  }
-  try{
-    log("[FRAMEFLOAT][DBG] hintKey=" + (hintKey||"") + " ctxExists=" + (anchorCtx ? "Y":"N"));
-    log("[FRAMEFLOAT][SEQ] wordSeq=" + (wordSeq!=null?wordSeq:"NA")
-        + " want=" + wantsSeqAutoPage
-        + " pageFromSeq=" + (pageFromSeq && pageFromSeq.isValid ? pageFromSeq.name : "NA"));
-  }catch(_){}
-  function _shiftPage(basePageObj, offset){
-    try{
-      if (!basePageObj || !basePageObj.isValid) return basePageObj;
-      var docRef = basePageObj.parent;
-      if (!docRef || !docRef.pages) return basePageObj;
-      var targetIndex = basePageObj.documentOffset + offset;
-      if (targetIndex < 0) targetIndex = 0;
-      while (targetIndex >= docRef.pages.length){
-        docRef.pages.add(LocationOptions.AT_END);
-      }
-      return docRef.pages[targetIndex];
-    }catch(_shiftErr){}
-    return basePageObj;
-  }
-
-  var targetPage = null;
-  var enforceHintPage = false;
-  try{
-    if (page && page.isValid) targetPage = page;
-    else if (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid) targetPage = tf.parentPage;
-    else if (doc && doc.pages && doc.pages.length) targetPage = doc.pages[0];
-  }catch(_){}
-  if (pageFromSeq && pageFromSeq.isValid){
-    targetPage = pageFromSeq;
-    seqPageWasApplied = true;
-    enforceHintPage = true;
-  }
-  if (!pageFromSeq && wordSeq && __FLOAT_CTX){
-    try{
-      var baseSeq = __FLOAT_CTX.wordSeqBaseSeq;
-      var basePage = __FLOAT_CTX.wordSeqBasePage;
-      if (baseSeq != null && basePage && basePage.isValid){
-        var offset = wordSeq - baseSeq;
-        if (offset !== 0){
-          var shiftedFromBase = _shiftPage(basePage, offset);
-          if (shiftedFromBase && shiftedFromBase.isValid){
-            targetPage = shiftedFromBase;
-            seqPageWasApplied = true;
-            enforceHintPage = true;
-            if (!__FLOAT_CTX.wordSeqPages) __FLOAT_CTX.wordSeqPages = {};
-            __FLOAT_CTX.wordSeqPages[wordSeq] = {page: shiftedFromBase};
-          }
-        } else {
-          targetPage = basePage;
-          seqPageWasApplied = true;
-          enforceHintPage = true;
-          if (!__FLOAT_CTX.wordSeqPages) __FLOAT_CTX.wordSeqPages = {};
-          __FLOAT_CTX.wordSeqPages[wordSeq] = {page: basePage};
-        }
-      }
-    }catch(_baseSeq){}
-  }
-  var allowAnchorOverride = true;
-  if (wordSeq && anchorWordSeq != null && anchorWordSeq !== wordSeq){
-    allowAnchorOverride = false;
-  }
-  if (anchorCtx && anchorCtx.page && anchorCtx.page.isValid && !seqPageWasApplied && allowAnchorOverride){
-    targetPage = anchorCtx.page;
-    enforceHintPage = true;
-  }
-  try{
-    if (!enforceHintPage && anchorIP && anchorIP.isValid){
-      var anchorFrame = anchorIP.parentTextFrames && anchorIP.parentTextFrames.length ? anchorIP.parentTextFrames[0] : null;
-      if (anchorFrame && anchorFrame.isValid && anchorFrame.parentPage && anchorFrame.parentPage.isValid){
-        targetPage = anchorFrame.parentPage;
-      }
-    }
-  }catch(_){}
+  var pageInfo = __imgResolveFloatFramePage(spec, anchorCtx, anchorIP, wordSeq, tf, page);
+  var posHrefRaw = pageInfo.posHrefRaw;
+  var posVrefRaw = pageInfo.posVrefRaw;
+  var targetPage = pageInfo.page;
+  var forceSeqBase = pageInfo.seqApplied;
   if (!targetPage || !targetPage.isValid){
-    try{ log("[FRAMEFLOAT][ERROR] missing valid page"); }catch(_){}
+    try{ log("[FRAMEFLOAT][ERR] target page invalid"); }catch(_){}
     return null;
   }
-  var forceSeqBase = seqPageWasApplied;
+  function _shiftPage(basePage, offset){
+    try{
+      if (!basePage || !basePage.isValid || !offset) return basePage;
+      var docRef = app && app.activeDocument;
+      if (!docRef || !docRef.pages) return basePage;
+      var idx = (typeof basePage.documentOffset === "number") ? basePage.documentOffset : basePage.index;
+      var dest = idx + offset;
+      if (dest < 0) dest = 0;
+      while (dest >= docRef.pages.length){
+        if (__SAFE_PAGE_LIMIT && docRef.pages.length >= __SAFE_PAGE_LIMIT) break;
+        docRef.pages.add(LocationOptions.AT_END);
+      }
+      if (dest >=0 && dest < docRef.pages.length) return docRef.pages[dest];
+    }catch(_){}
+    return basePage;
+  }
   function _calcBounds(){
     function _metrics(pageObj){
       var pb = pageObj.bounds || [0,0,0,0];
