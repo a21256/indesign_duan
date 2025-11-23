@@ -228,6 +228,28 @@ function __imgEnsureAnchorInFrame(storyRef, tfRef, ipRef){
   }catch(__){}
   return outIp;
 }
+// log anchor position before placing
+function __imgLogAnchorPre(ipRef, storyRef){
+  try{
+    var _tf0 = (ipRef && ipRef.isValid && ipRef.parentTextFrames && ipRef.parentTextFrames.length)? ipRef.parentTextFrames[0] : null;
+    var _pg0 = (_tf0 && _tf0.isValid)? _tf0.parentPage : null;
+    log("[IMG] anchor.pre  tf=" + (_tf0?_tf0.id:"NA") + " page=" + (_pg0?_pg0.name:"NA")
+        + " storyLen=" + (storyRef?storyRef.characters.length:"NA"));
+  }catch(_){}
+}
+// log placement info after image placed
+function __imgLogPlacedRect(rect){
+  try{
+    var _tf1 = (rect.storyOffset && rect.storyOffset.isValid && rect.storyOffset.parentTextFrames && rect.storyOffset.parentTextFrames.length)
+                ? rect.storyOffset.parentTextFrames[0] : null;
+    var _pg1 = (_tf1 && _tf1.isValid)? _tf1.parentPage : null;
+    log("[IMG] placed.rect  holderTf=" + (_tf1?_tf1.id:"NA") + " page=" + (_pg1?_pg1.name:"NA"));
+    try{
+      var _aNow = rect.storyOffset;
+      log('[IMGDBG] anchor.idx=' + (_aNow&&_aNow.isValid?_aNow.index:'NA'));
+    }catch(_){}
+  }catch(_){}
+}
 // place an image inline and return its rectangle (or null on failure)
 // post-processing for block images: add CR/ZWS and flush overset
 function __imgFloatPostProcess(rect, st, page, tf){
@@ -604,12 +626,7 @@ function __imgAddImageAtV2(ip, spec) {
         ip2 = __imgEnsureAnchorInFrame(st, tf, ip2);
       } // end !isInline guard for prebreak/breakPara adjustments
 
-      try{
-        var _tf0 = (ip2 && ip2.isValid && ip2.parentTextFrames && ip2.parentTextFrames.length)? ip2.parentTextFrames[0] : null;
-        var _pg0 = (_tf0 && _tf0.isValid)? _tf0.parentPage : null;
-        log("[IMG] anchor.pre  tf=" + (_tf0?_tf0.id:"NA") + " page=" + (_pg0?_pg0.name:"NA")
-            + " storyLen=" + (st?st.characters.length:"NA"));
-      }catch(_){}
+      __imgLogAnchorPre(ip2, st);
       if (!ip2 || !ip2.isValid) { log("[ERR] __imgAddImageAtV2: invalid insertion point"); return null; }
 
       // 3) place
@@ -624,17 +641,7 @@ function __imgAddImageAtV2(ip, spec) {
         try { log("[IMG-STACK][placed] anchor.index=" + aNow.index); } catch(__){}
       }catch(_){}
 
-      try{
-        var _tf1 = (rect.storyOffset && rect.storyOffset.isValid && rect.storyOffset.parentTextFrames && rect.storyOffset.parentTextFrames.length)
-                    ? rect.storyOffset.parentTextFrames[0] : null;
-        var _pg1 = (_tf1 && _tf1.isValid)? _tf1.parentPage : null;
-        log("[IMG] placed.rect  holderTf=" + (_tf1?_tf1.id:"NA") + " page=" + (_pg1?_pg1.name:"NA"));
-        try{
-          var _aNow = rect.storyOffset;
-          log('[IMGDBG] anchor.idx=' + (_aNow&&_aNow.isValid?_aNow.index:'NA'));
-        }catch(_){}
-
-      }catch(_){}
+      __imgLogPlacedRect(rect);
 
       // 5) anchor + sizing/wrap
       try {
