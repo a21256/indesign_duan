@@ -1,4 +1,4 @@
-// ==== path helpers migrated from entry ====
+﻿// ==== path helpers migrated from entry ====
 function __imgNormPath(p){
         if(!p) return null;
         p = String(p).replace(/^\s+|\s+$/g,"").replace(/\\/g,"/");
@@ -223,6 +223,30 @@ function __imgEnsureAnchorInFrame(storyRef, tfRef, ipRef){
     }
   }catch(__){}
   return outIp;
+}
+// remember last anchor index for deduping consecutive placements
+function __imgRecordLastAnchor(rect){
+  try{
+    var aNow = rect && rect.storyOffset;
+    if (aNow && aNow.isValid) __LAST_IMG_ANCHOR_IDX = aNow.index;
+    try { log("[IMG-STACK][placed] anchor.index=" + (aNow&&aNow.isValid?aNow.index:"NA")); } catch(__){}
+  }catch(__){}
+}
+// adjust paragraph alignment/spacing for placed image
+function __imgAdjustImageParagraph(rect, spec, isInline){
+  try{
+    var p = rect && rect.storyOffset ? rect.storyOffset.paragraphs[0] : null;
+    if (p && p.isValid){
+      var a = String((spec&&spec.align)||"center").toLowerCase();
+      p.justification = (a==="right") ? Justification.RIGHT_ALIGN : (a==="center" ? Justification.CENTER_ALIGN : Justification.LEFT_ALIGN);
+      if (!isInline) {
+        try { p.spaceBefore = __imgToPtLocal(spec&&spec.spaceBefore) || 0; } catch(_){}
+        try { p.spaceAfter  = __imgToPtLocal(spec&&spec.spaceAfter)  || 2; } catch(_){}
+      }
+      p.keepOptions.keepWithNext = false;
+      p.keepOptions.keepLinesTogether = false;
+    }
+  }catch(__){}
 }
 // log anchor position before placing
 function __imgLogAnchorPre(ipRef, storyRef){
@@ -610,7 +634,7 @@ function __imgAddImageAtV2(ip, spec) {
 
       var isInline = _resolveInlineFlag();
 
-      // Key point: by default use “the insertion point at the end of the current writable text frame tf” 
+      // Key point: by default use the insertion point at the end of the current writable text frame (tf)
       // to avoid ending up in the last frame of the story on the previous page.
       var ip2 = (ip && ip.isValid) ? ip : __imgSafeLastIP((typeof tf!=="undefined"?tf:null), st);
 
@@ -629,13 +653,8 @@ function __imgAddImageAtV2(ip, spec) {
       var rect = __imgPlaceInline(ip2, f);
       if (!rect || !rect.isValid) { return null; }
 
-      // Record the most recent image anchor so it can be used for 
-      // the next “same-position placement” check.
-      try{
-        var aNow = rect.storyOffset;
-        if (aNow && aNow.isValid) __LAST_IMG_ANCHOR_IDX = aNow.index;
-        try { log("[IMG-STACK][placed] anchor.index=" + aNow.index); } catch(__){}
-      }catch(_){}
+      // record anchor for the next same-position placement check
+      __imgRecordLastAnchor(rect);
 
       __imgLogPlacedRect(rect);
 
@@ -659,21 +678,8 @@ function __imgAddImageAtV2(ip, spec) {
 
       __imgFloatSizeAndWrap(rect, spec, isInline);
 
-      // 7) anchor paragraph: control paragraph alignment based on align; 
-      // for block images, also set space before and after
-      try{
-        var p = rect.storyOffset.paragraphs[0];
-        if (p && p.isValid){
-          var a = String((spec&&spec.align)||"center").toLowerCase();
-          p.justification = (a==="right") ? Justification.RIGHT_ALIGN : (a==="center" ? Justification.CENTER_ALIGN : Justification.LEFT_ALIGN);
-          if (!isInline) {
-            try { p.spaceBefore = __imgToPtLocal(spec&&spec.spaceBefore) || 0; } catch(_){}
-            try { p.spaceAfter  = __imgToPtLocal(spec&&spec.spaceAfter)  || 2; } catch(_){}
-          }
-          p.keepOptions.keepWithNext = false;
-          p.keepOptions.keepLinesTogether = false;
-        }
-      }catch(_){}
+      // 7) paragraph alignment/spacing for the placed image
+      __imgAdjustImageParagraph(rect, spec, isInline);
 
       // 8 & 9) post-process block image (newline + flush)
       if (!isInline) {

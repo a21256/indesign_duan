@@ -1,5 +1,4 @@
-// 全局配置（由 Python 注入）
-var CONFIG = %JSX_CONFIG%;
+﻿var CONFIG = %JSX_CONFIG%;
 if (!CONFIG) CONFIG = {};
 
 function smartWrapStr(s){
@@ -15,10 +14,8 @@ function smartWrapStr(s){
 }
 
 
-// ExtendScript 没有 Date#toISOString，这里统一使用北京时间（UTC+8）输出
 function iso() {
   var d = new Date();
-  // 转成 UTC 再加 8 小时，得到北京时间
   var utcMs = d.getTime() + (d.getTimezoneOffset() * 60000);
   var bj = new Date(utcMs + 8 * 3600000);
   function pad(n){ return (n < 10 ? "0" : "") + n; }

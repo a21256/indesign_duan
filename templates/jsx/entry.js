@@ -1,4 +1,4 @@
-    app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
+﻿    app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
     var __origScriptUnit = null, __origViewH = null, __origViewV = null;
     try{
         __origScriptUnit = app.scriptPreferences.measurementUnit;
@@ -15,18 +15,16 @@
         app.viewPreferences.verticalMeasurementUnits = MeasurementUnits.POINTS;
     }catch(_){}
 
-    // ====== 日志收集 ======
     var EVENT_FILE = File("%EVENT_LOG_PATH%");
     var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
                      ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=记录 debug；false=仅保留 warn/error/info
     var __EVENT_LINES = [];
 
-    // 每次执行先清空旧事件日志，避免多次运行叠加
     try{
       if (EVENT_FILE){
         EVENT_FILE.encoding = "UTF-8";
         EVENT_FILE.open("w");
-        EVENT_FILE.writeln(""); // 写一空行确保文件被截断创建
+        EVENT_FILE.writeln("");
         EVENT_FILE.close();
       }
     }catch(_){}
@@ -157,7 +155,6 @@
     }
 
 
-    // 兼容 InDesign 2020：没有 String#trim
     if (!String.prototype.trim) {
       String.prototype.trim = function(){ return String(this).replace(/^\s+|\s+$/g, ""); };
     }
@@ -169,7 +166,6 @@
     log("[BOOT] JSX loaded");
     log("[LOG] start");
 
-    // 全局状态：不要挂在 app 上（COM 对象不能扩展），改为脚本内私有变量
     var __DEFAULT_LAYOUT = null;
     var __CURRENT_LAYOUT = null;
     var __DEFAULT_INNER_WIDTH = null;
@@ -271,15 +267,12 @@
       try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(_){}
     }
 
-    // 放在定义 log() 之后、其它函数之前即可
     if (typeof curTextFrame === "undefined" && typeof tf !== "undefined") {
       var curTextFrame = tf;
     }
 
-    // —— 兼容 InDesign 2020：没有 JSON 对象 —— 
     var _HAS_JSON = (typeof JSON !== "undefined" && JSON && typeof JSON.stringify === "function");
     function _s(obj){
-      // 尽量用 JSON.stringify；没有就手拼
       if (_HAS_JSON) {
         try { return JSON.stringify(obj); } catch(_){}
       }
@@ -290,12 +283,10 @@
       } catch(e) { return String(obj); }
     }
 
-    // 在“当前文本框”末尾构造一个就地的安全插入点；仅在不可用时才退回 story 末尾
     function _safeIP(tf){
       try{
         if (tf && tf.isValid) {
-          var ip = tf.insertionPoints[-1];   // 就地：当前文本框的末尾
-          // 检测是否可用于锚定；不可用则在该框尾部补一个零宽空格再取一次
+          var ip = tf.insertionPoints[-1];   
           try { var _t = ip.anchoredObjectSettings; }
           catch(e1){
             try { ip.contents = "\u200B"; } catch(_){}
@@ -304,7 +295,6 @@
           if (ip && ip.isValid) return ip;
         }
       } catch(_){}
-      // 兜底：story 末尾
       try{
         var story = (tf && tf.isValid) ? tf.parentStory : app.activeDocument.stories[0];
         var ip2 = story.insertionPoints[-1];
@@ -539,8 +529,6 @@
       __ensureLayout(__DEFAULT_LAYOUT);
     }
 
-    // ==== 图片路径解析（新增） ====
-    // 这些目录会被依次尝试：脚本目录、脚本目录的 assets、XML 同目录、XML 同目录的 assets
     var IMG_DIRS = (CONFIG && CONFIG.imgDirs && CONFIG.imgDirs.length) ? CONFIG.imgDirs : %IMG_DIRS_JSON%;
 
 function _holderInnerBounds(holder){
@@ -603,19 +591,15 @@ function _holderInnerBounds(holder){
         return ps;
     }
 
-    // === 行内样式应用（保持你原逻辑，只保留下划线） ===
-    // 递归搜索字符样式（支持样式组），大小写与空格/下划线不敏感
     function findCharStyleCI(doc, name){
       function norm(n){ return String(n||"").toLowerCase().replace(/\s+/g,"").replace(/[_-]/g,""); }
       var target = norm(name);
 
-      // 先扫顶层
       var cs = doc.characterStyles;
       for (var i=0;i<cs.length;i++){
         try{ if (norm(cs[i].name) === target) return cs[i]; }catch(_){}
       }
 
-      // 再扫样式组（递归）
       function scanGroup(g){
         try{
           var arr = g.characterStyles;
@@ -633,10 +617,9 @@ function _holderInnerBounds(holder){
       return null;
     }
 
-    // 懒加载 + 缓存，避免在还没打开文档时访问 activeDocument
     function getCachedCharStyleByList(names){
         try{
-            if (app.documents.length === 0) return null; // 还没打开任何文档就别取
+            if (app.documents.length === 0) return null; 
             var doc = app.activeDocument;
             if (!doc || !doc.isValid) return null;
             if (!app._csCache) app._csCache = {};
@@ -969,7 +952,6 @@ function _holderInnerBounds(holder){
         return en;
     }
 
-    // —— 段落插入：扩展识别 [[IMG ...]] / [[TABLE {...}]] ——
     function addParaWithNotes(story, styleName, raw) {
         var paraSeq = __nextParaSeq();
         var s = app.activeDocument.paragraphStyles.itemByName(styleName);
@@ -983,7 +965,6 @@ function _holderInnerBounds(holder){
         try{ insertionStart = (story && story.isValid) ? story.characters.length : 0; }catch(_){ }
 
         try{
-        // ★ 正则扩展：新增 IMG/TABLE（修复 I/B/U 与 IMG/TABLE 的匹配）
         var re = /\[{2,}FNI:(\d+)\]{2,}|\[{2,}(FN|EN):(.*?)\]{2,}|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
         var last = 0, m;
         var st = {i:0, b:0, u:0};
@@ -1030,13 +1011,10 @@ function _holderInnerBounds(holder){
                 }catch(_){}
 
                 if (!spec.align) spec.align = "center";
-                // 调紧默认前后距，便于两图紧凑排布；可被 XML 显式覆盖
                 if (spec.spaceBefore == null) spec.spaceBefore = 0;
                 if (spec.spaceAfter  == null) spec.spaceAfter  = 2;
-                if (!spec.wrap) spec.wrap = "none"; // ← 默认不绕排，避免把后文推到文末
+                if (!spec.wrap) spec.wrap = "none"; 
 
-                // 关键修正 A：确保插入点在“当前末尾文本框”——先疏通 overset，再取就地安全 IP
-                // —— 诊断日志：放图前记录“末尾插入点所在文本框/页 & overset”信息
                 try{
                   var __ipEnd0 = story.insertionPoints[-1];
                   var __holder0 = (__ipEnd0 && __ipEnd0.isValid && __ipEnd0.parentTextFrames && __ipEnd0.parentTextFrames.length)
@@ -1052,20 +1030,17 @@ function _holderInnerBounds(holder){
                       + " ; storyLen=" + story.characters.length);
                 }catch(_){}
                 try {
-                  // 先尝试疏通（保持原有策略）
                   if (typeof flushOverflow === "function" && typeof tf !== "undefined" && tf && tf.isValid) {
                     var _rs = flushOverflow(story, page, tf);
                     if (_rs && _rs.frame && _rs.page) { page = _rs.page; tf = _rs.frame; story = tf.parentStory; curTextFrame = tf; }
                   }
-                  // 再以“story 末尾”的父文本框为准强制刷新 tf/curTextFrame（避免仍指向上一个框）
-                  // 再以“story 末尾”作为锚点候选，记录一次定位信息
                   try{
                       var _ipEnd = story.insertionPoints[-1];
                       var _holder = (_ipEnd && _ipEnd.isValid && _ipEnd.parentTextFrames && _ipEnd.parentTextFrames.length)
                                       ? _ipEnd.parentTextFrames[0] : null;
                       if (_holder && _holder.isValid) {
-                        tf = _holder;                     // ← 强制把“当前活动文本框”切到 story 实际末尾的文本框
-                        curTextFrame = _holder;           // ← 同步全局引用，后续 _safeIP/列宽计算都用这个
+                        tf = _holder;
+                        curTextFrame = _holder;
                         try { page = _holder.parentPage; } catch(_){}
                       }
                       try{
@@ -1089,13 +1064,11 @@ function _holderInnerBounds(holder){
                         + " ; curTF=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.id:"NA"));
                   }catch(__){}
                 } catch(_){}
-                // 若当前不在段首（上一字符不是回车），补一个段落结束，保证每张图独占一段
                 try {
                   var lastChar = (story.characters.length>0) ? String(story.characters[-1].contents||"") : "";
                   if (lastChar !== "\r") story.insertionPoints[-1].contents = "\r";
                 } catch(__){}
 
-                // 插入点：就用上面刷新后的 tf 的末尾；兜底再回退 story 尾（仅加日志）
                 var ipNow = (tf && tf.isValid) ? tf.insertionPoints[-1] : story.insertionPoints[-1];
                 try{
                   var __h = (ipNow && ipNow.isValid && ipNow.parentTextFrames && ipNow.parentTextFrames.length) ? ipNow.parentTextFrames[0] : null;
@@ -1104,18 +1077,14 @@ function _holderInnerBounds(holder){
                       + " ; ip.index=" + (ipNow&&ipNow.isValid?ipNow.index:"NA"));
                 }catch(_){}
 
-                // 规范与校验路径（失败只记一行，不抛）
                 var fsrc = __imgNormPath(spec.src);
                 if (fsrc && fsrc.exists) {
                   spec.src = fsrc.fsName;
-                  // 入口调用加一层必要 try，避免整套流程被图片单点中断
                   try {
-                    // 规范与校验路径（失败只记一行，不抛）
                     var fsrc = __imgNormPath(spec.src);
                     if (fsrc && fsrc.exists) {
                       spec.src = fsrc.fsName;
 
-                      // △ 根据 XML：inline="1" → 内联锚定；inline="0" → 浮动定位
                       var inl = _trim(spec.inline);
                       log(__imgTag + " dispatch src="+spec.src+" inline="+inl+" posH="+(spec.posH||"")+" posV="+(spec.posV||""));
                   try{
@@ -1126,11 +1095,9 @@ function _holderInnerBounds(holder){
                   }catch(_){ }
                       try{
                         if (inl==="0" || /^false$/i.test(inl)){
-                          // 浮动：使用刚加入的 __imgAddFloatingImage（遵循 posH/posV/offX/offY/wrap/dist*）
                           var rect = __imgAddFloatingImage(tf, story, page, spec);
                           if (rect && rect.isValid) log("[IMG] ok (float): " + spec.src);
                         } else {
-                          // 内联：仍走你原先的稳妥链路（__imgAddImageAtV2）
                           var rect = __imgAddImageAtV2(ipNow, spec);
                           if (rect && rect.isValid) log("[IMG] ok (inline): " + spec.src);
                         }
@@ -1140,7 +1107,6 @@ function _holderInnerBounds(holder){
                     } else {
                       log("[IMG] missing: " + spec.src);
                     }
-                    // 可选：成功才轻量记一行
                     if (rect && rect.isValid) log("[IMG] ok: " + spec.src);
                   } catch(e) {
                     log("[ERR] addImageAt failed: " + e);
@@ -1150,13 +1116,11 @@ function _holderInnerBounds(holder){
                 }
 
                 try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
-                // 吃掉 [[IMG ...]]，继续
                 last = re.lastIndex;
                 continue;
             } else if (m[7]) {
                 try {
                     var obj = JSON.parse(m[7]);
-                    // 使用高保真表格构造：按 colWidthsPt 设置列宽、处理合并/覆盖格
                     __tblAddTableHiFi(obj);
                 } catch(e){
                     try { var obj2 = eval("("+m[7]+")"); __tblAddTableHiFi(obj2); } catch(__){}
@@ -1188,7 +1152,6 @@ function _holderInnerBounds(holder){
         try {
             story.recompose(); app.activeDocument.recompose();
         } catch(_){}
-        // 避免长段堆积造成中途 overset：每写 N 段疏通一次
         try {
             if (typeof __paraCounter === "undefined") __paraCounter = 0;
             __paraCounter++;
@@ -1197,7 +1160,7 @@ function _holderInnerBounds(holder){
                 page  = st.page;
                 tf    = st.frame;
                 story = tf.parentStory;
-                curTextFrame = tf;              // ★ 新增：切到新框后更新全局指针
+                curTextFrame = tf;
             }
         } catch(_){}
         }catch(eAddPara){
@@ -1209,7 +1172,6 @@ function _holderInnerBounds(holder){
         }catch(_){}
     }
 
-    // 打开模板、清空页面框等（保持你原逻辑）
     var templateFile = File("%TEMPLATE_PATH%");
     if (!templateFile.exists) { alert("未找到模板文件 template.idml"); return; }
     var doc = app.open(templateFile);
@@ -1237,7 +1199,6 @@ function _holderInnerBounds(holder){
         }catch(__spreadLoop){}
     }catch(__allowDoc){}
 
-    // 清空页面与母版文本框，保留第一页
     for (var pi = doc.pages.length - 1; pi >= 0; pi--) {
         var pg = doc.pages[pi];
         for (var tfi = pg.textFrames.length - 1; tfi >= 0; tfi--) {
@@ -1300,7 +1261,6 @@ function _holderInnerBounds(holder){
     __CURRENT_LAYOUT = __cloneLayoutState(__DEFAULT_LAYOUT);
 
 
-    // 简易样式兜底（保持你原逻辑）
     function ensureStyle(name, pointSize, leading, spaceBefore, spaceAfter) {
         var ps = doc.paragraphStyles.itemByName(name);
         if (!ps.isValid) {
@@ -1340,7 +1300,6 @@ function _holderInnerBounds(holder){
     try { fixAllTables(); } catch(_) {}
     try{ __progressFinalize(); }catch(_){ }
 
-    // ?????? IDML
     var __AUTO_EXPORT = (CONFIG && CONFIG.flags && typeof CONFIG.flags.autoExportIdml === "boolean")
                         ? CONFIG.flags.autoExportIdml : %AUTO_EXPORT%;
     if (__AUTO_EXPORT) {

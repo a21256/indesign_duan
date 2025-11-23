@@ -1,4 +1,4 @@
-function __tblAddTableHiFi(obj){
+﻿function __tblAddTableHiFi(obj){
       try{
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
@@ -969,7 +969,6 @@ function __tblAddTableHiFi(obj){
       }catch(_){}
     }
     
-    // 全局表格修复，供入口流程调用
     function fixAllTables(){
         try{
             var doc = app.activeDocument;

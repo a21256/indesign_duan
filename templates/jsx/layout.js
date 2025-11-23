@@ -1,4 +1,4 @@
-// 全局布局状态（在模板 IIFE 作用域内共享）
+﻿// Layout state (shared inside template IIFE scope)
 var __DEFAULT_LAYOUT = null;
 var __CURRENT_LAYOUT = null;
 var __DEFAULT_INNER_WIDTH = null;
@@ -259,7 +259,6 @@ function __ensureLayoutDefault(){
   __ensureLayout(target);
 }
 
-// 页面/框几何工具（供入口复用）
 function frameBoundsForPage2(page, doc) {
     var pb = page.bounds, mp = page.marginPreferences;
     return [pb[0] + mp.top, pb[1] + mp.left, pb[2] - mp.bottom, pb[3] - mp.right];
@@ -379,7 +378,6 @@ function createFootnoteAt(ip, content, idForDisplay){
     
 
 function flushOverflow(currentStory, lastPage, lastFrame) {
-        // 仅在达到 MAX_PAGES 或总页数限制时退出，保持顺序造页，避免“无进展”误判。
         var MAX_PAGES = 20;
         var STALL_LIMIT = 3;
         var stallFrameId = null;
@@ -524,7 +522,7 @@ function startNewChapter(currentStory, currentPage, currentFrame) {
             page  = st.page;
             tf    = st.frame;
             story = tf.parentStory;
-            curTextFrame = tf;              // ★ 新增：切到新框后更新全局指针
+            curTextFrame = tf;     
         }
         var np  = doc.pages.add(LocationOptions.AFTER, currentPage);
         var nft = createTextFrameOnPage(np, __CURRENT_LAYOUT);
