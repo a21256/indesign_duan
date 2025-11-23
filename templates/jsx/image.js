@@ -470,52 +470,66 @@ function __imgApplyFloatTextWrap(rectObj, spec){
       if (!distL && distL !== 0) distL = 12;
       if (!distR && distR !== 0) distR = 12;
       tw.textWrapOffset = [distT, distL, distB, distR];
+  }
+  }catch(_){}
+}
+// find the holder frame and its inner width for sizing context
+function __imgResolveHolder(rect){
+  var holder = null, innerW = 0;
+  try {
+    var aIP = rect && rect.storyOffset;
+    if (aIP && aIP.isValid && aIP.parentTextFrames && aIP.parentTextFrames.length)
+      holder = aIP.parentTextFrames[0];
+    if ((!holder || !holder.isValid) && rect && rect.parentTextFrames && rect.parentTextFrames.length)
+      holder = rect.parentTextFrames[0];
+    if (!holder || !holder.isValid) {
+      if (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid) holder = curTextFrame;
+      else if (typeof tf!=="undefined" && tf && tf.isValid) holder = tf;
+    }
+    if (holder && holder.isValid){
+      innerW = _innerFrameWidth(holder);
+      try{ log("[IMGDBG] widthCtx holderTf=" + holder.id + " innerW=" + (innerW.toFixed ? innerW.toFixed(2) : innerW)); }catch(__){}
     }
   }catch(_){}
+  return {holder: holder, innerW: innerW};
+}
+// clamp target size based on desired w/h and available width; writes geometricBounds
+function __imgClampSize(rect, spec, ratio, innerW){
+  if (!rect || !rect.isValid) return {targetW:0, targetH:0, innerW:innerW, wPt:0, hPt:0, ratio:ratio};
+  var wPt = __imgToPtLocal(spec && spec.w);
+  var hPt = __imgToPtLocal(spec && spec.h);
+  var gb  = rect.geometricBounds;
+  var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
+  var widthLimit = innerW>0 ? innerW : curW;
+  var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
+  var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio || (curW/curH), 1e-6)));
+  try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
+  rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
+  return {targetW:targetW, targetH:targetH, innerW:innerW, wPt:wPt, hPt:hPt, ratio:ratio || (curW/curH)};
+}
+// apply proportional fit and recenter content
+function __imgApplyFit(rect){
+  try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
 }
 function __imgFloatSizeAndWrap(rect, spec, isInline){
   if (!rect || !rect.isValid) return;
-  try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
+  __imgApplyFit(rect);
   try {
     try { rect.fittingOptions.autoFit=false; } catch(__){}
-    var wPt = __imgToPtLocal(spec && spec.w);
-    var hPt = __imgToPtLocal(spec && spec.h);
-
     var gb  = rect.geometricBounds;
     var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
     var ratio = curW / curH;
 
-    var innerW = 0, holder = null;
-    try {
-      var aIP = rect.storyOffset;
-      if (aIP && aIP.isValid && aIP.parentTextFrames && aIP.parentTextFrames.length)
-        holder = aIP.parentTextFrames[0];
-      if ((!holder || !holder.isValid) && rect.parentTextFrames && rect.parentTextFrames.length)
-        holder = rect.parentTextFrames[0];
-      if (!holder || !holder.isValid) {
-        if (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid) holder = curTextFrame;
-        else if (typeof tf!=="undefined" && tf && tf.isValid) holder = tf;
-      }
-      if (holder && holder.isValid){
-        innerW = _innerFrameWidth(holder);
-        try{ log("[IMGDBG] widthCtx holderTf=" + holder.id + " innerW=" + innerW.toFixed ? innerW.toFixed(2) : innerW); }catch(__){}
-      }
-    }catch(__){}
+    var holderInfo = __imgResolveHolder(rect);
+    var clamp = __imgClampSize(rect, spec, ratio, holderInfo.innerW);
 
-    var widthLimit = innerW>0 ? innerW : curW;
-    var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
-    var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio, 1e-6)));
-
-    try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
-    rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
-
-    try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
+    __imgApplyFit(rect);
 
     try {
-      log("[IMG] size targetW=" + (targetW||0).toFixed(2)
-          + " innerW=" + (innerW||0).toFixed(2)
-          + " wPt=" + (wPt||0) + " hPt=" + (hPt||0)
-          + " ratio=" + (ratio||0).toFixed(4));
+      log("[IMG] size targetW=" + (clamp.targetW||0).toFixed(2)
+          + " innerW=" + (clamp.innerW||0).toFixed(2)
+          + " wPt=" + (clamp.wPt||0) + " hPt=" + (clamp.hPt||0)
+          + " ratio=" + (clamp.ratio||0).toFixed(4));
     } catch(__){}
   } catch(_){}
 
