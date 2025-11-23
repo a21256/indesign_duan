@@ -173,6 +173,67 @@ function __imgPlaceInline(ip, fileObj){
   if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
   return rect;
 }
+// apply sizing/fit/wrap for floating image; keeps existing layout logic
+function __imgFloatSizeAndWrap(rect, spec, isInline){
+  if (!rect || !rect.isValid) return;
+  try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
+  try {
+    try { rect.fittingOptions.autoFit=false; } catch(__){}
+    var wPt = __imgToPtLocal(spec && spec.w);
+    var hPt = __imgToPtLocal(spec && spec.h);
+
+    var gb  = rect.geometricBounds;
+    var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
+    var ratio = curW / curH;
+
+    var innerW = 0, holder = null;
+    try {
+      var aIP = rect.storyOffset;
+      if (aIP && aIP.isValid && aIP.parentTextFrames && aIP.parentTextFrames.length)
+        holder = aIP.parentTextFrames[0];
+      if ((!holder || !holder.isValid) && rect.parentTextFrames && rect.parentTextFrames.length)
+        holder = rect.parentTextFrames[0];
+      if (!holder || !holder.isValid) {
+        if (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid) holder = curTextFrame;
+        else if (typeof tf!=="undefined" && tf && tf.isValid) holder = tf;
+      }
+      if (holder && holder.isValid){
+        innerW = _innerFrameWidth(holder);
+        try{ log("[IMGDBG] widthCtx holderTf=" + holder.id + " innerW=" + innerW.toFixed ? innerW.toFixed(2) : innerW); }catch(__){}
+      }
+    }catch(__){}
+
+    var widthLimit = innerW>0 ? innerW : curW;
+    var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
+    var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio, 1e-6)));
+
+    try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
+    rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
+
+    try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
+
+    try {
+      log("[IMG] size targetW=" + (targetW||0).toFixed(2)
+          + " innerW=" + (innerW||0).toFixed(2)
+          + " wPt=" + (wPt||0) + " hPt=" + (hPt||0)
+          + " ratio=" + (ratio||0).toFixed(4));
+    } catch(__){}
+  } catch(_){}
+
+  try{
+    var p = rect.storyOffset.paragraphs[0];
+    if (p && p.isValid){
+      var a = String((spec&&spec.align)||"center").toLowerCase();
+      p.justification = (a==="right") ? Justification.RIGHT_ALIGN : (a==="center" ? Justification.CENTER_ALIGN : Justification.LEFT_ALIGN);
+      if (!isInline) {
+        try { p.spaceBefore = __imgToPtLocal(spec&&spec.spaceBefore) || 0; } catch(_){}
+        try { p.spaceAfter  = __imgToPtLocal(spec&&spec.spaceAfter)  || 2; } catch(_){}
+      }
+      p.keepOptions.keepWithNext = false;
+      p.keepOptions.keepLinesTogether = false;
+    }
+  }catch(_){}
+}
 // normalize common units to pt
 function __imgToPtLocal(v){
   var s = String(v==null?"":v).replace(/^\s+|\s+$/g,"");
@@ -362,7 +423,7 @@ if (!isInline) {
 
       }catch(_){}
 
-      // 5) 锚定：Above-Line（块级，最稳），不启用文绕图
+      // 5) anchor + sizing/wrap
       try {
         var _anch = rect.anchoredObjectSettings;
         if (_anch && _anch.isValid !== false) {
@@ -378,58 +439,9 @@ if (!isInline) {
           }
           _anch.anchorPoint = _anchorPoint;
         }
-      } catch(_){}
+      } catch(_){ }
 
-        // 6) 尺寸：优先使用 XML 的 w/h；w 受列内宽 innerW 限制；无 w/h 时按列宽
-        try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
-        try {
-          try { rect.fittingOptions.autoFit=false; } catch(__){}
-          var wPt = __imgToPtLocal(spec && spec.w);
-          var hPt = __imgToPtLocal(spec && spec.h);
-
-          var gb  = rect.geometricBounds;
-          var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
-          var ratio = curW / curH;
-
-          // 以“矩形锚点所在文本框”为准求列内宽（同原逻辑）
-          var innerW = 0, holder = null;
-          try {
-            var aIP = rect.storyOffset;
-            if (aIP && aIP.isValid && aIP.parentTextFrames && aIP.parentTextFrames.length)
-              holder = aIP.parentTextFrames[0];
-            if ((!holder || !holder.isValid) && rect.parentTextFrames && rect.parentTextFrames.length)
-              holder = rect.parentTextFrames[0];
-            if (!holder || !holder.isValid) {
-              if (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid) holder = curTextFrame;
-              else if (typeof tf!=="undefined" && tf && tf.isValid) holder = tf;
-            }
-            if (holder && holder.isValid){
-              innerW = _innerFrameWidth(holder);
-              try{
-                log("[IMGDBG] widthCtx holderTf=" + holder.id + " innerW=" + innerW.toFixed ? innerW.toFixed(2) : innerW);
-              }catch(__){}
-            }
-          }catch(__){}
-
-          // 目标宽高：直接用绝对几何边界设定，避免“按初始值缩放”引入倍数偏差
-          var widthLimit = innerW>0 ? innerW : curW;
-          var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
-          var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio, 1e-6)));
-
-          try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
-          rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
-
-          // 再自适应一次，让内容紧贴新框
-          try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(__){}
-
-          // 记录关键数值，便于定位
-          try {
-            log("[IMG] size targetW=" + (targetW||0).toFixed(2)
-                + " innerW=" + (innerW||0).toFixed(2)
-                + " wPt=" + (wPt||0) + " hPt=" + (hPt||0)
-                + " ratio=" + (ratio||0).toFixed(4));
-          } catch(__){}
-        } catch(_){}
+      __imgFloatSizeAndWrap(rect, spec, isInline);
 
       // 7) 锚点所在段：根据 align 控制段落对齐；块级图再设置段前段后
       try{
