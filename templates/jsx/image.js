@@ -336,14 +336,15 @@ function __imgPlaceOnPage(pageObj, stObj, anchorIdx, fileObj, spec){
     var aft1 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
       ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+1)]
       : null;
-    if (aft1 && aft1.isValid) aft1.contents = "";
+    if (aft1 && aft1.isValid) aft1.contents = "\r";
     var aft2 = stObj && stObj.insertionPoints && stObj.insertionPoints.length
       ? stObj.insertionPoints[Math.min(stObj.insertionPoints.length-1, anchorIdx+2)]
       : null;
-    if (aft2 && aft2.isValid) aft2.contents = "​";
+    if (aft2 && aft2.isValid) aft2.contents = "\u200B";
     try{ stObj.recompose(); }catch(__re){ }
   }catch(_){ }
   return rect;
+
 }
 function __imgFloatSizeAndWrap(rect, spec, isInline){
   if (!rect || !rect.isValid) return;
