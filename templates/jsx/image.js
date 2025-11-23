@@ -173,6 +173,70 @@ function __imgPlaceInline(ip, fileObj){
   if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
   return rect;
 }
+// post-processing for block images: add CR/ZWS and flush overset
+function __imgFloatPostProcess(rect, st, page, tf){
+  var story = st;
+  if (!rect || !rect.isValid || !story || !story.isValid) return {page: page, tf: tf, story: story};
+  // ensure next content starts in a new paragraph
+  try{
+    var aIP = rect.storyOffset;
+    if (aIP && aIP.isValid){
+      var aft1 = aIP.parentStory.insertionPoints[aIP.index+1];
+      if (aft1 && aft1.isValid){ aft1.contents = "\r"; }
+      var aft2 = aIP.parentStory.insertionPoints[aIP.index+2];
+      if (aft2 && aft2.isValid){ aft2.contents = "\u200B"; }
+      try{ aIP.parentStory.recompose(); }catch(__){}
+      try{
+        var holderNext = (aft2 && aft2.isValid && aft2.parentTextFrames && aft2.parentTextFrames.length)
+                           ? aft2.parentTextFrames[0] : null;
+        if (holderNext && holderNext.isValid){
+          tf = holderNext;
+          curTextFrame = holderNext;
+          story = holderNext.parentStory;
+        }
+      }catch(__){}
+    }
+  }catch(_){}
+
+  // flush overset and keep current text frame synced
+  try {
+    if (story && story.isValid) story.recompose();
+    if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
+    var __pg = (rect && rect.parentPage) ? rect.parentPage : (typeof page!=="undefined"?page:null);
+    var __tf = null;
+    try{
+      var _a = rect.storyOffset;
+      if (_a && _a.isValid && _a.parentTextFrames && _a.parentTextFrames.length)
+        __tf = _a.parentTextFrames[0];
+    }catch(_){}
+    if (!__tf && typeof tf!=="undefined") __tf = tf;
+    if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
+    if (__pg && __tf && typeof flushOverflow === "function") {
+      var fl = flushOverflow(story, __pg, __tf);
+      if (fl && fl.frame && fl.page) {
+        page  = fl.page;
+        tf    = fl.frame;
+        story = tf.parentStory;
+        curTextFrame = tf;
+      }
+      try{
+        log("[IMG] after.flush  tf=" + (tf&&tf.isValid?tf.id:"NA")
+            + " page=" + (page?page.name:"NA")
+            + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
+            + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
+      }catch(_){}
+    }
+    try{
+      if ((!curTextFrame || !curTextFrame.isValid) && rect && rect.isValid){
+        var a2 = rect.storyOffset;
+        if (a2 && a2.isValid && a2.parentTextFrames && a2.parentTextFrames.length)
+          curTextFrame = a2.parentTextFrames[0];
+      }
+    }catch(_){}
+  } catch(eFlush){ log("[WARN] flush after image: " + eFlush); }
+
+  return {page: page, tf: tf, story: story};
+}
 // apply sizing/fit/wrap for floating image; keeps existing layout logic
 function __imgFloatSizeAndWrap(rect, spec, isInline){
   if (!rect || !rect.isValid) return;
@@ -458,73 +522,12 @@ if (!isInline) {
         }
       }catch(_){}
 
-      // 8) 块级图片在锚点后补「段落结束 + 零宽空格」，保证下一步接在新段
+      // 8 & 9) post-process block image (newline + flush)
       if (!isInline) {
-        try{
-          var aIP = rect.storyOffset;
-          if (aIP && aIP.isValid){
-            // 8.1 先在锚点后补一个段落结束
-            var aft1 = aIP.parentStory.insertionPoints[aIP.index+1];
-            if (aft1 && aft1.isValid){ aft1.contents = "\r"; }
-            // 8.2 再补一个零宽空格，保证 storyEnd 真正来到“新段”末尾
-            var aft2 = aIP.parentStory.insertionPoints[aIP.index+2];
-            if (aft2 && aft2.isValid){ aft2.contents = "\u200B"; }
-            try{ aIP.parentStory.recompose(); }catch(__){}
-            // 8.3 用新段的插入点反查父文本框，强制把 tf/curTextFrame/story 切到“下一段所在的框”
-            try{
-              var holderNext = (aft2 && aft2.isValid && aft2.parentTextFrames && aft2.parentTextFrames.length)
-                                 ? aft2.parentTextFrames[0] : null;
-              if (holderNext && holderNext.isValid){
-                tf = holderNext;
-                curTextFrame = holderNext;
-                story = holderNext.parentStory;
-              }
-            }catch(__){}
-          }
-        }catch(_){}
-
-      }
-      // 9) 立即回排并疏通 overset，避免正文被甩到文末；并把 “当前活动文本框” 切到这张图所在的框
-      if (!isInline) {
-        try {
-          if (st && st.isValid) st.recompose();
-          if (rect && rect.isValid) { try { rect.recompose(); } catch(__){} }
-          var __pg = (rect && rect.parentPage) ? rect.parentPage : (typeof page!=="undefined"?page:null);
-          // 用矩形锚点反查真正所在的文本框，作为下一个动作的基准
-          var __tf = null;
-          try{
-            var _a = rect.storyOffset;
-            if (_a && _a.isValid && _a.parentTextFrames && _a.parentTextFrames.length)
-              __tf = _a.parentTextFrames[0];
-          }catch(_){}
-          // 优先使用 8.3 中刚切换过来的 tf，其次才兜底
-          if (!__tf && typeof tf!=="undefined") __tf = tf;
-          if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
-          if (__pg && __tf && typeof flushOverflow === "function") {
-            var fl = flushOverflow(st, __pg, __tf);
-            if (fl && fl.frame && fl.page) {
-              page  = fl.page;
-              tf    = fl.frame;
-              story = tf.parentStory;
-              curTextFrame = tf;
-            }
-            try{
-              log("[IMG] after.flush  tf=" + (tf&&tf.isValid?tf.id:"NA")
-                  + " page=" + (page?page.name:"NA")
-                  + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
-                  + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
-            }catch(_){}
-          }
-          // 再兜底一次：若 flush 没返回新框，也把 curTextFrame 切到图所在框
-          try{
-            if ((!curTextFrame || !curTextFrame.isValid) && rect && rect.isValid){
-              var a2 = rect.storyOffset;
-              if (a2 && a2.isValid && a2.parentTextFrames && a2.parentTextFrames.length)
-                curTextFrame = a2.parentTextFrames[0];
-            }
-          }catch(_){}
-        } catch(eFlush){ log("[WARN] flush after image: " + eFlush); }
-
+        var _post = __imgFloatPostProcess(rect, st, page, tf);
+        page  = _post.page;
+        tf    = _post.tf;
+        story = _post.story;
       }
       return rect;
     }
