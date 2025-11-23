@@ -237,6 +237,102 @@ function __imgFloatPostProcess(rect, st, page, tf){
 
   return {page: page, tf: tf, story: story};
 }
+// place on page-level anchors (used by floating frame); mostly reuses image sizing later
+function __imgPlaceOnPage(pageObj, stObj, anchorIdx, fileObj, spec){
+  if (!pageObj || !pageObj.isValid){
+    log("[IMGFLOAT6][ERR] page invalid for page-level image");
+    return null;
+  }
+  var pb = pageObj.bounds || [0,0,0,0];
+  var mp = pageObj.marginPreferences || {};
+  var pageTop = pb[0], pageLeft = pb[1], pageBottom = pb[2], pageRight = pb[3];
+  var marginTop = parseFloat(mp.top)||0;
+  var marginBottom = parseFloat(mp.bottom)||0;
+  var marginLeft = parseFloat(mp.left)||0;
+  var marginRight = parseFloat(mp.right)||0;
+  var innerLeft = pageLeft + marginLeft;
+  var innerRight = pageRight - marginRight;
+  var innerTop = pageTop + marginTop;
+  var innerBottom = pageBottom - marginBottom;
+  var innerWidth = Math.max(1, innerRight - innerLeft);
+  var innerHeight = Math.max(1, innerBottom - innerTop);
+
+  var pageWidth = pageRight - pageLeft;
+  var pageHeight = pageBottom - pageTop;
+  var wordPageWidth = __imgToPtLocal(spec && spec.wordPageWidth);
+  var wordPageHeight = __imgToPtLocal(spec && spec.wordPageHeight);
+
+  var posHrefRaw = String((spec && spec.posHref)||"").toLowerCase();
+  var posVrefRaw = String((spec && spec.posVref)||"").toLowerCase();
+  var offXP = __imgToPtLocal(spec && spec.offX) || 0;
+  var offYP = __imgToPtLocal(spec && spec.offY) || 0;
+  if (wordPageWidth && wordPageWidth > 0){
+    offXP = offXP * (pageWidth / wordPageWidth);
+  }
+  if (wordPageHeight && wordPageHeight > 0){
+    offYP = offYP * (pageHeight / wordPageHeight);
+  }
+  var pageRefKeys = { "page":true, "pagearea":true, "pageedge":true, "margin":true, "spread":true };
+  var useInnerH = !!pageRefKeys[posHrefRaw];
+  var useInnerV = !!pageRefKeys[posVrefRaw] || posVrefRaw==="paragraph";
+
+  var baseX = useInnerH ? innerLeft : pageLeft;
+  if (posHrefRaw==="column") baseX = pageLeft + marginLeft;
+  var baseY = useInnerV ? innerTop : pageTop;
+
+  var maxWidth = useInnerH ? innerWidth : (pageRight - pageLeft);
+  var maxHeight = useInnerV ? innerHeight : (pageBottom - pageTop);
+  var wPt = __imgToPtLocal(spec && spec.w);
+  var hPt = __imgToPtLocal(spec && spec.h);
+  var targetW = wPt>0 ? Math.min(wPt, maxWidth) : maxWidth;
+  var targetH = hPt>0 ? Math.min(hPt, maxHeight) : maxHeight;
+  if (targetW <= 0) targetW = maxWidth;
+  if (targetH <= 0) targetH = maxHeight;
+
+  var guardL = Math.max(0, __imgToPtLocal(spec && spec.distL) || 0);
+  var guardR = Math.max(0, __imgToPtLocal(spec && spec.distR) || 0);
+  var guardTotal = guardL + guardR;
+  if (guardTotal > 0){
+    var availableW = Math.max(12, maxWidth - guardTotal);
+    if (targetW > availableW) targetW = availableW;
+  }
+
+  var left = baseX + offXP;
+  var top = baseY + offYP;
+  var maxBottom = baseY + maxHeight;
+
+  var innerLimitLeft = (useInnerH ? innerLeft : pageLeft) + guardL;
+  var innerLimitRight = (useInnerH ? innerRight : pageRight) - guardR;
+  if (innerLimitRight <= innerLimitLeft){
+    innerLimitRight = innerLimitLeft + Math.max(10, targetW);
+  }
+  if (left < innerLimitLeft) left = innerLimitLeft;
+  if (left > innerLimitRight - targetW) left = Math.max(innerLimitLeft, innerLimitRight - targetW);
+  if (top < pageTop) top = pageTop;
+  if (targetH > (maxBottom - top)) targetH = Math.max(10, maxBottom - top);
+  var right = Math.min(innerLimitRight, left + targetW);
+  targetW = Math.max(10, right - left);
+  var bottom = top + targetH;
+
+  var rect = pageObj.rectangles.add();
+  try{ rect.strokeWeight = 0; rect.fillOpacity = 100; }catch(_){}
+  rect.geometricBounds = [top, left, bottom, right];
+  var placed = null;
+  try{
+    placed = rect.place(fileObj);
+  }catch(ePlacePage){
+    log("[IMGFLOAT6][ERR] page place failed: "+ePlacePage);
+    try{ rect.remove(); }catch(__){}
+    return null;
+  }
+  if (!placed || !placed.length || !(placed[0] && placed[0].isValid)){
+    try{ rect.remove(); }catch(__){}
+    log("[IMGFLOAT6][ERR] page place invalid result");
+    return null;
+  }
+  try{ rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); }catch(_){}
+  return rect;
+}
 // apply sizing/fit/wrap for floating image; keeps existing layout logic
 function __imgFloatSizeAndWrap(rect, spec, isInline){
   if (!rect || !rect.isValid) return;
