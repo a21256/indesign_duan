@@ -498,23 +498,38 @@ function __imgAlignFloatingRect(rect, holder, innerW, alignMode){
 
 function __imgAddImageAtV2(ip, spec) {
       var doc = app.activeDocument;
-      try{
-        log("[IMG] begin __imgAddImageAtV2 src=" + (spec&&spec.src)
-            + " w=" + (spec&&spec.w) + " h=" + (spec&&spec.h)
-            + " align=" + (spec&&spec.align) + " sb=" + (spec&&spec.spaceBefore) + " sa=" + (spec&&spec.spaceAfter));
-      }catch(_){}
+      function _logBegin(){
+        try{
+          log("[IMG] begin __imgAddImageAtV2 src=" + (spec&&spec.src)
+              + " w=" + (spec&&spec.w) + " h=" + (spec&&spec.h)
+              + " align=" + (spec&&spec.align) + " sb=" + (spec&&spec.spaceBefore) + " sa=" + (spec&&spec.spaceAfter));
+        }catch(_){}
+      }
+      function _checkFile(){
+        var f0 = File(spec && spec.src);
+        if (!f0 || !f0.exists) { log("[ERR] __imgAddImageAtV2: file missing: " + (spec && spec.src)); return null; }
+        return f0;
+      }
+      function _initStory(){
+        var st0 = __imgResolveStory(ip, (typeof tf!=="undefined"?tf:null), doc);
+        if (!st0) { log("[ERR] __imgAddImageAtV2: no valid story"); return null; }
+        return st0;
+      }
+      function _resolveInlineFlag(){
+        var inlineFlag = String((spec && spec.inline)||"").toLowerCase();
+        var isInline = !(inlineFlag==="0" || inlineFlag==="false");
+        if (spec && spec.forceBlock) isInline = false;
+        return isInline;
+      }
+      _logBegin();
 
       // 1) 校验文件
-      var f = File(spec && spec.src);
-      if (!f || !f.exists) { log("[ERR] __imgAddImageAtV2: file missing: " + (spec && spec.src)); return null; }
+      var f = _checkFile(); if (!f) return null;
 
-      // 2) story / 安全插入点
-      var st = __imgResolveStory(ip, (typeof tf!=="undefined"?tf:null), doc);
-      if (!st) { log("[ERR] __imgAddImageAtV2: no valid story"); return null; }
+      // 2) story / 安全重构
+      var st = _initStory(); if (!st) return null;
 
-      var inlineFlag = String((spec && spec.inline)||"").toLowerCase();
-      var isInline = !(inlineFlag==="0" || inlineFlag==="false");
-      if (spec && spec.forceBlock) isInline = false;
+      var isInline = _resolveInlineFlag();
 
       // 关键：默认用“当前可写文本框 tf 的末尾插入点”，避免落到上一页的 story 尾框
       var ip2 = (ip && ip.isValid) ? ip : __imgSafeLastIP((typeof tf!=="undefined"?tf:null), st);
