@@ -39,6 +39,15 @@ function __imgNormPath(p){
         return File(p);
     }
 function __imgLogStep(s){ log("[IMGSTEP] " + s); }
+// unified error logger with src/ip context
+function __imgErr(tag, msg, spec, ipRef){
+  try{
+    var src = (spec && spec.src) ? spec.src : "NA";
+    var idx = "NA";
+    try{ idx = (ipRef && ipRef.isValid && ipRef.index != null) ? ipRef.index : "NA"; }catch(_){}
+    log("[" + tag + "][ERR] " + msg + " src=" + src + " ipIdx=" + idx);
+  }catch(_){}
+}
 
 var __FLOAT_CTX = __FLOAT_CTX || {};
 __FLOAT_CTX.imgAnchors = __FLOAT_CTX.imgAnchors || {};
@@ -73,8 +82,8 @@ function __imgSafeLastIP(tfMaybe, storyMaybe){
 function __imgPlaceInline(ip, fileObj){
   if (!ip || !ip.isValid || !fileObj) return null;
   var placed = null;
-  try { placed = ip.place(fileObj); } catch(ePlace){ log("[ERR] __imgAddImageAtV2: place failed: " + ePlace); return null; }
-  if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] __imgAddImageAtV2: place returned invalid"); return null; }
+  try { placed = ip.place(fileObj); } catch(ePlace){ __imgErr("IMG", "__imgAddImageAtV2: place failed: " + ePlace, {src:String(fileObj)}, ip); return null; }
+  if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { __imgErr("IMG", "__imgAddImageAtV2: place returned invalid", {src:String(fileObj)}, ip); return null; }
 
   var item = placed[0], rect=null, cname="";
   try { cname = String(item.constructor.name); } catch(_){}
@@ -82,7 +91,7 @@ function __imgPlaceInline(ip, fileObj){
   else {
     try { if (item && item.parent && item.parent.isValid && String(item.parent.constructor.name)==="Rectangle") rect=item.parent; } catch(_){}
   }
-  if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
+  if (!rect || !rect.isValid) { __imgErr("IMG", "__imgAddImageAtV2: no rectangle after place", {src:String(fileObj)}, ip); return null; }
   return rect;
 }
 // story resolver with safe recomposition
@@ -631,12 +640,12 @@ function __imgAddImageAtV2(ip, spec) {
       }
       function _checkFile(){
         var f0 = File(spec && spec.src);
-        if (!f0 || !f0.exists) { log("[ERR] __imgAddImageAtV2: file missing: " + (spec && spec.src)); return null; }
+        if (!f0 || !f0.exists) { __imgErr("IMG", "__imgAddImageAtV2: file missing", spec, ip); return null; }
         return f0;
       }
       function _initStory(){
         var st0 = __imgResolveStory(ip, (typeof tf!=="undefined"?tf:null), doc);
-        if (!st0) { log("[ERR] __imgAddImageAtV2: no valid story"); return null; }
+        if (!st0) { __imgErr("IMG", "__imgAddImageAtV2: no valid story", spec, ip); return null; }
         return st0;
       }
       function _resolveInlineFlag(){
@@ -666,7 +675,7 @@ function __imgAddImageAtV2(ip, spec) {
       } // end !isInline guard for prebreak/breakPara adjustments
 
       __imgLogAnchorPre(ip2, st);
-      if (!ip2 || !ip2.isValid) { log("[ERR] __imgAddImageAtV2: invalid insertion point"); return null; }
+      if (!ip2 || !ip2.isValid) { __imgErr("IMG", "__imgAddImageAtV2: invalid insertion point", spec, ip2); return null; }
 
       // 3) place
       var rect = __imgPlaceInline(ip2, f);
