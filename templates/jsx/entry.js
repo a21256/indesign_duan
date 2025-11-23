@@ -19,6 +19,19 @@
     var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
                      ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=记录 debug；false=仅保留 warn/error/info
     var __EVENT_LINES = [];
+    function __selfCheck(){
+      try{
+        if (String(EVENT_FILE || "").indexOf("%") >= 0) throw "EVENT_LOG_PATH placeholder not replaced";
+        if (String(LOG_WRITE).indexOf("%") >= 0) throw "LOG_WRITE placeholder not replaced";
+        if (typeof __ensureLayoutDefault !== "function") throw "missing function: __ensureLayoutDefault";
+        if (typeof __imgAddImageAtV2 !== "function") throw "missing function: __imgAddImageAtV2";
+        if (typeof __imgAddFloatingImage !== "function") throw "missing function: __imgAddFloatingImage";
+        if (typeof __tblAddTableHiFi !== "function") throw "missing function: __tblAddTableHiFi";
+      }catch(e){
+        try{ log("[ERR] selfcheck failed: " + e); }catch(_){ }
+        throw e;
+      }
+    }
 
     try{
       if (EVENT_FILE){
@@ -66,6 +79,7 @@
         __pushEvent("debug", m);
       }
     }
+    __selfCheck();
     function __flushEvents(){
       try{
         if (EVENT_FILE.parent && !EVENT_FILE.parent.exists) EVENT_FILE.parent.create();
