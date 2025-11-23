@@ -63,6 +63,84 @@ function __imgToPtLocal(v){
   if (s==="") return 0;
   var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
 }
+// story resolver with safe recomposition
+function __imgResolveStory(ip, tfMaybe, doc){
+  var st = null;
+  try {
+    if (ip && ip.isValid && ip.parentStory && ip.parentStory.isValid) st = ip.parentStory;
+    else if (tfMaybe && tfMaybe.isValid && tfMaybe.parentStory && tfMaybe.parentStory.isValid) st = tfMaybe.parentStory;
+    else if (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid && curTextFrame.parentStory && curTextFrame.parentStory.isValid) st = curTextFrame.parentStory;
+    else if (doc && doc.stories && doc.stories.length) st = doc.stories[0];
+  } catch(_){}
+  if (st) { try { st.recompose(); } catch(_){} }
+  return st;
+}
+// dedupe anchor when consecutive images share same ip
+function __imgDedupeAnchor(ipCandidate, st){
+  if (!ipCandidate || !ipCandidate.isValid) return ipCandidate;
+  try{
+    var lastIdx = (typeof __LAST_IMG_ANCHOR_IDX==='number') ? (__LAST_IMG_ANCHOR_IDX|0) : -1;
+    if (ipCandidate.index === lastIdx) {
+      try { ipCandidate.contents = "\r"; } catch(_){ }
+      try { if (st && st.isValid) st.recompose(); } catch(_){ }
+      try {
+        if (typeof tf!=="undefined" && tf && tf.isValid) ipCandidate = tf.insertionPoints[-1];
+        else ipCandidate = st.insertionPoints[-1];
+      } catch(__){}
+    }
+  }catch(_){ }
+  return ipCandidate;
+}
+// ensure non-inline images start on a new paragraph to avoid stacking
+function __imgEnsureBreakBeforeFloat(st, tf, ip2){
+  try{
+    var ipChk = (tf && tf.isValid) ? tf.insertionPoints[-1] : (st ? st.insertionPoints[-1] : null);
+    var prev = (ipChk && ipChk.isValid && ipChk.index>0) ? st.insertionPoints[ipChk.index-1] : null;
+    var prevIsCR = false; try{ prevIsCR = (prev && prev.isValid && String(prev.contents)=="\r"); }catch(__){}
+    if (!prevIsCR) {
+      try { ipChk.contents = "\r"; } catch(_){}
+      try { st.recompose(); } catch(_){}
+      try { ip2 = (tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1]; } catch(__){}
+    }
+  }catch(__){}
+  return ip2;
+}
+// anchor must belong to current frame; adjust to frame tail if needed
+function __imgAnchorToFrameTail(ip2, st, tf){
+  try{
+    if (ip2 && ip2.isValid && tf && tf.isValid) {
+      var para = ip2.paragraphs[0];
+      var p0   = (para && para.isValid) ? para.insertionPoints[0] : null;
+      var h0   = (p0 && p0.isValid && p0.parentTextFrames && p0.parentTextFrames.length)
+                 ? p0.parentTextFrames[0] : null;
+      if (h0 && h0.isValid && h0.id !== tf.id) {
+        try { ip2.contents = "\r"; } catch(_){ }
+        try { st.recompose(); } catch(_){ }
+        try { ip2 = tf.insertionPoints[-1]; } catch(_){ }
+      }
+    }
+  }catch(__){}
+  return ip2;
+}
+// adjust anchor to last IP of tf when coming from earlier frames
+function __imgEnsureAnchorAtTfTail(ip, st, tf){
+  if (!tf || !tf.isValid || !st || !st.isValid) return ip;
+  try{
+    if (!ip || !ip.isValid){
+      var guard = 0;
+      while (guard++ < 3) {
+        var holder = (ip && ip.isValid && ip.parentTextFrames && ip.parentTextFrames.length)
+                     ? ip.parentTextFrames[0] : null;
+        var ok = (holder && holder.isValid && holder.id === tf.id);
+        if (ok) break;
+        try { tf.insertionPoints[-1].contents = "\r"; } catch(_){ }
+        try { st.recompose(); } catch(_){ }
+        try { ip = tf.insertionPoints[-1]; } catch(_){ }
+      }
+    }
+  }catch(__){}
+  return ip;
+}
 // place an image inline and return its rectangle (or null on failure)
 function __imgPlaceInline(ip, fileObj){
   if (!ip || !ip.isValid || !fileObj) return null;
@@ -158,14 +236,8 @@ function __imgAddImageAtV2(ip, spec) {
       if (!f || !f.exists) { log("[ERR] __imgAddImageAtV2: file missing: " + (spec && spec.src)); return null; }
 
       // 2) story / 安全插入点
-      var st = null;
-      try {
-        st = (ip && ip.isValid && ip.parentStory && ip.parentStory.isValid) ? ip.parentStory
-           : (typeof curTextFrame!=="undefined" && curTextFrame && curTextFrame.isValid && curTextFrame.parentStory && curTextFrame.parentStory.isValid) ? curTextFrame.parentStory
-           : (doc.stories.length ? doc.stories[0] : null);
-      } catch(_){}
+      var st = __imgResolveStory(ip, (typeof tf!=="undefined"?tf:null), doc);
       if (!st) { log("[ERR] __imgAddImageAtV2: no valid story"); return null; }
-      try { st.recompose(); } catch(_){}
 
       var inlineFlag = String((spec && spec.inline)||"").toLowerCase();
       var isInline = !(inlineFlag==="0" || inlineFlag==="false");
@@ -178,36 +250,10 @@ function __imgAddImageAtV2(ip, spec) {
                     : st.insertionPoints[-1]);
 
       // --- FIX: 连续图片落在同一 IP 时，先推进一段，避免叠放 ---
-      function _logAnchorContext(tag, ipCandidate){
-        try{
-          var holder = (ipCandidate && ipCandidate.isValid && ipCandidate.parentTextFrames.length)
-                       ? ipCandidate.parentTextFrames[0] : null;
-          var page   = (holder && holder.isValid) ? holder.parentPage : null;
-          log('[IMGDBG] ' + tag + ' holderTf=' + (holder?holder.id:'NA')
-              + ' page=' + (page?page.name:'NA')
-              + ' ipIdx=' + (ipCandidate?ipCandidate.index:'NA')
-              + ' lastIdx=' + (typeof __LAST_IMG_ANCHOR_IDX==='number'?__LAST_IMG_ANCHOR_IDX:'NA'));
-        }catch(_){}}
+            // avoid stacking on the same anchor as previous image
+      ip2 = __imgDedupeAnchor(ip2, st);
 
-      function _dedupeAnchor(ipCandidate){
-        if (!ipCandidate || !ipCandidate.isValid) return ipCandidate;
-        try{
-          var lastIdx = (typeof __LAST_IMG_ANCHOR_IDX==='number') ? (__LAST_IMG_ANCHOR_IDX|0) : -1;
-          try { log("[IMG-STACK][pre] ip.index=" + ipCandidate.index + " lastIdx=" + lastIdx); } catch(__){}
-          if (ipCandidate.index === lastIdx) {
-            try { ipCandidate.contents = "\r"; } catch(_){ }
-            try { st.recompose(); } catch(_){ }
-            try {
-              if (typeof tf!=="undefined" && tf && tf.isValid) ipCandidate = tf.insertionPoints[-1];
-              else ipCandidate = st.insertionPoints[-1];
-            } catch(__){}
-            try { log("[IMG-STACK][shift] new ip.index=" + (ipCandidate&&ipCandidate.isValid?ipCandidate.index:"NA")); } catch(__){}
-          }
-        }catch(_){ }
-        return ipCandidate;
-      }
-
-      if (!isInline) {
+if (!isInline) {
         // --- 保障：每次放图前都新起一段，避免与上一张叠在同一锚点 ---
         try{
           var ipChk = (typeof tf!=="undefined" && tf && tf.isValid) ? tf.insertionPoints[-1] : st.insertionPoints[-1];
