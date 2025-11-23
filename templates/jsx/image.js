@@ -63,6 +63,22 @@ function __imgToPtLocal(v){
   if (s==="") return 0;
   var n = parseFloat(s); if (isNaN(n)) return 0; return n*0.75;
 }
+// place an image inline and return its rectangle (or null on failure)
+function __imgPlaceInline(ip, fileObj){
+  if (!ip || !ip.isValid || !fileObj) return null;
+  var placed = null;
+  try { placed = ip.place(fileObj); } catch(ePlace){ log("[ERR] __imgAddImageAtV2: place failed: " + ePlace); return null; }
+  if (!placed || !placed.length || !(placed[0] && placed[0].isValid)) { log("[ERR] __imgAddImageAtV2: place returned invalid"); return null; }
+
+  var item = placed[0], rect=null, cname="";
+  try { cname = String(item.constructor.name); } catch(_){}
+  if (cname==="Rectangle") rect = item;
+  else {
+    try { if (item && item.parent && item.parent.isValid && String(item.parent.constructor.name)==="Rectangle") rect=item.parent; } catch(_){}
+  }
+  if (!rect || !rect.isValid) { log("[ERR] __imgAddImageAtV2: no rectangle after place"); return null; }
+  return rect;
+}
 // story resolver with safe recomposition
 function __imgResolveStory(ip, tfMaybe, doc){
   var st = null;
