@@ -2,11 +2,8 @@
 function __imgNormPath(p){
         if(!p) return null;
         p = String(p).replace(/^\s+|\s+$/g,"").replace(/\\/g,"/");
-        // 直接支持 http(s) & data:，交给 InDesign 自己处理
         if (/^(https?:|data:)/i.test(p)) return File(p);
-        // 先尝试原始路径
         try { var f0 = File(p); if (f0.exists) return f0; } catch(_){}
-        // 仅文件名时，逐目录拼接
         var baseName = p.split("/").pop();
         function _alts(name){
             var i = name.lastIndexOf(".");
@@ -37,13 +34,12 @@ function __imgNormPath(p){
                 if (f2.exists) return f2;
             }catch(_){}
         }
-        // …函数结尾附近
         try { p = decodeURI(p); } catch(_){}
-        p = String(p).replace(/\\/g, "/");   // ← 新增：统一为正斜杠
+        p = String(p).replace(/\\/g, "/");
         return File(p);
     }
 function __imgLogStep(s){ log("[IMGSTEP] " + s); }
-// ===== 浮动图/框的共享上下文 =====
+
 var __FLOAT_CTX = __FLOAT_CTX || {};
 __FLOAT_CTX.imgAnchors = __FLOAT_CTX.imgAnchors || {};
 var __LAST_IMG_ANCHOR_IDX = (typeof __LAST_IMG_ANCHOR_IDX !== "undefined") ? __LAST_IMG_ANCHOR_IDX : -1;
@@ -606,19 +602,19 @@ function __imgAddImageAtV2(ip, spec) {
       }
       _logBegin();
 
-      // 1) 校验文件
+      // 1) verity file
       var f = _checkFile(); if (!f) return null;
 
-      // 2) story / 安全重构
+      // 2) story
       var st = _initStory(); if (!st) return null;
 
       var isInline = _resolveInlineFlag();
 
-      // 关键：默认用“当前可写文本框 tf 的末尾插入点”，避免落到上一页的 story 尾框
+      // Key point: by default use “the insertion point at the end of the current writable text frame tf” 
+      // to avoid ending up in the last frame of the story on the previous page.
       var ip2 = (ip && ip.isValid) ? ip : __imgSafeLastIP((typeof tf!=="undefined"?tf:null), st);
 
-      // --- FIX: 连续图片落在同一 IP 时，先推进一段，避免叠放 ---
-            // avoid stacking on the same anchor as previous image
+      // avoid stacking on the same anchor as previous image
       ip2 = __imgDedupeAnchor(ip2, st);
 
       if (!isInline) {
@@ -633,11 +629,11 @@ function __imgAddImageAtV2(ip, spec) {
       var rect = __imgPlaceInline(ip2, f);
       if (!rect || !rect.isValid) { return null; }
 
-      // 记录最近一次图片锚点，用于下一次“同位放图”检测
+      // Record the most recent image anchor so it can be used for 
+      // the next “same-position placement” check.
       try{
         var aNow = rect.storyOffset;
         if (aNow && aNow.isValid) __LAST_IMG_ANCHOR_IDX = aNow.index;
-        // [日志] 本次已放置图片的锚点 index
         try { log("[IMG-STACK][placed] anchor.index=" + aNow.index); } catch(__){}
       }catch(_){}
 
@@ -663,7 +659,8 @@ function __imgAddImageAtV2(ip, spec) {
 
       __imgFloatSizeAndWrap(rect, spec, isInline);
 
-      // 7) 锚点所在段：根据 align 控制段落对齐；块级图再设置段前段后
+      // 7) anchor paragraph: control paragraph alignment based on align; 
+      // for block images, also set space before and after
       try{
         var p = rect.storyOffset.paragraphs[0];
         if (p && p.isValid){
@@ -951,7 +948,8 @@ function __imgAddFloatingImage(tf, story, page, spec){
       }
 
 
-      // 优先使用单栏宽度（多栏情况下用 textColumnFixedWidth，保证与 Word 类似的列宽约束）
+      // Give priority to using the single-column width (in multi-column cases, 
+      // use textColumnFixedWidth to ensure column width constraints similar to Word)
       try {
         var _colW = (holder && holder.isValid) ? holder.textFramePreferences.textColumnFixedWidth : 0;
         var _colN = (holder && holder.isValid) ? holder.textFramePreferences.textColumnCount       : 1;
