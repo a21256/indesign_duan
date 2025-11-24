@@ -3,19 +3,21 @@
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
         var __cfgStyles = (typeof CONFIG !== "undefined" && CONFIG.styles) ? CONFIG.styles : {};
-        var __tableBodyStylePrimary = __cfgStyles.tableBody || %TABLE_BODY_STYLE%;
-        var __tableBodyStyleFallback = __cfgStyles.tableBodyFallback || %TABLE_BODY_STYLE_FALLBACK%;
-        var __tableBodyStyleBase = __cfgStyles.tableBodyBase || %TABLE_BODY_STYLE_BASE%;
-        var __tableBodyStyleAuto = __cfgStyles.tableBodyAuto || %TABLE_BODY_STYLE_AUTO%;
+        var __styleCfg = {
+          primary:  __cfgStyles.tableBody || %TABLE_BODY_STYLE%,
+          fallback: __cfgStyles.tableBodyFallback || %TABLE_BODY_STYLE_FALLBACK%,
+          base:     __cfgStyles.tableBodyBase || %TABLE_BODY_STYLE_BASE%,
+          auto:     __cfgStyles.tableBodyAuto || %TABLE_BODY_STYLE_AUTO%
+        };
         function __sanitizeStyleName(name){
           if (!name) return "[None]";
           if (typeof name === "string" && name.length && name.charAt(0) === "%") return "[None]";
           return name;
         }
-        __tableBodyStylePrimary = __sanitizeStyleName(__tableBodyStylePrimary);
-        __tableBodyStyleFallback = __sanitizeStyleName(__tableBodyStyleFallback);
-        __tableBodyStyleBase = __sanitizeStyleName(__tableBodyStyleBase);
-        __tableBodyStyleAuto = __sanitizeStyleName(__tableBodyStyleAuto);
+        __styleCfg.primary  = __sanitizeStyleName(__styleCfg.primary);
+        __styleCfg.fallback = __sanitizeStyleName(__styleCfg.fallback);
+        __styleCfg.base     = __sanitizeStyleName(__styleCfg.base);
+        __styleCfg.auto     = __sanitizeStyleName(__styleCfg.auto);
         var __tableCtx = (obj && obj.logContext) ? obj.logContext : null;
         var __tableTag = "[TABLE]";
         var __tableWarnTag = "[WARN]";
@@ -831,13 +833,13 @@
 
         try{ tbl.recompose(); }catch(__){}
         try{
-          var __resolvedTblStyle = __resolveTableParaStyle(__tableBodyStylePrimary)
-                                   || __resolveTableParaStyle(__tableBodyStyleFallback);
+          var __resolvedTblStyle = __resolveTableParaStyle(__styleCfg.primary)
+                                   || __resolveTableParaStyle(__styleCfg.fallback);
           if (!__resolvedTblStyle){
-            __resolvedTblStyle = __ensureAutoTableStyle(__tableBodyStyleAuto, __tableBodyStyleBase);
+            __resolvedTblStyle = __ensureAutoTableStyle(__styleCfg.auto, __styleCfg.base);
           }
           if (!__resolvedTblStyle){
-            __resolvedTblStyle = __resolveTableParaStyle(__tableBodyStyleBase)
+            __resolvedTblStyle = __resolveTableParaStyle(__styleCfg.base)
                                  || __resolveTableParaStyle("Body");
           }
           if (__resolvedTblStyle && __resolvedTblStyle.isValid){
