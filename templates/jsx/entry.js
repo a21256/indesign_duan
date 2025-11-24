@@ -186,6 +186,10 @@
     var __CURRENT_LAYOUT = null;
     var __DEFAULT_INNER_WIDTH = null;
     var __DEFAULT_INNER_HEIGHT = null;
+    // shared story/page/frame for composition helpers
+    var page = null;
+    var tf = null;
+    var story = null;
     var __ENABLE_TRAILING_TRIM = false;
     var __UNITVALUE_FAIL_ONCE = false;
     var __ALLOW_IMG_EXT_FALLBACK = (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean")
@@ -866,14 +870,14 @@ if (!doc || !doc.isValid) return;
     __STYLE_LINES__
 
     function __composeDocument(doc){
-      var page  = doc.pages[0];
+      page  = doc.pages[0];
       try{ log("[LOG] script boot ok; page="+doc.pages.length); }catch(_){}
 
-      var tf    = createTextFrameOnPage(page, __DEFAULT_LAYOUT);
+      tf    = createTextFrameOnPage(page, __DEFAULT_LAYOUT);
       if (__DEFAULT_INNER_WIDTH === null) __DEFAULT_INNER_WIDTH = _innerFrameWidth(tf);
       if (__DEFAULT_INNER_HEIGHT === null) __DEFAULT_INNER_HEIGHT = _innerFrameHeight(tf);
       try{ log("[LAYOUT] default inner width=" + __DEFAULT_INNER_WIDTH + " height=" + __DEFAULT_INNER_HEIGHT); }catch(_defaultLog){}
-      var story = tf.parentStory;
+      story = tf.parentStory;
       curTextFrame = tf; 
 
       var firstChapterSeen = false;
