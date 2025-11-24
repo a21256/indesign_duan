@@ -68,6 +68,57 @@ function __setBoldSafe(r){
   try { r.fontStyle = "Semibold"; return "fs:Semibold"; } catch(_){}
   return "noop";
 }
+// note helpers
+function __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st){
+  try {
+    if (endCharIndex <= startCharIndex) return;
+    var r = story.characters.itemByRange(startCharIndex, endCharIndex - 1);
+    var txt=""; try{ txt = String(r.contents).substr(0,50); }catch(_){}
+    log("[I/B/U] range="+startCharIndex+"-"+endCharIndex+" ; flags="+JSON.stringify(st)+" ; txt=\""+txt+"\"");
+
+    try { r.underline = !!st.u; log("[U] set="+ (!!st.u)); } catch(eu){ log("[U][ERR] "+eu); }
+
+    if (st.i) {
+      try { var howI = __setItalicSafe(r); log("[I] via " + howI + " ; " + __fontInfo(r)); } catch(ei){ log("[I][ERR] "+ei); }
+    }
+    if (st.b) {
+      try { var howB = __setBoldSafe(r);   log("[B] via " + howB + " ; " + __fontInfo(r)); } catch(eb){ log("[B][ERR] "+eb); }
+    }
+  } catch(e) {
+    log("[IBU][ERR] "+e);
+  }
+}
+function __processNoteMatch(m, ctx){
+  // ctx: {story, tf, page, stFlags, pendingNoteId, tableTag, tableWarnTag}
+  var story = ctx.story;
+  var st = ctx.stFlags || {i:0,b:0,u:0};
+  function on(x){ return x>0; }
+  if (m[1]) {
+    ctx.pendingNoteId = parseInt(m[1], 10);
+    return;
+  }
+  if (m[2]) {
+    var noteType = m[2];
+    var noteContent = m[3];
+    var ip = story.insertionPoints[-1];
+    try {
+      log("[NOTE] create " + noteType + " id=" + ctx.pendingNoteId + " len=" + (noteContent||"").length);
+      if (noteType === "FN") createFootnoteAt(ip, noteContent, ctx.pendingNoteId);
+      else createEndnoteAt(ip, noteContent, ctx.pendingNoteId);
+    } catch(e){ log("[NOTE][ERR] " + e); }
+    ctx.pendingNoteId = null;
+    return;
+  }
+  if (m[4]) {
+    // format toggles [[/I]] etc
+    var closing = m[4] === "/";
+    var flag = m[5];
+    if (flag === "I") st.i = closing ? 0 : 1;
+    else if (flag === "B") st.b = closing ? 0 : 1;
+    else if (flag === "U") st.u = closing ? 0 : 1;
+    return;
+  }
+}
 // entry logging helpers (shared)
 var __EVENT_LINES = [];
 function __sanitizeLogMessage(m){

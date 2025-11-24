@@ -71,8 +71,12 @@
     }
     }
     __selfCheck();
-    function __flushEvents(){
+    var __flushEventsWrapper = function(){
       __flushEvents(__EVENT_CTX);
+    };
+    // alias util formatter for compatibility
+    function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st){
+      return __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st);
     }
     function __logUnitValueFail(msg, err){
       if (__UNITVALUE_FAIL_ONCE) return;
@@ -564,26 +568,6 @@ function _holderInnerBounds(holder){
     }
     // text style helpers moved to util.js: __fontInfo, __setItalicSafe, __setBoldSafe
 
-    function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st) {
-      try {
-        if (endCharIndex <= startCharIndex) return;
-        var r = story.characters.itemByRange(startCharIndex, endCharIndex - 1);
-        var txt=""; try{ txt = String(r.contents).substr(0,50); }catch(_){}
-        log("[I/B/U] range="+startCharIndex+"-"+endCharIndex+" ; flags="+_s(st)+" ; txt=\""+txt+"\"");
-
-        try { r.underline = !!st.u; log("[U] set="+ (!!st.u)); } catch(eu){ log("[U][ERR] "+eu); }
-
-        if (st.i) {
-          try { var howI = __setItalicSafe(r); log("[I] via " + howI + " ; " + __fontInfo(r)); } catch(ei){ log("[I][ERR] "+ei); }
-        }
-        if (st.b) {
-          try { var howB = __setBoldSafe(r);   log("[B] via " + howB + " ; " + __fontInfo(r)); } catch(eb){ log("[B][ERR] "+eb); }
-        }
-      } catch(e) {
-        log("[IBU][ERR] "+e);
-      }
-    }
-
     function _mapAlign(h){ if(h=="center") return Justification.CENTER_ALIGN; if(h=="right") return Justification.RIGHT_ALIGN; return Justification.LEFT_ALIGN; }
     function _mapVAlign(v){ if(v=="bottom") return VerticalJustification.BOTTOM_ALIGN; if(v=="center"||v=="middle") return VerticalJustification.CENTER_ALIGN; return VerticalJustification.TOP_ALIGN; }
 
@@ -822,37 +806,25 @@ function _holderInnerBounds(holder){
         try{ insertionStart = (story && story.isValid) ? story.characters.length : 0; }catch(_){ }
 
         try{
-        var re = /\[{2,}FNI:(\d+)\]{2,}|\[{2,}(FN|EN):(.*?)\]{2,}|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
-        var last = 0, m;
-        var st = {i:0, b:0, u:0};
-        var PENDING_NOTE_ID = null;
-        function on(x){ return x>0; }
+                var re = /\[{2,}FNI:(\d+)\]{2,}|\[{2,}(FN|EN):(.*?)\]{2,}|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
+                var last = 0, m;
+                var st = {i:0, b:0, u:0};
+                var noteCtx = {story: story, tf: tf, page: page, stFlags: st, pendingNoteId: null};
 
-        while ((m = re.exec(text)) !== null) {
-            var chunk = text.substring(last, m.index);
-            if (chunk.length) {
-                var startIdx = story.characters.length;
-                story.insertionPoints[-1].contents = chunk;
-                var endIdx   = story.characters.length;
-                applyInlineFormattingOnRange(story, startIdx, endIdx, {i:on(st.i), b:on(st.b), u:on(st.u)});
-            }
-            try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
+                while ((m = re.exec(text)) !== null) {
+                    var chunk = text.substring(last, m.index);
+                    if (chunk.length) {
+                        var startIdx = story.characters.length;
+                        story.insertionPoints[-1].contents = chunk;
+                        var endIdx   = story.characters.length;
+                        __applyInlineFormattingOnRange(story, startIdx, endIdx, {i:(st.i>0), b:(st.b>0), u:(st.u>0)});
+                    }
+                    try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
 
 
-            if (m[1]) {
-                PENDING_NOTE_ID = parseInt(m[1], 10);
-            } else if (m[2]) {
-                var noteType = m[2];
-                var noteContent = m[3];
-                var ip = story.insertionPoints[-1];
-                try {
-                      log("[NOTE] create " + noteType + " id=" + PENDING_NOTE_ID + " len=" + (noteContent||"").length);
-                      if (noteType === "FN") createFootnoteAt(ip, noteContent, PENDING_NOTE_ID);
-                      else createEndnoteAt(ip, noteContent, PENDING_NOTE_ID);
-                } catch(e){ log("[NOTE][ERR] " + e); }
-                PENDING_NOTE_ID = null;
-
-            } else if (m[6]) {
+                    if (m[1] || m[2] || m[4]) {
+                        __processNoteMatch(m, noteCtx);
+                    } else if (m[6]) {
                 try{ log("[IMGDBG] enter [[IMG]] attrs=" + m[6]); }catch(_){}
                 var kv = m[6], spec = {};
                 try{
@@ -999,7 +971,7 @@ function _holderInnerBounds(holder){
             var sIdx = story.characters.length;
             story.insertionPoints[-1].contents = tail;
             var eIdx = story.characters.length;
-            applyInlineFormattingOnRange(story, sIdx, eIdx, {i:on(st.i), b:on(st.b), u:on(st.u)});
+            __applyInlineFormattingOnRange(story, sIdx, eIdx, {i:(st.i>0), b:(st.b>0), u:(st.u>0)});
         }
         try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
 
