@@ -277,11 +277,12 @@
       if (_HAS_JSON) {
         try { return JSON.stringify(obj); } catch(_){}
       }
+      try { return __jsonStringifySafe(obj); } catch(_){}
       try {
         return "{i:" + (obj && obj.i ? 1:0) +
                ",b:" + (obj && obj.b ? 1:0) +
                ",u:" + (obj && obj.u ? 1:0) + "}";
-      } catch(e) { return String(obj); }
+      } catch(e) { try{ return String(obj); }catch(__){ return ""; } }
     }
 
     function _safeIP(tf){
@@ -507,7 +508,7 @@
           if (target.pageOrientation && __CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation !== target.pageOrientation){
             var __skipPayload = __cloneLayoutState(target);
             __skipPayload.origin = "skip";
-            log("[LAYOUT] still skipping due to same state; page=" + (page && page.name) + " spec=" + JSON.stringify(__skipPayload));
+            log("[LAYOUT] still skipping due to same state; page=" + (page && page.name) + " spec=" + __jsonStringifySafe(__skipPayload));
           }
         }catch(__skipLog){}
         return;
@@ -556,16 +557,6 @@ function _holderInnerBounds(holder){
 }
 
 
-    function findParaStyleCI(doc, name){
-        var lower = String(name).toLowerCase();
-        var ps = doc.paragraphStyles;
-        for (var i=0;i<ps.length;i++){
-            try{
-                if (String(ps[i].name).toLowerCase() === lower) return ps[i];
-            }catch(_){}
-        }
-        return null;
-    }
     // text style helpers moved to util.js: __fontInfo, __setItalicSafe, __setBoldSafe
 
     function _mapAlign(h){ return __mapAlign(h); }
@@ -730,7 +721,7 @@ function _holderInnerBounds(holder){
                 continue;
             } else if (m[7]) {
                 try {
-                    var obj = JSON.parse(m[7]);
+                    var obj = __jsonParseSafe(m[7]);
                     __tblAddTableHiFi(obj);
                 } catch(e){
                     try { var obj2 = eval("("+m[7]+")"); __tblAddTableHiFi(obj2); } catch(__){}

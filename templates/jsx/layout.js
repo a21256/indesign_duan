@@ -538,7 +538,7 @@ function __layoutSkipIfSame(target){
     if (target.pageOrientation && __CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation !== target.pageOrientation){
       var __skipPayload = __cloneLayoutState(target);
       __skipPayload.origin = "skip";
-      log(__layoutTag("info","still skipping due to same state; page=" + (page && page.name) + " spec=" + JSON.stringify(__skipPayload)));
+      log(__layoutTag("info","still skipping due to same state; page=" + (page && page.name) + " spec=" + __jsonStringifySafe(__skipPayload)));
     }
   }catch(__skipLog){}
   return true;

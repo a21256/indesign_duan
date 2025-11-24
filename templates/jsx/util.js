@@ -1,6 +1,21 @@
 ﻿var CONFIG = %JSX_CONFIG%;
 if (!CONFIG) CONFIG = {};
 
+// JSON helpers (ExtendScript 可能没有内置 JSON 对象)
+var __HAS_JSON = (typeof JSON !== "undefined" && JSON && typeof JSON.stringify === "function");
+function __jsonStringifySafe(obj){
+  if (__HAS_JSON){
+    try{ return JSON.stringify(obj); }catch(_){}
+  }
+  try{ return String(obj); }catch(__){ return ""; }
+}
+function __jsonParseSafe(str){
+  if (typeof JSON !== "undefined" && JSON && typeof JSON.parse === "function"){
+    try{ return JSON.parse(str); }catch(_){}
+  }
+  try{ return eval("(" + str + ")"); }catch(__){ return null; }
+}
+
 function smartWrapStr(s){
     try{
       var flushAllowed = true;
@@ -36,6 +51,17 @@ function __fontInfo(r){
   try{ tB = String(!!r.trueBold); }catch(_){}
   return "font="+fam+" ; style="+sty+" ; trueItalic="+tI+" ; trueBold="+tB;
 }
+function findCharStyleCI(doc, name){
+  var lower = String(name).toLowerCase();
+  var cs = doc.characterStyles;
+  for (var i=0;i<cs.length;i++){
+    try{
+      if (String(cs[i].name).toLowerCase() === lower) return cs[i];
+    }catch(_){ }
+  }
+  return null;
+}
+
 function __setItalicSafe(r){
   try {
     var doc = app.activeDocument;
@@ -74,7 +100,7 @@ function __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st)
     if (endCharIndex <= startCharIndex) return;
     var r = story.characters.itemByRange(startCharIndex, endCharIndex - 1);
     var txt=""; try{ txt = String(r.contents).substr(0,50); }catch(_){}
-    log("[I/B/U] range="+startCharIndex+"-"+endCharIndex+" ; flags="+JSON.stringify(st)+" ; txt=\""+txt+"\"");
+    log("[I/B/U] range="+startCharIndex+"-"+endCharIndex+" ; flags="+__jsonStringifySafe(st)+" ; txt=\""+txt+"\"");
 
     try { r.underline = !!st.u; log("[U] set="+ (!!st.u)); } catch(eu){ log("[U][ERR] "+eu); }
 
