@@ -15,18 +15,20 @@
         app.viewPreferences.verticalMeasurementUnits = MeasurementUnits.POINTS;
     }catch(_){}
 
+    // config + selfcheck
     var EVENT_FILE = File("%EVENT_LOG_PATH%");
     var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
-                     ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=记录 debug；false=仅保留 warn/error/info
+                     ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=log debug; false=only warn/error/info
     var __EVENT_LINES = [];
     function __selfCheck(){
       try{
         if (String(EVENT_FILE || "").indexOf("%") >= 0) throw "EVENT_LOG_PATH placeholder not replaced";
         if (String(LOG_WRITE).indexOf("%") >= 0) throw "LOG_WRITE placeholder not replaced";
-        if (typeof __ensureLayoutDefault !== "function") throw "missing function: __ensureLayoutDefault";
-        if (typeof __imgAddImageAtV2 !== "function") throw "missing function: __imgAddImageAtV2";
-        if (typeof __imgAddFloatingImage !== "function") throw "missing function: __imgAddFloatingImage";
-        if (typeof __tblAddTableHiFi !== "function") throw "missing function: __tblAddTableHiFi";
+        var required = ["__ensureLayoutDefault","__imgAddImageAtV2","__imgAddFloatingImage","__tblAddTableHiFi"];
+        for (var i=0;i<required.length;i++){
+          var n = required[i];
+          if (typeof eval(n) !== "function") throw ("missing function: " + n);
+        }
       }catch(e){
         try{ log("[ERR] selfcheck failed: " + e); }catch(_){ }
         throw e;
