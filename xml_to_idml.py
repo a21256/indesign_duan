@@ -14,10 +14,9 @@ from pipeline_logger import PipelineLogger
 OUT_DIR = os.path.abspath(os.path.dirname(__file__))
 XML_PATH = os.path.join(OUT_DIR, "formatted_output.xml")
 TEMPLATE_PATH = os.path.join(OUT_DIR, "template.idml")
-IDML_OUT_PATH = os.path.join(OUT_DIR, "output.idml")  # 可选导出
-LOG_PATH = os.path.join(OUT_DIR, "inline_style_debug.log")  # 行内样式&脚注日志
+IDML_OUT_PATH = os.path.join(OUT_DIR, "output.idml") 
+LOG_PATH = os.path.join(OUT_DIR, "inline_style_debug.log") 
 
-# 始终覆盖同名脚本（不再生成带时间戳）
 JSX_PATH = os.path.join(OUT_DIR, "indesign_autoflow_map_levels.jsx")
 JSX_TEMPLATE_PATH = os.path.join(OUT_DIR, "templates", "indesign_autoflow_map_levels.tpl.jsx")  # optional external JSX template
 JSX_FRAGMENT_DIR = os.path.join(OUT_DIR, "templates", "jsx")
@@ -31,8 +30,7 @@ JSX_FRAGMENTS = {
 
 AUTO_RUN_WINDOWS = True
 AUTO_RUN_MACOS = True
-AUTO_EXPORT_IDML = True  # 如需脚本结束自动导出 output.idml，改 True
-# 是否把运行日志写入文件：开发=True，商用=False，也可用环境变量 INDESIGN_LOG=0/1 覆盖
+AUTO_EXPORT_IDML = True 
 LOG_WRITE = False
 
 TABLE_BODY_PAR_STYLE = "TableBody"
@@ -40,7 +38,7 @@ TABLE_BODY_PAR_STYLE_FALLBACK = "DocxTable"
 TABLE_BODY_PAR_STYLE_BASE = "Body"
 TABLE_BODY_PAR_STYLE_AUTO = "__DocxTableAuto"
 
-PROGRESS_HEARTBEAT_MS = 15000  # JSX 粗略进度心跳频率（毫秒）
+PROGRESS_HEARTBEAT_MS = 15000 
 PROGRESS_CONSOLE_ACTIVE = False
 PROGRESS_CONSOLE_LEN = 0
 
@@ -105,7 +103,6 @@ def _watch_jsx_progress(log_path: str, stop_event: "threading.Event"):
                     fh.seek(0, os.SEEK_END)
                 line = fh.readline()
                 if not line:
-                    # 文件可能被重新创建/截断，位置落在文件尾之外时重置到开头
                     try:
                         size = os.path.getsize(log_path)
                         if fh.tell() > size:
@@ -175,7 +172,6 @@ WIN_PROGIDS = [
 ]
 MAC_APP_NAME = "Adobe InDesign 2020"
 
-# 仅作为“模板缺失样式时”的兜底（不会覆盖模板样式）
 BODY_PT = 11
 BODY_LEADING = 14
 HEADING_BASE_PT = 18
@@ -185,10 +181,8 @@ HEADING_EXTRA_LEAD = 3
 SPACE_BEFORE_HEAD = 8
 SPACE_AFTER_HEAD = 6
 
-# 脚注标记（正文里的小号上标）仅用于“标记”本身
 FN_MARK_PT = max(7, BODY_PT - 2)
 
-# 脚注正文段落样式找不到时的兜底字号/行距（只影响脚注内容，不影响正文）
 FN_FALLBACK_PT = max(8, BODY_PT - 2)
 FN_FALLBACK_LEAD = FN_FALLBACK_PT + 2
 
@@ -237,7 +231,6 @@ def _ctx_label(ctx: Optional[Dict[str, str]]) -> str:
     return "[" + " ".join(parts) + "]"
 
 
-# ========== XML 解析（无限层级 + 引用式脚注/尾注；忽略 <meta>/<prop>/<footnotes>/<endnotes>内容） ==========
 def _strip_ns(tag):
     return tag.split('}', 1)[-1].lower()
 
@@ -349,15 +342,11 @@ def _collect_inline_with_notes(elem, foot_map, end_map):
             if c.tail: parts.append(c.tail)
             continue
 
-        # --- inline images -> 转成 [[IMG ...]] 标记交给 JSX ---
         if tag in ("img", "image", "graphic", "figureimage", "inlinegraphic"):
-            # 尽量兼容多种属性命名
             src = c.attrib.get("src") or c.attrib.get("href") or c.attrib.get("xlink:href") or ""
-            # 宽/高可能是 w/width/mm/px，也可能放在 style 里；这里只做最小映射，样式里不解析也不影响排版
             w = c.attrib.get("w") or c.attrib.get("width") or ""
             h = c.attrib.get("h") or c.attrib.get("height") or ""
             align = c.attrib.get("align") or c.attrib.get("placement") or ""
-            # 生成 [[IMG ...]]；缺省对齐由 JSX 端处理（默认为 center）
             if src:
                 parts.append(f'[[IMG src="{src}" w="{w}" h="{h}" align="{align}"]]')
             if c.tail:
@@ -413,7 +402,6 @@ def extract_paragraphs_with_levels(xml_path):
                 out.append(("Body", elem.tail.strip()))
             return
 
-        # 容器：chapter/section/subsection/levelN
         new_level = current_level
         if tag == "chapter":
             new_level = 1
@@ -440,7 +428,6 @@ def extract_paragraphs_with_levels(xml_path):
     return out
 
 
-# ========== 为 JSX 注入的字符串转义 ==========
 def escape_js(s: str) -> str:
     s = s.replace("\\", "\\\\").replace('"', '\\"')
     s = s.replace("\\r\\n", " ").replace("\\r", " ").replace("\\n", " ")
@@ -449,7 +436,6 @@ def escape_js(s: str) -> str:
     return s
 
 
-# ========== JSX 模板（新增 IMG/TABLE 处理函数与正则） ==========
 # External JSX template is required; inline template removed.
 
 def build_style_lines(levels_used):
@@ -465,7 +451,6 @@ def build_style_lines(levels_used):
 
 
 def build_toc_entries(levels_used):
-    # （保留你之前的 TOC 部分，这里不再额外插入）
     return ""
 
 
@@ -1205,14 +1190,12 @@ def write_jsx(jsx_path, paragraphs):
 
     style_lines = build_style_lines(levels_used)
 
-    # 构造图片检索目录（新增）
     img_dirs = [
         OUT_DIR,
         os.path.join(OUT_DIR, "assets"),
         os.path.dirname(XML_PATH) or OUT_DIR,
         os.path.join(os.path.dirname(XML_PATH) or OUT_DIR, "assets"),
     ]
-    # 去重 & 规范化
     _seen = set();
     _norm = []
     for d in img_dirs:
@@ -1263,8 +1246,6 @@ def write_jsx(jsx_path, paragraphs):
     jsx = jsx.replace("__ADD_LINES__", "\n    ".join(add_lines))
     jsx = jsx.replace("%IMG_DIRS_JSON%", json.dumps(_norm).replace("\\", "\\\\"))
 
-    # 基础自检：占位符是否残留，避免 InDesign 报 “% does not have a value”
-    # 仅检查以字母或下划线开头的占位符，避免误报正文中的 %20 等编码片段
     leftovers = sorted(set(m.group(0) for m in re.finditer(r"%[A-Z_][A-Z0-9_]*%", jsx)))
     if leftovers:
         raise RuntimeError(f"JSX placeholder not replaced: {leftovers}")
@@ -1275,11 +1256,9 @@ def write_jsx(jsx_path, paragraphs):
     if tpl_used:
         print("[INFO] JSX 模板来源:", tpl_used)
     print(f"[INFO] JSX 事件日志: {LOG_PATH}")
-    # 在 write_jsx() 末尾、写完 add_lines 之后临时加一行：
     print("[DEBUG] JSX 是否包含 addImageAtV2：", any("__imgAddImageAtV2(" in ln for ln in add_lines))
 
 
-# ========== 调用 InDesign ==========
 def run_indesign_windows(jsx_path):
     try:
         import win32com.client  # pip install pywin32

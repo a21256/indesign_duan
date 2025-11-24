@@ -70,7 +70,6 @@ XP_RUN_EXTENT = etree.XPath(
 # Text boxes (DrawingML & VML)
 XP_RUN_TEXTBOX = etree.XPath(".//w:drawing//wps:txbx", namespaces=NSMAP_ALL)
 XP_RUN_TEXTBOX_VML = etree.XPath(".//w:pict//v:textbox", namespaces=NSMAP_ALL)
-# 鐗堝紡涓庡畾浣?
 XP_RUN_ANCHOR = etree.XPath(".//w:drawing//wp:anchor", namespaces=NSMAP_ALL)
 XP_RUN_INLINE = etree.XPath(".//w:drawing//wp:inline", namespaces=NSMAP_ALL)
 XP_WRAP_ANY  = etree.XPath(".//wp:anchor/*[starts-with(local-name(), 'wrap')]", namespaces=NSMAP_ALL)
@@ -2076,7 +2075,6 @@ class DOCXOutlineExporter:
         stack: List[MyDOCNode] = [self.root]
 
         def _tbl_width_pt(tbl_el):
-            # 读取 w:tblW；若为 pct，用 480pt 近似 100%（避免缺页面宽时归一失败）
             tw = tbl_el.find("./w:tblPr/w:tblW", NSMAP)
             if tw is not None:
                 t = tw.get(f"{{{W_NS}}}type")
@@ -2093,7 +2091,6 @@ class DOCXOutlineExporter:
             return 480.0
 
         def _expanded_cols(row_cells):
-            # 计算“考虑 colspan 展开”的列数
             n = 0
             for cell in row_cells:
                 try:

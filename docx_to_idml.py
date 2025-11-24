@@ -32,12 +32,11 @@ import xml_to_idml as X
 from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 from xml_to_idml import XML_PATH, extract_paragraphs_with_levels, write_jsx, JSX_PATH
 from xml_to_idml import AUTO_RUN_MACOS, AUTO_RUN_WINDOWS, run_indesign_windows, run_indesign_macos
-from xml_to_idml import LOG_PATH  # 打印日志用
+from xml_to_idml import LOG_PATH  
 from pipeline_logger import PipelineLogger
 
 PIPELINE_LOGGER: Optional[PipelineLogger] = None
 
-# ====== 跨平台口令文件路径 ======
 def _default_pass_dir() -> str:
     if sys.platform == "darwin":
         return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Docx2IDML")
@@ -52,8 +51,6 @@ PASS_FILE = os.path.join(PASS_DIR, "docx_to_idml_pass.json")
 
 PBKDF2_ITER = 200_000
 
-# ====== 内置（编译时）默认密码（不可被删除） ======
-# 默认值：Moyi#2025!Docx2Idml  （可用 --set-password 修改为新口令，写入文件）
 EMBEDDED_RECORD = {
     "iterations": PBKDF2_ITER,
     "salt_b64": "ZiUILFcbXqKBcLTE5kgCjw==",
@@ -69,13 +66,11 @@ def _embedded_record_parsed():
     }
 
 
-# ====== 密码工具函数 ======
 def _pbkdf2_hash(password: str, salt: bytes, iterations: int = PBKDF2_ITER) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations, dklen=32)
 
 
 def _load_record():
-    # 优先读外部文件；失败则回退到内置加密密码
     try:
         if os.path.exists(PASS_FILE):
             with open(PASS_FILE, "r", encoding="utf-8") as f:
@@ -169,13 +164,11 @@ def _prompt_hidden(prompt_text: str) -> str:
     try:
         return getpass.getpass(prompt_text)
     except Exception:
-        # 某些环境（如无 TTY）可能不支持隐藏输入
         return input(prompt_text)
 
 
 def _verify_flow(cli_password: str | None) -> bool:
     rec = _load_record()
-    # 始终要求输入密码（或 --password 传入），不再“首次运行自动设置密码”
     pwd = cli_password if cli_password is not None else _prompt_hidden("请输入密码：")
     h = _pbkdf2_hash(pwd, rec["salt"], rec["iterations"])
     if h == rec["hash"]:
@@ -185,7 +178,6 @@ def _verify_flow(cli_password: str | None) -> bool:
 
 
 def _set_password_flow():
-    # 修改密码：校验当前密码（可能来自文件或内置记录）
     rec = _load_record()
     old = _prompt_hidden("请输入当前密码：")
     if _pbkdf2_hash(old, rec["salt"], rec["iterations"]) != rec["hash"]:
@@ -209,18 +201,15 @@ def _set_password_flow():
 
 # ====== 模板与输出覆盖 ======
 def _effective_template_path(cli_template: str | None) -> str:
-    """返回实际生效的 TEMPLATE_PATH（优先命令行，其次 xml_to_idml 全局）"""
     if cli_template and str(cli_template).strip():
         return os.path.abspath(cli_template)
     try:
         return os.path.abspath(X.TEMPLATE_PATH)
     except Exception:
-        # 若模块未暴露 TEMPLATE_PATH，可根据你的实现改为固定默认
         return os.path.abspath("template.idml")
 
 
 def _apply_overrides(cli_template: str | None, cli_out: str | None) -> None:
-    """把命令行覆盖写回 xml_to_idml 模块的全局变量，供后续 write_jsx / JSX 模板使用。"""
     if cli_template and str(cli_template).strip():
         X.TEMPLATE_PATH = os.path.abspath(cli_template)
     if cli_out and str(cli_out).strip():
@@ -229,7 +218,6 @@ def _apply_overrides(cli_template: str | None, cli_out: str | None) -> None:
 
 def main(argv=None):
     start_ts = time.time()
-    # ====== 命令行解析（新增跨平台与模板/输出覆盖） ======
     parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex/hybrid) with style switches + Password Protection + Cross-platform paths")
     parser.add_argument(
         "--mode",
@@ -251,7 +239,6 @@ def main(argv=None):
     parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
-    # —— 在输入密码之前：先校验 input 和 实际生效的 TEMPLATE_PATH ——
     input_path = None
     if not args.set_password:
         if not args.input:
@@ -267,7 +254,6 @@ def main(argv=None):
         _log_error(f"模板文件不存在：{eff_template}")
         sys.exit(2)
 
-    # 若指定了 --out，则提前校验输出目录是否存在（避免后续失败）；若不存在，提示并退出
     if args.out:
         out_abs = os.path.abspath(args.out)
         out_dir = os.path.dirname(out_abs) or os.getcwd()
@@ -275,7 +261,6 @@ def main(argv=None):
             _log_error(f"输出目录不存在：{out_dir}")
             sys.exit(2)
 
-    # 覆盖 xml_to_idml 的全局变量（模板路径与导出路径），确保后续 write_jsx 生效
     _apply_overrides(args.template, args.out)
     arg_debug_line = (
         f"[ARGS] mode={args.mode} skip_images={args.no_images} skip_tables={args.no_tables} "
@@ -283,12 +268,10 @@ def main(argv=None):
         f"log_dir={args.log_dir or '(default)'} no_run={args.no_run}"
     )
 
-    # 仅执行修改密码功能（可在未校验密码之前执行）
     if args.set_password:
         code = _set_password_flow()
         sys.exit(code if isinstance(code, int) else 0)
 
-    # 其余功能必须先通过密码校验
     if not _verify_flow(args.password):
         sys.exit(1)
 
@@ -311,8 +294,7 @@ def main(argv=None):
     PIPELINE_LOGGER.user(arg_debug_line)
     _debug_log(arg_debug_line)
 
-    # ====== 原有流程 ======
-    # 1) 生成 XML
+    # 1) XML
     docx_meta = _read_docx_app_props(input_path)
 
     exporter = DOCXOutlineExporter(
@@ -328,7 +310,7 @@ def main(argv=None):
     image_stats = export_summary.get("image_fragments", 0) or 0
     _log_user(f"[OK] mode={args.mode} XML saved -> {XML_PATH}")
 
-    # 2) 解析 XML -> 段落
+    # 2)  XML -> paragraphs
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
     _log_user(f"[INFO] 解析到 {len(paragraphs)} 段；示例前3段: {paragraphs[:3]}")
     if PIPELINE_LOGGER and args.debug_log:
@@ -336,10 +318,8 @@ def main(argv=None):
             f"[DOCX2IDML] skip_flags images={args.no_images} tables={args.no_tables} textboxes={args.no_textboxes}"
         )
 
-    # 3) 生成 JSX（模板 + 每 Level1 新 story + TOC + 脚注/尾注 + i/b/u + 日志 + 脚注/尾注正文样式）
     write_jsx(JSX_PATH, paragraphs)
 
-    # 4) 调 InDesign
     ran = False
     if AUTO_RUN_WINDOWS and sys.platform.startswith("win"):
         ran = run_indesign_windows(JSX_PATH)
