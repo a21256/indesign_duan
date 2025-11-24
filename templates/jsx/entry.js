@@ -47,11 +47,6 @@
       }
     }catch(_){}
 
-    function __sanitizeLogMessage(m){
-      var txt = String(m == null ? "" : m);
-      txt = txt.replace(/[\r\n]+/g, " ").replace(/\t/g, " ");
-      return txt;
-    }
     function info(m){ __pushEvent(__EVENT_CTX, "info", m); }
     function warn(m){ __pushEvent(__EVENT_CTX, "warn", m); }
     function err(m){  __pushEvent(__EVENT_CTX, "error", m); }
