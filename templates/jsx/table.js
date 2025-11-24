@@ -74,6 +74,7 @@
             log(__tableTag + " ctx" + __tblSummary);
           }catch(__ctxLog){}
         }
+        // resolve layout spec (orientation/margins) from obj
         var layoutSpec = null;
         try{
           if (obj){
@@ -144,29 +145,33 @@
         try{ log(__tableTag + " begin rows="+rows+" cols="+cols); }catch(__){}
         var doc = app.activeDocument;
 
-        var storyRef = null;
-        try{ if (story && story.isValid) storyRef = story; }catch(_){ }
-        if (!storyRef){
-          try{
-            if (curTextFrame && curTextFrame.isValid && curTextFrame.parentStory && curTextFrame.parentStory.isValid){
-              storyRef = curTextFrame.parentStory;
-            }
-          }catch(_){ }
+        function __tblResolveStoryRef(){
+          var s = null;
+          try{ if (story && story.isValid) s = story; }catch(_){ }
+          if (!s){
+            try{
+              if (curTextFrame && curTextFrame.isValid && curTextFrame.parentStory && curTextFrame.parentStory.isValid){
+                s = curTextFrame.parentStory;
+              }
+            }catch(_){ }
+          }
+          if (!s){
+            try{
+              if (typeof tf!=="undefined" && tf && tf.isValid && tf.parentStory && tf.parentStory.isValid){
+                s = tf.parentStory;
+              }
+            }catch(_){ }
+          }
+          if (!s){
+            try{
+              if (doc && doc.stories && doc.stories.length>0){
+                s = doc.stories[0];
+              }
+            }catch(_){ }
+          }
+          return s;
         }
-        if (!storyRef){
-          try{
-            if (typeof tf!=="undefined" && tf && tf.isValid && tf.parentStory && tf.parentStory.isValid){
-              storyRef = tf.parentStory;
-            }
-          }catch(_){ }
-        }
-        if (!storyRef){
-          try{
-            if (doc && doc.stories && doc.stories.length>0){
-              storyRef = doc.stories[0];
-            }
-          }catch(_){ }
-        }
+        var storyRef = __tblResolveStoryRef();
         if (!storyRef || !storyRef.isValid){
           try{ log("[ERR] __tblAddTableHiFi: no valid story"); }catch(__){}
           return;
