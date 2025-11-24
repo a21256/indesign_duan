@@ -19,7 +19,10 @@
     var EVENT_FILE = File("%EVENT_LOG_PATH%");
     var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
                      ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=log debug; false=only warn/error/info
-    var __EVENT_LINES = [];
+    var __EVENT_CTX = __initEventLog(EVENT_FILE, LOG_WRITE);
+    function __entryLog(tag, msg){
+      try{ log("[" + tag + "] " + msg); }catch(_){}
+    }
     function __selfCheck(){
       try{
         if (String(EVENT_FILE || "").indexOf("%") >= 0) throw "EVENT_LOG_PATH placeholder not replaced";
@@ -30,7 +33,7 @@
           if (typeof eval(n) !== "function") throw ("missing function: " + n);
         }
       }catch(e){
-        try{ log("[ERR] selfcheck failed: " + e); }catch(_){ }
+        __entryLog("ERR","selfcheck failed: " + e);
         throw e;
       }
     }
@@ -49,28 +52,14 @@
       txt = txt.replace(/[\r\n]+/g, " ").replace(/\t/g, " ");
       return txt;
     }
-    function __pushEvent(level, message){
-      if (level === "debug" && !LOG_WRITE) return;
-      var stamp = iso();
-      __EVENT_LINES.push(level + "\t" + stamp + "\t" + __sanitizeLogMessage(message));
-      if (EVENT_FILE) {
-        try {
-          if (EVENT_FILE.parent && !EVENT_FILE.parent.exists) EVENT_FILE.parent.create();
-          EVENT_FILE.encoding = "UTF-8";
-          EVENT_FILE.open("a");
-          EVENT_FILE.writeln(__EVENT_LINES[__EVENT_LINES.length - 1]);
-          EVENT_FILE.close();
-        } catch(_){}
-      }
-    }
-    function info(m){ __pushEvent("info", m); }
-    function warn(m){ __pushEvent("warn", m); }
-    function err(m){  __pushEvent("error", m); }
+    function info(m){ __pushEvent(__EVENT_CTX, "info", m); }
+    function warn(m){ __pushEvent(__EVENT_CTX, "warn", m); }
+    function err(m){  __pushEvent(__EVENT_CTX, "error", m); }
     var __LAST_LAYOUT_LOG = null;
     function __logLayoutEvent(message){
       if (!__LAST_LAYOUT_LOG || __LAST_LAYOUT_LOG !== message){
         __LAST_LAYOUT_LOG = message;
-        __pushEvent("debug", message);
+        __pushEvent(__EVENT_CTX, "debug", message);
       }
     }
     function log(m){
@@ -78,20 +67,12 @@
         __logLayoutEvent(String(m));
       } else {
         __LAST_LAYOUT_LOG = null;
-        __pushEvent("debug", m);
-      }
+        __pushEvent(__EVENT_CTX, "debug", m);
+    }
     }
     __selfCheck();
     function __flushEvents(){
-      try{
-        if (EVENT_FILE.parent && !EVENT_FILE.parent.exists) EVENT_FILE.parent.create();
-        EVENT_FILE.encoding = "UTF-8";
-        EVENT_FILE.open("w");
-        for (var i=0; i<__EVENT_LINES.length; i++){
-          EVENT_FILE.writeln(__EVENT_LINES[i]);
-        }
-        EVENT_FILE.close();
-      }catch(_){ }
+      __flushEvents(__EVENT_CTX);
     }
     function __logUnitValueFail(msg, err){
       if (__UNITVALUE_FAIL_ONCE) return;
