@@ -631,49 +631,7 @@ function _holderInnerBounds(holder){
         return null;
     }
 
-    function _fontInfo(r){
-      var fam="NA", sty="NA";
-      try{ fam = String(r.appliedFont.name || r.appliedFont.family || r.appliedFont); }catch(_){}
-      try{ sty = String(r.fontStyle); }catch(_){}
-      var tI="NA", tB="NA";
-      try{ tI = String(!!r.trueItalic); }catch(_){}
-      try{ tB = String(!!r.trueBold); }catch(_){}
-      return "font="+fam+" ; style="+sty+" ; trueItalic="+tI+" ; trueBold="+tB;
-    }
-
-    function setItalicSafe(r){
-      try {
-        var doc = app.activeDocument;
-        var cs = findCharStyleCI(doc, "斜体") || doc.characterStyles.itemByName("斜体");
-        if (!cs || !cs.isValid) {
-          try { cs = doc.characterStyles.add({name:"斜体"}); } catch(e) { try { cs = doc.characterStyles.itemByName("斜体"); } catch(__){} }
-        }
-        if (cs && cs.isValid) {
-          try { cs.fontStyle = "Italic"; } catch(_){}
-          try { r.appliedCharacterStyle = cs; return "cs:斜体"; } catch(__){}
-        }
-      } catch(e){}
-      try { r.fontStyle = "Italic"; return "fs:Italic"; } catch(_){}
-      try { r.fontStyle = "Oblique"; return "fs:Oblique"; } catch(_){}
-      return "noop";
-    }
-
-    function setBoldSafe(r){
-      try {
-        var doc = app.activeDocument;
-        var cs = findCharStyleCI(doc, "粗体") || doc.characterStyles.itemByName("粗体");
-        if (!cs || !cs.isValid) {
-          try { cs = doc.characterStyles.add({name:"粗体"}); } catch(e) { try { cs = doc.characterStyles.itemByName("粗体"); } catch(__){} }
-        }
-        if (cs && cs.isValid) {
-          try { cs.fontStyle = "Bold"; } catch(_){}
-          try { r.appliedCharacterStyle = cs; return "cs:粗体"; } catch(__){}
-        }
-      } catch(e){}
-      try { r.fontStyle = "Bold"; return "fs:Bold"; } catch(_){}
-      try { r.fontStyle = "Semibold"; return "fs:Semibold"; } catch(_){}
-      return "noop";
-    }
+    // text style helpers moved to util.js: __fontInfo, __setItalicSafe, __setBoldSafe
 
     function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st) {
       try {
@@ -685,10 +643,10 @@ function _holderInnerBounds(holder){
         try { r.underline = !!st.u; log("[U] set="+ (!!st.u)); } catch(eu){ log("[U][ERR] "+eu); }
 
         if (st.i) {
-          try { var howI = setItalicSafe(r); log("[I] via " + howI + " ; " + _fontInfo(r)); } catch(ei){ log("[I][ERR] "+ei); }
+          try { var howI = __setItalicSafe(r); log("[I] via " + howI + " ; " + __fontInfo(r)); } catch(ei){ log("[I][ERR] "+ei); }
         }
         if (st.b) {
-          try { var howB = setBoldSafe(r);   log("[B] via " + howB + " ; " + _fontInfo(r)); } catch(eb){ log("[B][ERR] "+eb); }
+          try { var howB = __setBoldSafe(r);   log("[B] via " + howB + " ; " + __fontInfo(r)); } catch(eb){ log("[B][ERR] "+eb); }
         }
       } catch(e) {
         log("[IBU][ERR] "+e);

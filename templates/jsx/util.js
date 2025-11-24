@@ -26,6 +26,48 @@ function iso() {
          pad(bj.getMinutes()) + ":" +
          pad(bj.getSeconds()) + "+08:00";
 }
+// text style helpers (moved from entry.js)
+function __fontInfo(r){
+  var fam="NA", sty="NA";
+  try{ fam = String(r.appliedFont.name || r.appliedFont.family || r.appliedFont); }catch(_){}
+  try{ sty = String(r.fontStyle); }catch(_){}
+  var tI="NA", tB="NA";
+  try{ tI = String(!!r.trueItalic); }catch(_){}
+  try{ tB = String(!!r.trueBold); }catch(_){}
+  return "font="+fam+" ; style="+sty+" ; trueItalic="+tI+" ; trueBold="+tB;
+}
+function __setItalicSafe(r){
+  try {
+    var doc = app.activeDocument;
+    var cs = findCharStyleCI(doc, "斜体") || doc.characterStyles.itemByName("斜体");
+    if (!cs || !cs.isValid) {
+      try { cs = doc.characterStyles.add({name:"斜体"}); } catch(e) { try { cs = doc.characterStyles.itemByName("斜体"); } catch(__){} }
+    }
+    if (cs && cs.isValid) {
+      try { cs.fontStyle = "Italic"; } catch(_){}
+      try { r.appliedCharacterStyle = cs; return "cs:斜体"; } catch(__){}
+    }
+  } catch(e){}
+  try { r.fontStyle = "Italic"; return "fs:Italic"; } catch(_){}
+  try { r.fontStyle = "Oblique"; return "fs:Oblique"; } catch(_){}
+  return "noop";
+}
+function __setBoldSafe(r){
+  try {
+    var doc = app.activeDocument;
+    var cs = findCharStyleCI(doc, "粗体") || doc.characterStyles.itemByName("粗体");
+    if (!cs || !cs.isValid) {
+      try { cs = doc.characterStyles.add({name:"粗体"}); } catch(e) { try { cs = doc.characterStyles.itemByName("粗体"); } catch(__){} }
+    }
+    if (cs && cs.isValid) {
+      try { cs.fontStyle = "Bold"; } catch(_){}
+      try { r.appliedCharacterStyle = cs; return "cs:粗体"; } catch(__){}
+    }
+  } catch(e){}
+  try { r.fontStyle = "Bold"; return "fs:Bold"; } catch(_){}
+  try { r.fontStyle = "Semibold"; return "fs:Semibold"; } catch(_){}
+  return "noop";
+}
 // entry logging helpers (shared)
 var __EVENT_LINES = [];
 function __sanitizeLogMessage(m){
