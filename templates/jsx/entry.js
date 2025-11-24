@@ -1261,7 +1261,7 @@ function _holderInnerBounds(holder){
         try {
             var outFile = File("%OUT_IDML%");
             doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
-        } catch(ex) { alert("?? IDML ???" + ex); }
+        } catch(ex) { alert("导出 IDML 失败: " + ex); }
     }
     try{
         if (__origScriptUnit !== null) app.scriptPreferences.measurementUnit = __origScriptUnit;
