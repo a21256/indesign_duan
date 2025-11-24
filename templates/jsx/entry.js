@@ -272,41 +272,6 @@
       var curTextFrame = tf;
     }
 
-    var _HAS_JSON = (typeof JSON !== "undefined" && JSON && typeof JSON.stringify === "function");
-    function _s(obj){
-      if (_HAS_JSON) {
-        try { return JSON.stringify(obj); } catch(_){}
-      }
-      try { return __jsonStringifySafe(obj); } catch(_){}
-      try {
-        return "{i:" + (obj && obj.i ? 1:0) +
-               ",b:" + (obj && obj.b ? 1:0) +
-               ",u:" + (obj && obj.u ? 1:0) + "}";
-      } catch(e) { try{ return String(obj); }catch(__){ return ""; } }
-    }
-
-    function _safeIP(tf){
-      try{
-        if (tf && tf.isValid) {
-          var ip = tf.insertionPoints[-1];   
-          try { var _t = ip.anchoredObjectSettings; }
-          catch(e1){
-            try { ip.contents = "\u200B"; } catch(_){}
-            try { ip = tf.insertionPoints[-1]; } catch(_){}
-          }
-          if (ip && ip.isValid) return ip;
-        }
-      } catch(_){}
-      try{
-        var story = (tf && tf.isValid) ? tf.parentStory : app.activeDocument.stories[0];
-        var ip2 = story.insertionPoints[-1];
-        try { var _t2 = ip2.anchoredObjectSettings; }
-        catch(e2){ try { ip2.contents = "\u200B"; } catch(_){}
-                   try { ip2 = story.insertionPoints[-1]; } catch(_){} }
-        return ip2;
-      }catch(e){ log("[LOG] _safeIP fallback error"); return null; }
-    }
-
     function __cloneLayoutState(src){
       var out = {};
       if (!src) return out;

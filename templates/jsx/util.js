@@ -61,6 +61,29 @@ function findCharStyleCI(doc, name){
   }
   return null;
 }
+function _safeIP(tf){
+  try{
+    if (tf && tf.isValid) {
+      var ip = tf.insertionPoints[-1];
+      try { var _t = ip.anchoredObjectSettings; }
+      catch(e1){
+        try { ip.contents = "\u200B"; } catch(_){}
+        try { ip = tf.insertionPoints[-1]; } catch(_){}
+      }
+      if (ip && ip.isValid) return ip;
+    }
+  } catch(_){}
+  try{
+    var story = (tf && tf.isValid) ? tf.parentStory : app.activeDocument.stories[0];
+    var ip2 = story.insertionPoints[-1];
+    try { var _t2 = ip2.anchoredObjectSettings; }
+    catch(e2){
+      try { ip2.contents = "\u200B"; } catch(_){}
+      try { ip2 = story.insertionPoints[-1]; } catch(__){}
+    }
+    return ip2;
+  }catch(e){ try{ log("[LOG] _safeIP fallback error"); }catch(__){} return null; }
+}
 
 function __setItalicSafe(r){
   try {
