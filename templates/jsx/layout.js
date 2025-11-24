@@ -52,6 +52,29 @@ function __cloneLayoutState(src){
   }
   return out;
 }
+function __layoutNormalizeTarget(target){
+  if (!target) return target;
+  if ((target.pageWidthPt === undefined || target.pageWidthPt === null) && __DEFAULT_LAYOUT){
+    target.pageWidthPt = __DEFAULT_LAYOUT.pageWidthPt;
+  }
+  if ((target.pageHeightPt === undefined || target.pageHeightPt === null) && __DEFAULT_LAYOUT){
+    target.pageHeightPt = __DEFAULT_LAYOUT.pageHeightPt;
+  }
+  if (!target.pageMarginsPt && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageMarginsPt){
+    target.pageMarginsPt = __cloneLayoutState({pageMarginsPt:__DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
+  }
+  if (!__DEFAULT_LAYOUT) __DEFAULT_LAYOUT = __cloneLayoutState(target);
+  if (target.pageOrientation === "landscape" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt < target.pageHeightPt){
+    var tmpW = target.pageWidthPt;
+    target.pageWidthPt = target.pageHeightPt;
+    target.pageHeightPt = tmpW;
+  }else if (target.pageOrientation === "portrait" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt > target.pageHeightPt){
+    var tmpH = target.pageHeightPt;
+    target.pageHeightPt = target.pageWidthPt;
+    target.pageWidthPt = tmpH;
+  }
+  return target;
+}
 
 function __layoutsEqual(a, b){
   function _ori(x){ return (x && typeof x === "string") ? String(x).toLowerCase() : ""; }
@@ -202,54 +225,13 @@ function __createLayoutFrame(layoutState, linkFromFrame, opts){
 function __ensureLayout(targetState){
   try{ log("[LAYOUT] ensure request orient=" + (targetState && targetState.pageOrientation) + " width=" + (targetState && targetState.pageWidthPt) + " height=" + (targetState && targetState.pageHeightPt)); }catch(_){}
   var target = targetState ? __cloneLayoutState(targetState) : __cloneLayoutState(__DEFAULT_LAYOUT);
-  if ((target.pageWidthPt === undefined || target.pageWidthPt === null) && __DEFAULT_LAYOUT){
-    target.pageWidthPt = __DEFAULT_LAYOUT.pageWidthPt;
-  }
-  if ((target.pageHeightPt === undefined || target.pageHeightPt === null) && __DEFAULT_LAYOUT){
-    target.pageHeightPt = __DEFAULT_LAYOUT.pageHeightPt;
-  }
-  if (!target.pageMarginsPt && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageMarginsPt){
-    target.pageMarginsPt = __cloneLayoutState({pageMarginsPt:__DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
-  }
-  if (!__DEFAULT_LAYOUT) __DEFAULT_LAYOUT = __cloneLayoutState(target);
-  if (target.pageOrientation === "landscape" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt < target.pageHeightPt){
-    var tmpW = target.pageWidthPt;
-    target.pageWidthPt = target.pageHeightPt;
-    target.pageHeightPt = tmpW;
-  }else if (target.pageOrientation === "portrait" && isFinite(target.pageWidthPt) && isFinite(target.pageHeightPt) && target.pageWidthPt > target.pageHeightPt){
-    var tmpH = target.pageHeightPt;
-    target.pageHeightPt = target.pageWidthPt;
-    target.pageWidthPt = tmpH;
-  }
+  target = __layoutNormalizeTarget(target);
   var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
   var needNewSpread = !!(target.pageOrientation && prevOrientation && target.pageOrientation !== prevOrientation);
-  if (__layoutsEqual(__CURRENT_LAYOUT, target)){
-    try{
-      log("[LAYOUT] ensure skip orient=" + (target.pageOrientation||"") + " width=" + target.pageWidthPt + " height=" + target.pageHeightPt);
-    }catch(_){}
-    try{
-      if (target.pageOrientation && __CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation !== target.pageOrientation){
-        var __skipPayload = __cloneLayoutState(target);
-        __skipPayload.origin = "skip";
-        log("[LAYOUT] still skipping due to same state; page=" + (page && page.name) + " spec=" + JSON.stringify(__skipPayload));
-      }
-    }catch(__skipLog){}
-    return;
-  }
+  if (__layoutSkipIfSame(target)) return;
   var prevFrame = (typeof tf !== "undefined" && tf && tf.isValid) ? tf : null;
   var pkt = __createLayoutFrame(target, prevFrame, {forceNewSpread: needNewSpread});
-  if (pkt && pkt.frame && pkt.frame.isValid){
-    try{ log("[LAYOUT] ensure apply orient=" + (target.pageOrientation||"") + " page=" + (pkt.page && pkt.page.name) + " frame=" + pkt.frame.id); }catch(_){}
-    page = pkt.page;
-    tf = pkt.frame;
-    story = tf.parentStory;
-    curTextFrame = tf;
-    __CURRENT_LAYOUT = __cloneLayoutState(target);
-    try{ story.recompose(); }catch(_){}
-    try{ app.activeDocument.recompose(); }catch(_){}
-  }else{
-    try{ log("[LAYOUT] ensure failed - cannot allocate frame"); }catch(_){}
-  }
+  __layoutApplyPacket(pkt, target);
 }
 
 function __ensureLayoutDefault(){
@@ -546,3 +528,33 @@ function startNewChapter(currentStory, currentPage, currentFrame) {
     }
 
     
+function __layoutSkipIfSame(target){
+  if (!__layoutsEqual(__CURRENT_LAYOUT, target)) return false;
+  try{
+    log("[LAYOUT] ensure skip orient=" + (target.pageOrientation||"") + " width=" + target.pageWidthPt + " height=" + target.pageHeightPt);
+  }catch(_){}
+  try{
+    if (target.pageOrientation && __CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation !== target.pageOrientation){
+      var __skipPayload = __cloneLayoutState(target);
+      __skipPayload.origin = "skip";
+      log("[LAYOUT] still skipping due to same state; page=" + (page && page.name) + " spec=" + JSON.stringify(__skipPayload));
+    }
+  }catch(__skipLog){}
+  return true;
+}
+function __layoutApplyPacket(pkt, target){
+  if (pkt && pkt.frame && pkt.frame.isValid){
+    try{ log("[LAYOUT] ensure apply orient=" + (target.pageOrientation||"") + " page=" + (pkt.page && pkt.page.name) + " frame=" + pkt.frame.id); }catch(_){}
+    page = pkt.page;
+    tf = pkt.frame;
+    story = tf.parentStory;
+    curTextFrame = tf;
+    __CURRENT_LAYOUT = __cloneLayoutState(target);
+    try{ story.recompose(); }catch(_){}
+    try{ app.activeDocument.recompose(); }catch(_){}
+    return true;
+  }else{
+    try{ log("[LAYOUT] ensure failed - cannot allocate frame"); }catch(_){}
+    return false;
+  }
+}
