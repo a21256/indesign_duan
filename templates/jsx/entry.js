@@ -1,6 +1,7 @@
     // config + selfcheck
     function __initEnvironment(){
-      var state = {scriptUnit:null, viewH:null, viewV:null};
+      var state = {scriptUnit:null, viewH:null, viewV:null, userLevel:null};
+      try{ state.userLevel = app.scriptPreferences.userInteractionLevel; }catch(_){}
       try{ app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT; }catch(_){}
       try{ state.scriptUnit = app.scriptPreferences.measurementUnit; }catch(_){}
       try{
@@ -13,6 +14,19 @@
         app.viewPreferences.verticalMeasurementUnits = MeasurementUnits.POINTS;
       }catch(_){}
       return state;
+    }
+    function __restoreEnvironment(state){
+      if (!state) return;
+      try{
+        if (state.scriptUnit !== null) app.scriptPreferences.measurementUnit = state.scriptUnit;
+      }catch(_){}
+      try{
+        if (state.viewH !== null) app.viewPreferences.horizontalMeasurementUnits = state.viewH;
+        if (state.viewV !== null) app.viewPreferences.verticalMeasurementUnits = state.viewV;
+      }catch(_){}
+      try{
+        if (state.userLevel !== null) app.scriptPreferences.userInteractionLevel = state.userLevel;
+      }catch(_){}
     }
 
     function __initEntryLogging(){
@@ -858,12 +872,6 @@ function _holderInnerBounds(holder){
         try {
             var outFile = File("%OUT_IDML%");
             doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
-        } catch(ex) { alert("导出 IDML 失败: " + ex); }
+        } catch(ex) { alert("Export IDML failed: " + ex); }
     }
-    try{
-        if (__origScriptUnit !== null) app.scriptPreferences.measurementUnit = __origScriptUnit;
-    }catch(_){ }
-    try{
-        if (__origViewH !== null) app.viewPreferences.horizontalMeasurementUnits = __origViewH;
-        if (__origViewV !== null) app.viewPreferences.verticalMeasurementUnits = __origViewV;
-    }catch(_){ }
+    __restoreEnvironment(__ENV_STATE);
