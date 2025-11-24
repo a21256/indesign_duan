@@ -204,6 +204,7 @@
         __tblPrepareStory();
 
         function _ensureWritableFrameLocal(storyArg){
+            // pick last non-overflow frame; fallback to tf; create new frame if needed
             var frameCandidate = null;
             try{
                 var tcs = storyArg.textContainers;
