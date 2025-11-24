@@ -185,19 +185,23 @@
         story = storyRef;
         try { story.recompose(); } catch(_){ }
 
-        try { story.insertionPoints[-1].contents = "\r"; } catch(_){ }
-        try { story.recompose(); } catch(_){ }
-        try{
-          if (typeof flushOverflow === "function" && typeof tf !== "undefined" && tf && tf.isValid){
-            var __pre = flushOverflow(story, page, tf);
-            if (__pre && __pre.frame && __pre.page){
-              page = __pre.page;
-              tf   = __pre.frame;
-              story = tf.parentStory;
-              curTextFrame = tf;
+        // ensure a clean paragraph and flush overflow before inserting table
+        function __tblPrepareStory(){
+          try { story.insertionPoints[-1].contents = "\r"; } catch(_){ }
+          try { story.recompose(); } catch(_){ }
+          try{
+            if (typeof flushOverflow === "function" && typeof tf !== "undefined" && tf && tf.isValid){
+              var __pre = flushOverflow(story, page, tf);
+              if (__pre && __pre.frame && __pre.page){
+                page = __pre.page;
+                tf   = __pre.frame;
+                story = tf.parentStory;
+                curTextFrame = tf;
+              }
             }
-          }
-        }catch(_){ }
+          }catch(_){ }
+        }
+        __tblPrepareStory();
 
         function _ensureWritableFrameLocal(storyArg){
             var frameCandidate = null;
