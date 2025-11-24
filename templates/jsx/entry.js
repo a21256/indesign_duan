@@ -16,53 +16,72 @@
     }catch(_){}
 
     // config + selfcheck
-    var EVENT_FILE = File("%EVENT_LOG_PATH%");
-    var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
-                     ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=log debug; false=only warn/error/info
-    var __EVENT_CTX = __initEventLog(EVENT_FILE, LOG_WRITE);
-    function __selfCheck(){
+    function __initEntryLogging(){
+      var EVENT_FILE = File("%EVENT_LOG_PATH%");
+      var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
+                       ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=log debug; false=only warn/error/info
+      var ctx = __initEventLog(EVENT_FILE, LOG_WRITE);
       try{
-        if (String(EVENT_FILE || "").indexOf("%") >= 0) throw "EVENT_LOG_PATH placeholder not replaced";
-        if (String(LOG_WRITE).indexOf("%") >= 0) throw "LOG_WRITE placeholder not replaced";
-        var required = ["__ensureLayoutDefault","__imgAddImageAtV2","__imgAddFloatingImage","__tblAddTableHiFi"];
-        for (var i=0;i<required.length;i++){
-          var n = required[i];
-          if (typeof eval(n) !== "function") throw ("missing function: " + n);
+        if (EVENT_FILE){
+          EVENT_FILE.encoding = "UTF-8";
+          EVENT_FILE.open("w");
+          EVENT_FILE.writeln("");
+          EVENT_FILE.close();
         }
-      }catch(e){
-        try{ log("[ERR] selfcheck failed: " + e); }catch(__){}
-        throw e;
+      }catch(_){}
+      var __LAST_LAYOUT_LOG = null;
+      function __logLayoutEvent(message){
+        if (!__LAST_LAYOUT_LOG || __LAST_LAYOUT_LOG !== message){
+          __LAST_LAYOUT_LOG = message;
+          __pushEvent(ctx, "debug", message);
+        }
       }
+      function logWrap(m){
+        if (String(m||"").indexOf("[LAYOUT]") === 0){
+          __logLayoutEvent(String(m));
+        } else {
+          __LAST_LAYOUT_LOG = null;
+          __pushEvent(ctx, "debug", m);
+        }
+      }
+      function selfCheck(){
+        try{
+          if (String(EVENT_FILE || "").indexOf("%") >= 0) throw "EVENT_LOG_PATH placeholder not replaced";
+          if (String(LOG_WRITE).indexOf("%") >= 0) throw "LOG_WRITE placeholder not replaced";
+          var required = ["__ensureLayoutDefault","__imgAddImageAtV2","__imgAddFloatingImage","__tblAddTableHiFi"];
+          for (var i=0;i<required.length;i++){
+            var n = required[i];
+            if (typeof eval(n) !== "function") throw ("missing function: " + n);
+          }
+        }catch(e){
+          try{ logWrap("[ERR] selfcheck failed: " + e); }catch(__){}
+          throw e;
+        }
+      }
+      return {
+        EVENT_FILE: EVENT_FILE,
+        LOG_WRITE: LOG_WRITE,
+        ctx: ctx,
+        info: function(m){ __pushEvent(ctx, "info", m); },
+        warn: function(m){ __pushEvent(ctx, "warn", m); },
+        err:  function(m){ __pushEvent(ctx, "error", m); },
+        log: logWrap,
+        logLayout: __logLayoutEvent,
+        selfCheck: selfCheck
+      };
     }
 
-    try{
-      if (EVENT_FILE){
-        EVENT_FILE.encoding = "UTF-8";
-        EVENT_FILE.open("w");
-        EVENT_FILE.writeln("");
-        EVENT_FILE.close();
-      }
-    }catch(_){}
+    var __LOG_CTX = __initEntryLogging();
+    var EVENT_FILE = __LOG_CTX.EVENT_FILE;
+    var LOG_WRITE  = __LOG_CTX.LOG_WRITE;
+    var __EVENT_CTX = __LOG_CTX.ctx;
+    var __logLayoutEvent = __LOG_CTX.logLayout;
+    var info = __LOG_CTX.info;
+    var warn = __LOG_CTX.warn;
+    var err  = __LOG_CTX.err;
+    function log(m){ __LOG_CTX.log(m); }
 
-    function info(m){ __pushEvent(__EVENT_CTX, "info", m); }
-    function warn(m){ __pushEvent(__EVENT_CTX, "warn", m); }
-    function err(m){  __pushEvent(__EVENT_CTX, "error", m); }
-    var __LAST_LAYOUT_LOG = null;
-    function __logLayoutEvent(message){
-      if (!__LAST_LAYOUT_LOG || __LAST_LAYOUT_LOG !== message){
-        __LAST_LAYOUT_LOG = message;
-        __pushEvent(__EVENT_CTX, "debug", message);
-      }
-    }
-    function log(m){
-      if (String(m||"").indexOf("[LAYOUT]") === 0){
-        __logLayoutEvent(String(m));
-      } else {
-        __LAST_LAYOUT_LOG = null;
-        __pushEvent(__EVENT_CTX, "debug", m);
-    }
-    }
-    __selfCheck();
+    __LOG_CTX.selfCheck();
     // alias util formatter for compatibility
     function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st){
       return __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st);
