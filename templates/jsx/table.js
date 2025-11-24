@@ -9,6 +9,20 @@
           base:     __cfgStyles.tableBodyBase || %TABLE_BODY_STYLE_BASE%,
           auto:     __cfgStyles.tableBodyAuto || %TABLE_BODY_STYLE_AUTO%
         };
+        function __tblSelfCheck(){
+          try{
+            var placeholders = [%TABLE_BODY_STYLE%, %TABLE_BODY_STYLE_FALLBACK%, %TABLE_BODY_STYLE_BASE%, %TABLE_BODY_STYLE_AUTO%];
+            if (placeholders.join(",").indexOf("%") >= 0) throw "TABLE style placeholders not replaced";
+            var required = ["__ensureLayout","__createLayoutFrame","__applyFrameLayout"];
+            for (var i=0;i<required.length;i++){
+              var n = required[i];
+              if (typeof eval(n) !== "function") throw ("missing function: " + n);
+            }
+          }catch(e){
+            try{ log("[ERR] TABLE selfcheck failed: " + e); }catch(_){ }
+            throw e;
+          }
+        }
         function __sanitizeStyleName(name){
           if (!name) return "[None]";
           if (typeof name === "string" && name.length && name.charAt(0) === "%") return "[None]";
@@ -19,14 +33,22 @@
         __styleCfg.base     = __sanitizeStyleName(__styleCfg.base);
         __styleCfg.auto     = __sanitizeStyleName(__styleCfg.auto);
         var __tableCtx = (obj && obj.logContext) ? obj.logContext : null;
-        var __tableTag = "[TABLE]";
-        var __tableWarnTag = "[WARN]";
-        var __tableErrTag = "[ERROR]";
-        if (__tableCtx && __tableCtx.id){
-          __tableTag = "[TABLE][" + __tableCtx.id + "]";
-          __tableWarnTag = "[WARN][TABLE " + __tableCtx.id + "]";
-          __tableErrTag = "[ERROR][TABLE " + __tableCtx.id + "]";
+        function __tblTags(){
+          var tag = "[TABLE]", warnTag = "[WARN]", errTag = "[ERROR]";
+          try{
+            if (__tableCtx && __tableCtx.id){
+              tag = "[TABLE][" + __tableCtx.id + "]";
+              warnTag = "[WARN][TABLE " + __tableCtx.id + "]";
+              errTag = "[ERROR][TABLE " + __tableCtx.id + "]";
+            }
+          }catch(_){}
+          return {tag: tag, warn: warnTag, err: errTag};
         }
+        var __tableTagObj = __tblTags();
+        var __tableTag = __tableTagObj.tag;
+        var __tableWarnTag = __tableTagObj.warn;
+        var __tableErrTag = __tableTagObj.err;
+        __tblSelfCheck();
         function __resolveTableParaStyle(styleName){
           if (!styleName || styleName === "null" || styleName === "undefined") return null;
           try{
