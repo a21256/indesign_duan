@@ -280,6 +280,7 @@
         }
 
         function _roughTableHeight(rowsCount, objSpec){
+            // explicit row heights take priority
             var explicitSum = 0;
             try{
                 if (objSpec && objSpec.rowHeightsPt && objSpec.rowHeightsPt.length){
@@ -291,6 +292,7 @@
             }catch(_){}
             if (explicitSum > 0) return explicitSum + 24;
 
+            // otherwise estimate per-line height from defaults
             var approxLine = 14;
             try{
                 var defaults = app.activeDocument.textDefaults;
@@ -320,6 +322,7 @@
                 if (!storyArg || !storyArg.isValid) return result;
                 var ipCheck = storyArg.insertionPoints[-1];
                 if (!ipCheck || !ipCheck.isValid) return result;
+                // decide holder frame
                 var holder = null;
                 try{
                     if (ipCheck.parentTextFrames && ipCheck.parentTextFrames.length){
@@ -329,6 +332,7 @@
                 if (!holder || !holder.isValid) holder = frameArg;
                 if (!holder || !holder.isValid) return result;
 
+                // measure available height from baseline to frame bottom
                 var gbHold = holder.geometricBounds;
                 var frameBottom = gbHold[2];
                 var frameTop    = gbHold[0];
@@ -350,9 +354,7 @@
                 var approxNeed = _roughTableHeight(rowsCount, objSpec);
 
                 if (approxNeed > available && available >= 0){
-                    try{
-                        log(__tableTag + " pre-break forcing approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount);
-                    }catch(__log0){}
+                    try{ log(__tableTag + " pre-break forcing approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount); }catch(__log0){}
                     try{
                         ipCheck.contents = SpecialCharacters.FRAME_BREAK;
                     }catch(_){
