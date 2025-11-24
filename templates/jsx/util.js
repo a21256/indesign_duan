@@ -108,3 +108,96 @@ function __flushEvents(eventCtx){
     EVENT_FILE.close();
   }catch(_){ }
 }
+// paragraph/character style helpers
+function findParaStyleCI(doc, name){
+  function norm(n){ return String(n||"").toLowerCase().replace(/\s+/g,"").replace(/[_-]/g,""); }
+  var target = norm(name);
+  var ps = doc.paragraphStyles;
+  for (var i=0;i<ps.length;i++){
+    try{ if (norm(ps[i].name) === target) return ps[i]; }catch(_){}
+  }
+  function scanGroup(g){
+    try{
+      var arr = g.paragraphStyles;
+      for (var i=0;i<arr.length;i++){ try{ if (norm(arr[i].name)===target) return arr[i]; }catch(_){ } }
+      var subs = g.paragraphStyleGroups;
+      for (var j=0;j<subs.length;j++){ var hit = scanGroup(subs[j]); if (hit) return hit; }
+    }catch(_){}
+    return null;
+  }
+  try{
+    var groups = doc.paragraphStyleGroups;
+    for (var k=0;k<groups.length;k++){ var hit = scanGroup(groups[k]); if (hit) return hit; }
+  }catch(_){}
+  return null;
+}
+var ENDNOTE_PS = ENDNOTE_PS || null;
+var FOOTNOTE_PS = FOOTNOTE_PS || null;
+function ensureFootnoteParaStyle(doc){
+  var ps = findParaStyleCI(doc, "footnote");
+  if (ps && ps.isValid){ return ps; }
+  try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(_){}
+  if (!ps || !ps.isValid){
+    try { ps = doc.paragraphStyles.add({name:"FootnoteFallback"}); } catch(e){
+      try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(__){}
+    }
+  }
+  try { ps.pointSize   = %FN_FALLBACK_PT%; } catch(_){}
+  try { ps.leading     = %FN_FALLBACK_LEAD%; } catch(_){}
+  try { ps.spaceBefore = 0; ps.spaceAfter = 0; } catch(_){}
+  return ps;
+}
+function ensureEndnoteParaStyle(doc){
+  var ps = findParaStyleCI(doc, "endnote");
+  if (ps && ps.isValid){ return ps; }
+  try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(_){}
+  if (!ps || !ps.isValid){
+    try { ps = doc.paragraphStyles.add({name:"FootnoteFallback"}); } catch(e){
+      try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(__){}
+    }
+  }
+  return ps;
+}
+function createFootnoteAt(ip, content, idForDisplay){
+  if(!ip || !ip.isValid) return null;
+  var doc = app.activeDocument, story = ip.parentStory;
+  var fn = null, ok = false;
+  try { fn = story.footnotes.add(LocationOptions.AFTER, ip); ok = (fn && fn.isValid); } catch(e){}
+  if (!ok) { try { fn = story.footnotes.add(ip); ok = (fn && fn.isValid); } catch(e){} }
+  if (!ok) { try { fn = doc.footnotes.add(ip);   ok = (fn && fn.isValid); } catch(e){} }
+  if (!ok) { return null; }
+  try {
+      var tgtFn = fn.texts[0];
+      tgtFn.insertionPoints[-1].contents = content;
+  } catch(_){
+      try { fn.contents = content; } catch(__){ try { fn.insertionPoints[-1].contents = content; } catch(___) {} }
+  }
+  try { if (!FOOTNOTE_PS || !FOOTNOTE_PS.isValid) FOOTNOTE_PS = ensureFootnoteParaStyle(doc);
+        fn.texts[0].paragraphs.everyItem().appliedParagraphStyle = FOOTNOTE_PS; } catch(_){}
+  return fn;
+}
+function createEndnoteAt(ip, content, idForDisplay){
+  if(!ip || !ip.isValid) return null;
+  var doc = app.activeDocument, story = ip.parentStory;
+  var en = null, ok = false;
+  try { if (ip.createEndnote) { en = ip.createEndnote(); ok = (en && en.isValid); } } catch(e){ }
+  if (!ok) { try { en = story.endnotes.add(ip); ok = (en && en.isValid); } catch(e){ } }
+  if (!ok) { try { en = doc.endnotes.add(ip);   ok = (en && en.isValid); } catch(e){ } }
+  if (!ok) { return null; }
+  var target = null;
+  try { target = en.endnoteText; } catch(_){}
+  if (!target || !target.isValid) {
+      try { target = en.texts[0]; } catch(_){}
+  }
+  if (!target || !target.isValid) {
+      target = en;
+  }
+  try {
+      target.insertionPoints[-1].contents = content;
+  } catch(_){
+      try { target.contents = content; } catch(__){}
+  }
+  try { if (!ENDNOTE_PS || !ENDNOTE_PS.isValid) ENDNOTE_PS = ensureEndnoteParaStyle(app.activeDocument);
+        (en.endnoteText || en.texts[0] || en).paragraphs.everyItem().appliedParagraphStyle = ENDNOTE_PS; } catch(_){}
+  return en;
+}

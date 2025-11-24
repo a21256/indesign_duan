@@ -562,75 +562,6 @@ function _holderInnerBounds(holder){
         }
         return null;
     }
-    function ensureFootnoteParaStyle(doc){
-        var ps = findParaStyleCI(doc, "footnote");
-        if (ps && ps.isValid){ return ps; }
-        try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(_){}
-        if (!ps || !ps.isValid){
-            try { ps = doc.paragraphStyles.add({name:"FootnoteFallback"}); } catch(e){
-                try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(__){}
-            }
-        }
-        try { ps.pointSize   = %FN_FALLBACK_PT%; } catch(_){}
-        try { ps.leading     = %FN_FALLBACK_LEAD%; } catch(_){}
-        try { ps.spaceBefore = 0; ps.spaceAfter = 0; } catch(_){}
-        return ps;
-    }
-    function ensureEndnoteParaStyle(doc){
-        var ps = findParaStyleCI(doc, "endnote");
-        if (ps && ps.isValid){ return ps; }
-        try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(_){}
-        if (!ps || !ps.isValid){
-            try { ps = doc.paragraphStyles.add({name:"FootnoteFallback"}); } catch(e){
-                try { ps = doc.paragraphStyles.itemByName("FootnoteFallback"); } catch(__){}
-            }
-        }
-        return ps;
-    }
-
-    function findCharStyleCI(doc, name){
-      function norm(n){ return String(n||"").toLowerCase().replace(/\s+/g,"").replace(/[_-]/g,""); }
-      var target = norm(name);
-
-      var cs = doc.characterStyles;
-      for (var i=0;i<cs.length;i++){
-        try{ if (norm(cs[i].name) === target) return cs[i]; }catch(_){}
-      }
-
-      function scanGroup(g){
-        try{
-          var arr = g.characterStyles;
-          for (var i=0;i<arr.length;i++){ try{ if (norm(arr[i].name)===target) return arr[i]; }catch(_){ } }
-          var subs = g.characterStyleGroups;
-          for (var j=0;j<subs.length;j++){ var hit = scanGroup(subs[j]); if (hit) return hit; }
-        }catch(_){}
-        return null;
-      }
-      try{
-        var groups = doc.characterStyleGroups;
-        for (var k=0;k<groups.length;k++){ var hit = scanGroup(groups[k]); if (hit) return hit; }
-      }catch(_){}
-
-      return null;
-    }
-
-    function getCachedCharStyleByList(names){
-        try{
-            if (app.documents.length === 0) return null; 
-            var doc = app.activeDocument;
-            if (!doc || !doc.isValid) return null;
-            if (!app._csCache) app._csCache = {};
-            for (var k=0;k<names.length;k++){
-                var key = String(names[k]).toLowerCase();
-                var cs = app._csCache[key];
-                if (cs && cs.isValid) return cs;
-                cs = findCharStyleCI(doc, names[k]);
-                if (cs && cs.isValid) { app._csCache[key] = cs; return cs; }
-            }
-        }catch(e){}
-        return null;
-    }
-
     // text style helpers moved to util.js: __fontInfo, __setItalicSafe, __setBoldSafe
 
     function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st) {
@@ -877,35 +808,6 @@ function _holderInnerBounds(holder){
         }catch(e){ try{ log(__tableWarnTag + " _normalizeTableWidth: "+e); }catch(__){} }
     }
 
-
-                        function createEndnoteAt(ip, content, idForDisplay){
-        if(!ip || !ip.isValid) return null;
-        var doc = app.activeDocument, story = ip.parentStory;
-        var en = null, ok = false;
-        try { if (ip.createEndnote) { en = ip.createEndnote(); ok = (en && en.isValid); } } catch(e){ }
-        if (!ok) { try { en = story.endnotes.add(ip); ok = (en && en.isValid); } catch(e){ } }
-        if (!ok) { try { en = doc.endnotes.add(ip);   ok = (en && en.isValid); } catch(e){ } }
-        if (!ok) {
-            try{ log("[NOTE][EN][ERR] unable to create endnote"); }catch(_){}
-            return null;
-        }
-        var target = null;
-        try { target = en.endnoteText; } catch(_){}
-        if (!target || !target.isValid) {
-            try { target = en.texts[0]; } catch(_){}
-        }
-        if (!target || !target.isValid) {
-            target = en;
-        }
-        try {
-            target.insertionPoints[-1].contents = content;
-        } catch(_){
-            try { target.contents = content; } catch(__){}
-        }
-        try { if (!ENDNOTE_PS || !ENDNOTE_PS.isValid) ENDNOTE_PS = ensureEndnoteParaStyle(app.activeDocument);
-              (en.endnoteText || en.texts[0] || en).paragraphs.everyItem().appliedParagraphStyle = ENDNOTE_PS; } catch(_){}
-        return en;
-    }
 
     function addParaWithNotes(story, styleName, raw) {
         var paraSeq = __nextParaSeq();
