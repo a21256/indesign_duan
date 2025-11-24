@@ -208,6 +208,26 @@ function __flushEvents(eventCtx){
     EVENT_FILE.close();
   }catch(_){ }
 }
+// unit helpers
+function __logUnitValueFail(msg, err){
+  if (__UNITVALUE_FAIL_ONCE) return;
+  __UNITVALUE_FAIL_ONCE = true;
+  try{ log("[DBG] UnitValue unavailable: " + msg + " err=" + err); }catch(_){}
+}
+function unitPt(val){
+  if (val && typeof val === "object") return val;
+  var num = parseFloat(val);
+  if (!isFinite(num)) return null;
+  if (typeof UnitValue === "function"){
+    try{ return new UnitValue(num, "pt"); }catch(e){ __logUnitValueFail("num+pt", e); }
+    try{ return new UnitValue(num, "points"); }catch(e2){ __logUnitValueFail("num+points", e2); }
+    try{ return new UnitValue(num + " pt"); }catch(e3){ __logUnitValueFail("str pt", e3); }
+    try{ return new UnitValue(num + "pt"); }catch(e4){ __logUnitValueFail("strpt", e4); }
+  } else {
+    __logUnitValueFail("UnitValue undefined", "NA");
+  }
+  return null;
+}
 // paragraph/character style helpers
 function findParaStyleCI(doc, name){
   function norm(n){ return String(n||"").toLowerCase().replace(/\s+/g,"").replace(/[_-]/g,""); }
