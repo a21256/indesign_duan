@@ -753,63 +753,71 @@ function _holderInnerBounds(holder){
         }catch(_){}
     }
 
-    var templateFile = File("%TEMPLATE_PATH%");
-    if (!templateFile.exists) { alert("未找到模板文件 template.idml"); return; }
-    var doc = app.open(templateFile);
+function __openAndPrepareTemplate(){
+  var templateFile = File("%TEMPLATE_PATH%");
+  if (!templateFile.exists) { alert("Template file not found: template.idml"); return null; }
+  var doc = app.open(templateFile);
+  try{
+    doc.allowPageShuffle = true;
     try{
-        doc.allowPageShuffle = true;
-        try{
-            var __dp = doc.documentPreferences;
-            var __fpBefore = null;
-            try{ __fpBefore = __dp.facingPages; }catch(__fpRead){}
-            var __fpError = false;
-            try{
-                __dp.facingPages = false;
-            }catch(__fpAssign){
-                __fpError = true;
-                try{ __dp.properties = { facingPages: false }; __fpError = false; }catch(__fpProp){}
-            }
-            try{ log("[LAYOUT] facingPages before=" + __fpBefore + " after=" + __dp.facingPages + " assignErr=" + __fpError); }catch(__faceLog){}
-        }catch(__face){}
-        try{
-            var spreads = doc.spreads;
-            try{ log("[LAYOUT] spreads init count=" + (spreads ? spreads.length : "NA")); }catch(__spreadCntLog){}
-            for (var si=0; spreads && si<spreads.length; si++){
-                try{ spreads[si].allowPageShuffle = true; }catch(__spreadEnable){}
-            }
-        }catch(__spreadLoop){}
-    }catch(__allowDoc){}
-
-    for (var pi = doc.pages.length - 1; pi >= 0; pi--) {
-        var pg = doc.pages[pi];
-        for (var tfi = pg.textFrames.length - 1; tfi >= 0; tfi--) {
-            try { pg.textFrames[tfi].remove(); } catch(e) { try { pg.textFrames[tfi].contents = ""; } catch(_) {} }
-        }
+      var __dp = doc.documentPreferences;
+      var __fpBefore = null;
+      try{ __fpBefore = __dp.facingPages; }catch(__fpRead){}
+      var __fpError = false;
+      try{ __dp.facingPages = false; }
+      catch(__fpAssign){
+        __fpError = true;
+        try{ __dp.properties = { facingPages: false }; __fpError = false; }catch(__fpProp){}
+      }
+      try{ log("[LAYOUT] facingPages before=" + __fpBefore + " after=" + __dp.facingPages + " assignErr=" + __fpError); }catch(__faceLog){}
+    }catch(__face){}
+    // spreads allow shuffle
+    try{
+      var spreads = doc.spreads;
+      try{ log("[LAYOUT] spreads init count=" + (spreads ? spreads.length : "NA")); }catch(__spreadCntLog){}
+      for (var si=0; spreads && si<spreads.length; si++){
+        try{ spreads[si].allowPageShuffle = true; }catch(__spreadEnable){}
+      }
+    }catch(__spreadLoop){}
+  }catch(__allowDoc){}
+  for (var pi = doc.pages.length - 1; pi >= 0; pi--) {
+    var pg = doc.pages[pi];
+    for (var tfi = pg.textFrames.length - 1; tfi >= 0; tfi--) {
+      try { pg.textFrames[tfi].remove(); } catch(e) { try { pg.textFrames[tfi].contents = ""; } catch(_) {} }
     }
-    try {
-        var msp = doc.masterSpreads;
-        for (var mi = 0; mi < msp.length; mi++) {
-            var ms = msp[mi];
-            for (var it = ms.textFrames.length - 1; it >= 0; it--) {
-                try { ms.textFrames[it].remove(); } catch(e) {}
-            }
-        }
-    } catch(e) {}
-    while (doc.pages.length > 1) { doc.pages[doc.pages.length - 1].remove(); }
+  }
+  try {
+    var msp = doc.masterSpreads;
+    for (var mi = 0; mi < msp.length; mi++) {
+      var ms = msp[mi];
+      for (var it = ms.textFrames.length - 1; it >= 0; it--) {
+        try { ms.textFrames[it].remove(); } catch(e) {}
+      }
+    }
+  } catch(e) {}
+  while (doc.pages.length > 1) { doc.pages[doc.pages.length - 1].remove(); }
+  try{
+    doc.allowPageShuffle = true;
+    var __dpAfterTrim = doc.documentPreferences;
+    try{ __dpAfterTrim.facingPages = false; }catch(__faceAfter){
+      try{ __dpAfterTrim.properties = { facingPages: false }; }catch(__faceAfterProp){}
+    }
     try{
-        doc.allowPageShuffle = true;
-        var __dpAfterTrim = doc.documentPreferences;
-        try{ __dpAfterTrim.facingPages = false; }catch(__faceAfter){
-            try{ __dpAfterTrim.properties = { facingPages: false }; }catch(__faceAfterProp){}
-        }
-        try{
-            var __spreadsAfter = doc.spreads;
-            for (var __si=0; __spreadsAfter && __si<__spreadsAfter.length; __si++){
-                try{ __spreadsAfter[__si].allowPageShuffle = true; }catch(__spAllow){}
-            }
-        }catch(__spreadTrim){}
-        try{ log("[LAYOUT] post-trim spreads=" + doc.spreads.length + " facing=" + __dpAfterTrim.facingPages); }catch(__trimLog){}
-    }catch(__allowTrim){}
+      var __spreadsAfter = doc.spreads;
+      for (var __si=0; __spreadsAfter && __si<__spreadsAfter.length; __si++){
+        try{ __spreadsAfter[__si].allowPageShuffle = true; }catch(__spAllow){}
+      }
+    }catch(__spreadTrim){}
+    try{ log("[LAYOUT] post-trim spreads=" + doc.spreads.length + " facing=" + __dpAfterTrim.facingPages); }catch(__trimLog){}
+  }catch(__allowTrim){}
+  return doc;
+}
+
+var doc = __openAndPrepareTemplate();
+if (!doc || !doc.isValid) return;
+
+
+
     __DEFAULT_LAYOUT = (function(){
         var state = {};
         try{
