@@ -96,6 +96,21 @@
 
     var __ENV_STATE = __initEnvironment();
     __LOG_CTX.selfCheck();
+    function __finalizeDocument(doc, story, page, tf){
+      try{ __trimTrailingEmptyFrames(story); }catch(_){}
+      try{ __trimTrailingEmptyPages(doc); }catch(_){}
+      try { fixAllTables(); } catch(_){}
+      try{ __progressFinalize(); }catch(_){}
+      var __AUTO_EXPORT = (CONFIG && CONFIG.flags && typeof CONFIG.flags.autoExportIdml === "boolean")
+                          ? CONFIG.flags.autoExportIdml : %AUTO_EXPORT%;
+      if (__AUTO_EXPORT) {
+          try {
+              var outFile = File("%OUT_IDML%");
+              doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
+          } catch(ex) { alert("Export IDML failed: " + ex); }
+      }
+      __restoreEnvironment(__ENV_STATE);
+    }
     // alias util formatter for compatibility
     function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st){
       return __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st);
@@ -861,17 +876,4 @@ function _holderInnerBounds(holder){
     tf    = tail.frame;
     story = tf.parentStory;
     curTextFrame = tf;
-    __trimTrailingEmptyFrames(story);
-    __trimTrailingEmptyPages(doc);
-    try { fixAllTables(); } catch(_) {}
-    try{ __progressFinalize(); }catch(_){ }
-
-    var __AUTO_EXPORT = (CONFIG && CONFIG.flags && typeof CONFIG.flags.autoExportIdml === "boolean")
-                        ? CONFIG.flags.autoExportIdml : %AUTO_EXPORT%;
-    if (__AUTO_EXPORT) {
-        try {
-            var outFile = File("%OUT_IDML%");
-            doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
-        } catch(ex) { alert("Export IDML failed: " + ex); }
-    }
-    __restoreEnvironment(__ENV_STATE);
+    __finalizeDocument(doc, story, page, tf);
