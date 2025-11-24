@@ -106,11 +106,17 @@
             }
           }
         }catch(_){ layoutSpec = null; }
-        var layoutSwitchApplied = false;
-        try{
-          if (layoutSpec){
+        function __tblApplyLayout(spec){
+          var appliedSwitch = false;
+          try{
+            if (!spec){
+              if (__CURRENT_LAYOUT && __DEFAULT_LAYOUT && !__layoutsEqual(__CURRENT_LAYOUT, __DEFAULT_LAYOUT)){
+                __ensureLayoutDefault();
+              }
+              return appliedSwitch;
+            }
             var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
-            var needSwitch = layoutSpec.pageOrientation && prevOrientation && layoutSpec.pageOrientation !== prevOrientation;
+            var needSwitch = spec.pageOrientation && prevOrientation && spec.pageOrientation !== prevOrientation;
             if (needSwitch){
               try{
                 story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
@@ -130,18 +136,18 @@
                 }
               }catch(__flushErr){ try{ log(__tableWarnTag + " flush before layout failed: " + __flushErr); }catch(_){ } }
             }
-            __ensureLayout(layoutSpec);
+            __ensureLayout(spec);
             var newOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : prevOrientation;
-            if (layoutSpec.pageOrientation && newOrientation !== prevOrientation){
-              layoutSwitchApplied = true;
+            if (spec.pageOrientation && newOrientation !== prevOrientation){
+              appliedSwitch = true;
             }
-            log(__tableTag + " layout request orient=" + (layoutSpec.pageOrientation||""));
-          }else if (__CURRENT_LAYOUT && __DEFAULT_LAYOUT && !__layoutsEqual(__CURRENT_LAYOUT, __DEFAULT_LAYOUT)){
-            __ensureLayoutDefault();
+            log(__tableTag + " layout request orient=" + (spec.pageOrientation||""));
+          }catch(__layoutErr){
+            try{ log(__tableWarnTag + " ensure layout failed: " + __layoutErr); }catch(__layoutLog){}
           }
-        }catch(__layoutErr){
-          try{ log(__tableWarnTag + " ensure layout failed: " + __layoutErr); }catch(__layoutLog){}
+          return appliedSwitch;
         }
+        var layoutSwitchApplied = __tblApplyLayout(layoutSpec);
         try{ log(__tableTag + " begin rows="+rows+" cols="+cols); }catch(__){}
         var doc = app.activeDocument;
 
