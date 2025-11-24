@@ -865,23 +865,27 @@ if (!doc || !doc.isValid) return;
     }
     __STYLE_LINES__
 
-    var page  = doc.pages[0];
-    try{ log("[LOG] script boot ok; page="+doc.pages.length); }catch(_){}
+    function __composeDocument(doc){
+      var page  = doc.pages[0];
+      try{ log("[LOG] script boot ok; page="+doc.pages.length); }catch(_){}
 
-    var tf    = createTextFrameOnPage(page, __DEFAULT_LAYOUT);
-    if (__DEFAULT_INNER_WIDTH === null) __DEFAULT_INNER_WIDTH = _innerFrameWidth(tf);
-    if (__DEFAULT_INNER_HEIGHT === null) __DEFAULT_INNER_HEIGHT = _innerFrameHeight(tf);
-    try{ log("[LAYOUT] default inner width=" + __DEFAULT_INNER_WIDTH + " height=" + __DEFAULT_INNER_HEIGHT); }catch(_defaultLog){}
-    var story = tf.parentStory;
-    curTextFrame = tf; 
+      var tf    = createTextFrameOnPage(page, __DEFAULT_LAYOUT);
+      if (__DEFAULT_INNER_WIDTH === null) __DEFAULT_INNER_WIDTH = _innerFrameWidth(tf);
+      if (__DEFAULT_INNER_HEIGHT === null) __DEFAULT_INNER_HEIGHT = _innerFrameHeight(tf);
+      try{ log("[LAYOUT] default inner width=" + __DEFAULT_INNER_WIDTH + " height=" + __DEFAULT_INNER_HEIGHT); }catch(_defaultLog){}
+      var story = tf.parentStory;
+      curTextFrame = tf; 
 
-    var firstChapterSeen = false;
-    __resetParaSeq();
+      var firstChapterSeen = false;
+      __resetParaSeq();
 
-    __ADD_LINES__
-    var tail = flushOverflow(story, page, tf);
-    page  = tail.page;
-    tf    = tail.frame;
-    story = tf.parentStory;
-    curTextFrame = tf;
-    __finalizeDocument(doc, story, page, tf);
+      __ADD_LINES__
+      var tail = flushOverflow(story, page, tf);
+      page  = tail.page;
+      tf    = tail.frame;
+      story = tf.parentStory;
+      curTextFrame = tf;
+      __finalizeDocument(doc, story, page, tf);
+    }
+
+    __composeDocument(doc);
