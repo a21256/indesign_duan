@@ -4,6 +4,19 @@ var __CURRENT_LAYOUT = null;
 var __DEFAULT_INNER_WIDTH = null;
 var __DEFAULT_INNER_HEIGHT = null;
 var __ENABLE_TRAILING_TRIM = false;
+// basic self-check to ensure required helpers exist
+function __layoutSelfCheck(){
+  try{
+    var required = ["__cloneLayoutState","__ensureLayout","__createLayoutFrame","frameBoundsForPage2"];
+    for (var i=0;i<required.length;i++){
+      var n = required[i];
+      if (typeof eval(n) !== "function") throw ("missing function: " + n);
+    }
+  }catch(e){
+    try{ log("[ERR] LAYOUT selfcheck failed: " + e); }catch(_){}
+    throw e;
+  }
+}
 
 function __cloneLayoutState(src){
   var out = {};
@@ -70,6 +83,7 @@ function __createLayoutFrame(layoutState, linkFromFrame, opts){
   opts = opts || {};
   var target = __cloneLayoutState(layoutState);
   try{
+    // fill defaults
     if (!target.pageOrientation && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation){
       target.pageOrientation = __DEFAULT_LAYOUT.pageOrientation;
     }
@@ -82,6 +96,7 @@ function __createLayoutFrame(layoutState, linkFromFrame, opts){
     if (!target.pageMarginsPt && __DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageMarginsPt){
       target.pageMarginsPt = __cloneLayoutState({pageMarginsPt:__DEFAULT_LAYOUT.pageMarginsPt}).pageMarginsPt;
     }
+    // resolve base page/spread
     var basePage = (opts.afterPage && opts.afterPage.isValid) ? opts.afterPage : (page && page.isValid ? page : doc.pages[doc.pages.length-1]);
     var newPage = null;
     try{
