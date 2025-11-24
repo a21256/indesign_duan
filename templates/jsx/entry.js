@@ -16,6 +16,22 @@
     }catch(_){}
 
     // config + selfcheck
+    function __initEnvironment(){
+      var state = {scriptUnit:null, viewH:null, viewV:null};
+      try{ app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT; }catch(_){}
+      try{ state.scriptUnit = app.scriptPreferences.measurementUnit; }catch(_){}
+      try{
+        state.viewH = app.viewPreferences.horizontalMeasurementUnits;
+        state.viewV = app.viewPreferences.verticalMeasurementUnits;
+      }catch(_){}
+      try{ app.scriptPreferences.measurementUnit = MeasurementUnits.POINTS; }catch(_){}
+      try{
+        app.viewPreferences.horizontalMeasurementUnits = MeasurementUnits.POINTS;
+        app.viewPreferences.verticalMeasurementUnits = MeasurementUnits.POINTS;
+      }catch(_){}
+      return state;
+    }
+
     function __initEntryLogging(){
       var EVENT_FILE = File("%EVENT_LOG_PATH%");
       var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
@@ -81,6 +97,7 @@
     var err  = __LOG_CTX.err;
     function log(m){ __LOG_CTX.log(m); }
 
+    var __ENV_STATE = __initEnvironment();
     __LOG_CTX.selfCheck();
     // alias util formatter for compatibility
     function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st){
