@@ -20,9 +20,6 @@
     var LOG_WRITE  = (CONFIG && CONFIG.flags && typeof CONFIG.flags.logWrite === "boolean")
                      ? CONFIG.flags.logWrite : %LOG_WRITE%;   // true=log debug; false=only warn/error/info
     var __EVENT_CTX = __initEventLog(EVENT_FILE, LOG_WRITE);
-    function __entryLog(tag, msg){
-      try{ log("[" + tag + "] " + msg); }catch(_){}
-    }
     function __selfCheck(){
       try{
         if (String(EVENT_FILE || "").indexOf("%") >= 0) throw "EVENT_LOG_PATH placeholder not replaced";
@@ -33,7 +30,7 @@
           if (typeof eval(n) !== "function") throw ("missing function: " + n);
         }
       }catch(e){
-        __entryLog("ERR","selfcheck failed: " + e);
+        try{ log("[ERR] selfcheck failed: " + e); }catch(__){}
         throw e;
       }
     }
@@ -66,9 +63,6 @@
     }
     }
     __selfCheck();
-    var __flushEventsWrapper = function(){
-      __flushEvents(__EVENT_CTX);
-    };
     // alias util formatter for compatibility
     function applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st){
       return __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st);
