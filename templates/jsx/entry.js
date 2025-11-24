@@ -1,20 +1,3 @@
-﻿    app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
-    var __origScriptUnit = null, __origViewH = null, __origViewV = null;
-    try{
-        __origScriptUnit = app.scriptPreferences.measurementUnit;
-    }catch(_){}
-    try{
-        __origViewH = app.viewPreferences.horizontalMeasurementUnits;
-        __origViewV = app.viewPreferences.verticalMeasurementUnits;
-    }catch(_){}
-    try{
-        app.scriptPreferences.measurementUnit = MeasurementUnits.POINTS;
-    }catch(_){}
-    try{
-        app.viewPreferences.horizontalMeasurementUnits = MeasurementUnits.POINTS;
-        app.viewPreferences.verticalMeasurementUnits = MeasurementUnits.POINTS;
-    }catch(_){}
-
     // config + selfcheck
     function __initEnvironment(){
       var state = {scriptUnit:null, viewH:null, viewV:null};
