@@ -106,6 +106,14 @@
       if (__AUTO_EXPORT) {
           try {
               var outFile = File("%OUT_IDML%");
+              try{
+                var outPathStr = String(outFile && outFile.absoluteURI ? outFile.absoluteURI : outFile || "");
+                if (outPathStr.indexOf("%") >= 0){
+                  try{ log("[ERR] OUT_IDML placeholder not replaced: " + outPathStr); }catch(_){}
+                  outFile = null;
+                }
+              }catch(_){}
+              if (!outFile){ /* skip export if placeholder missing */ }
               doc.exportFile(ExportFormat.INDESIGN_MARKUP, outFile, false);
           } catch(ex) { alert("Export IDML failed: " + ex); }
       }
