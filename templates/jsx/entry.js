@@ -870,25 +870,31 @@ if (!doc || !doc.isValid) return;
     __STYLE_LINES__
 
     function __composeDocument(doc){
-      page  = doc.pages[0];
-      try{ log("[LOG] script boot ok; page="+doc.pages.length); }catch(_){}
+      if (!doc || !doc.isValid) { try{ log("[ERR] compose: doc invalid"); }catch(_){ } return; }
+      try{
+        page  = doc.pages[0];
+        try{ log("[LOG] script boot ok; page="+doc.pages.length); }catch(_){}
 
-      tf    = createTextFrameOnPage(page, __DEFAULT_LAYOUT);
-      if (__DEFAULT_INNER_WIDTH === null) __DEFAULT_INNER_WIDTH = _innerFrameWidth(tf);
-      if (__DEFAULT_INNER_HEIGHT === null) __DEFAULT_INNER_HEIGHT = _innerFrameHeight(tf);
-      try{ log("[LAYOUT] default inner width=" + __DEFAULT_INNER_WIDTH + " height=" + __DEFAULT_INNER_HEIGHT); }catch(_defaultLog){}
-      story = tf.parentStory;
-      curTextFrame = tf; 
+        tf    = createTextFrameOnPage(page, __DEFAULT_LAYOUT);
+        if (__DEFAULT_INNER_WIDTH === null) __DEFAULT_INNER_WIDTH = _innerFrameWidth(tf);
+        if (__DEFAULT_INNER_HEIGHT === null) __DEFAULT_INNER_HEIGHT = _innerFrameHeight(tf);
+        try{ log("[LAYOUT] default inner width=" + __DEFAULT_INNER_WIDTH + " height=" + __DEFAULT_INNER_HEIGHT); }catch(_defaultLog){}
+        story = tf.parentStory;
+        curTextFrame = tf; 
 
-      var firstChapterSeen = false;
-      __resetParaSeq();
+        var firstChapterSeen = false;
+        __resetParaSeq();
 
-      __ADD_LINES__
-      var tail = flushOverflow(story, page, tf);
-      page  = tail.page;
-      tf    = tail.frame;
-      story = tf.parentStory;
-      curTextFrame = tf;
+        __ADD_LINES__
+        var tail = flushOverflow(story, page, tf);
+        if (!tail || !tail.frame || !tail.page) { try{ log("[ERR] compose: tail invalid"); }catch(_){ } __finalizeDocument(doc, story, page, tf); return; }
+        page  = tail.page;
+        tf    = tail.frame;
+        story = tf.parentStory;
+        curTextFrame = tf;
+      }catch(__composeErr){
+        try{ log("[ERR] compose failed: " + __composeErr); }catch(_){}
+      }
       __finalizeDocument(doc, story, page, tf);
     }
 
