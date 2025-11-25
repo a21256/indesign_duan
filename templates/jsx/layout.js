@@ -380,6 +380,8 @@ function flushOverflow(currentStory, lastPage, lastFrame) {
         var STALL_LIMIT = 3;
         var stallFrameId = null;
         var stallCount = 0;
+        var stallCharCount = 0;
+        var lastCharLen = null;
         function __logFlushWarn(msg){
             try{
                 var pgName = (lastPage && lastPage.isValid && lastPage.name) ? lastPage.name : "NA";
@@ -408,6 +410,8 @@ function flushOverflow(currentStory, lastPage, lastFrame) {
             $.sleep(10);
 
             var tailFrameId = null;
+            var curLen = null;
+            try{ curLen = currentStory && currentStory.characters ? currentStory.characters.length : null; }catch(_cl){}
             try{
                 var tailIp = currentStory && currentStory.isValid ? currentStory.insertionPoints[-1] : null;
                 if (tailIp && tailIp.isValid && tailIp.parentTextFrames && tailIp.parentTextFrames.length){
@@ -427,11 +431,23 @@ function flushOverflow(currentStory, lastPage, lastFrame) {
                     break;
                 }
             }
+            if (curLen !== null){
+                if (lastCharLen !== null && curLen === lastCharLen){
+                    stallCharCount++;
+                }else{
+                    stallCharCount = 0;
+                    lastCharLen = curLen;
+                }
+                if (stallCharCount >= STALL_LIMIT){
+                    __logFlushWarn("flushOverflow guard hit; story length not advancing");
+                    break;
+                }
+            }
         }
         if (currentStory && currentStory.overflows) {
             __logFlushWarn("flushOverflow guard hit; overset still true");
         }
-        return { page: lastPage, frame: lastFrame };
+        return { page: lastPage, frame: lastFrame, overset: (currentStory && currentStory.overflows) };
     }
 
     
