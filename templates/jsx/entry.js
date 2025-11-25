@@ -296,6 +296,8 @@
           else if (curTextFrame && curTextFrame.isValid && curTextFrame.id!=null) fId = curTextFrame.id;
         }catch(_fr){}
         var msg = "[SKIP][PARA " + seq + "] style=" + styleName + " page=" + pName + " frame=" + fId + " reason=" + reason;
+        if (ctx && ctx.startPage) msg += " startPage=" + ctx.startPage;
+        if (ctx && ctx.removed && ctx.removed.length){ msg += " removedPages=" + ctx.removed.join(","); }
         if (preview) msg += " text=\"" + preview + "\"";
         warn(msg);
       }catch(_){}
@@ -317,6 +319,55 @@
         }
       }catch(_r){}
       try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(_){}
+    }
+    function __cleanupPagesAfterSkip(docObj, startPageCount){
+      var removed = [];
+      try{
+        if (!docObj || !docObj.isValid) return removed;
+        if (startPageCount === null || startPageCount === undefined) return removed;
+        for (var idx = docObj.pages.length - 1; idx >= startPageCount; idx--){
+          var pg = docObj.pages[idx];
+          if (!pg || !pg.isValid) continue;
+          var hasGraphics = false;
+          try{ hasGraphics = (pg.allGraphics && pg.allGraphics.length > 0); }catch(_g){}
+          var tfs = null;
+          try{ tfs = pg.textFrames; }catch(_tfArr){}
+          if (hasGraphics) continue;
+          var keep = false;
+          if (tfs && tfs.length){
+            for (var ti=0; ti<tfs.length; ti++){
+              var tfLocal = tfs[ti];
+              if (!tfLocal || !tfLocal.isValid) continue;
+              try{ if (tfLocal.tables && tfLocal.tables.length>0){ keep = true; break; } }catch(_tbl){}
+              try{
+                var txt = String(tfLocal.contents || "");
+                if (txt.replace(/[\s\u0000-\u001f\u2028\u2029\uFFFC\uF8FF]+/g, "") !== "") { keep = true; break; }
+              }catch(_txt){}
+              try{ if (tfLocal.overflows){ keep = true; break; } }catch(_ov){}
+            }
+          }
+          try{
+            if (pg.pageItems && pg.pageItems.length>0 && (!tfs || !tfs.length)){
+              keep = true;
+            }
+          }catch(_pi){}
+          if (keep) continue;
+          try{
+            if (tfs && tfs.length){
+              var tf0 = tfs[0];
+              try{
+                var prev = tf0.previousTextFrame;
+                if (prev && prev.isValid){
+                  try{ prev.nextTextFrame = null; }catch(_lnk){}
+                }
+              }catch(_prev){}
+            }
+          }catch(_dec){}
+          try{ removed.push(pg.name); }catch(_nm){ removed.push(String(idx)); }
+          try{ pg.remove(); }catch(_rmPg){}
+        }
+      }catch(_c){}
+      return removed;
     }
 
     if (typeof curTextFrame === "undefined" && typeof tf !== "undefined") {
@@ -583,7 +634,20 @@ function _holderInnerBounds(holder){
 
     function addParaWithNotes(story, styleName, raw) {
         var paraSeq = __nextParaSeq();
-        var s = app.activeDocument.paragraphStyles.itemByName(styleName);
+        var docRef = app.activeDocument;
+        var startPageCount = null;
+        var startPageName = null;
+        var startFrameCtx = null;
+        try{
+          if (docRef && docRef.isValid){
+            startPageCount = docRef.pages.length;
+          }
+          var ipStart = story && story.isValid ? story.insertionPoints[-1] : null;
+          startFrameCtx = (ipStart && ipStart.isValid && ipStart.parentTextFrames && ipStart.parentTextFrames.length) ? ipStart.parentTextFrames[0] : null;
+          var pgStart = (startFrameCtx && startFrameCtx.isValid) ? startFrameCtx.parentPage : null;
+          if (pgStart && pgStart.isValid && pgStart.name) startPageName = pgStart.name;
+        }catch(_ctx){}
+        var s = docRef.paragraphStyles.itemByName(styleName);
         try { log("[PARA] style=" + styleName + " len=" + String(raw||"").length); } catch(_){}
         if (!s.isValid) { s = app.activeDocument.paragraphStyles.add({name:styleName}); }
 
@@ -773,7 +837,7 @@ function _holderInnerBounds(holder){
             if (typeof __paraCounter === "undefined") __paraCounter = 0;
             __paraCounter++;
             if ((__paraCounter % 50) === 0) {
-                var st = flushOverflow(story, page, tf);
+                var st = flushOverflow(story, page, tf, 1);
                 page  = st.page;
                 tf    = st.frame;
                 story = tf.parentStory;
@@ -782,7 +846,7 @@ function _holderInnerBounds(holder){
         } catch(_){}
         try{
           if (typeof flushOverflow === "function" && tf && tf.isValid){
-            var st2 = flushOverflow(story, page, tf);
+            var st2 = flushOverflow(story, page, tf, 1);
             if (st2 && st2.frame && st2.page) { page = st2.page; tf = st2.frame; story = tf.parentStory; curTextFrame = tf; }
             if (st2 && st2.overset){
               var pageHint = "NA";
@@ -793,14 +857,16 @@ function _holderInnerBounds(holder){
                 var _pgHint = (frameHint && frameHint.isValid) ? frameHint.parentPage : null;
                 if (_pgHint && _pgHint.isValid && _pgHint.name) pageHint = _pgHint.name;
               }catch(_ph){}
-              __logSkipParagraph(paraSeq, styleName, "overset/no-progress page="+pageHint, text, {page:(frameHint&&frameHint.isValid?frameHint.parentPage:null), frame:frameHint});
+              var removedPages = __cleanupPagesAfterSkip(docRef, startPageCount);
+              __logSkipParagraph(paraSeq, styleName, "overset/no-progress page="+pageHint, text, {page:(frameHint&&frameHint.isValid?frameHint.parentPage:null), frame:frameHint, startPage:startPageName, removed:removedPages});
               __recoverAfterParagraph(story, insertionStart);
               return;
             }
           }
         }catch(_skipFlush){}
         }catch(eAddPara){
-            __logSkipParagraph(paraSeq, styleName, String(eAddPara||"error"), text, {page:page, frame:tf});
+            var removedErr = __cleanupPagesAfterSkip(docRef, startPageCount);
+            __logSkipParagraph(paraSeq, styleName, String(eAddPara||"error"), text, {page:page, frame:tf, startPage:startPageName, removed:removedErr});
             __recoverAfterParagraph(story, insertionStart);
         }
         try{
@@ -944,7 +1010,7 @@ function _holderInnerBounds(holder){
         __resetParaSeq();
 
         __ADD_LINES__
-        var tail = flushOverflow(story, page, tf);
+        var tail = flushOverflow(story, page, tf, 1);
         if (!tail || !tail.frame || !tail.page) { try{ log("[ERR] compose: tail invalid"); }catch(_){ } __finalizeDocument(doc, story, page, tf); return; }
         page  = tail.page;
         tf    = tail.frame;

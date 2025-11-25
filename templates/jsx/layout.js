@@ -375,8 +375,14 @@ function createFootnoteAt(ip, content, idForDisplay){
 
     
 
-function flushOverflow(currentStory, lastPage, lastFrame) {
+function flushOverflow(currentStory, lastPage, lastFrame, maxPagesPerCall) {
         var MAX_PAGES = 20;
+        try{
+            if (maxPagesPerCall !== undefined && maxPagesPerCall !== null){
+                var mp = parseInt(maxPagesPerCall, 10);
+                if (isFinite(mp) && mp > 0) MAX_PAGES = mp;
+            }
+        }catch(_max){}
         var STALL_LIMIT = 3;
         var stallFrameId = null;
         var stallCount = 0;
