@@ -198,66 +198,76 @@
                                       ? !!$.global.__ALLOW_IMG_EXT_FALLBACK : true);
     var __SAFE_PAGE_LIMIT = (CONFIG && CONFIG.flags && typeof CONFIG.flags.safePageLimit === "number" && isFinite(CONFIG.flags.safePageLimit))
                              ? CONFIG.flags.safePageLimit : 2000;
-    var __PARA_SEQ = 0;
-    var __PROGRESS_TOTAL = %PROGRESS_TOTAL%;
-    var __PROGRESS_DONE = 0;
-    var __PROGRESS_LAST_PCT = -1;
-    var __PROGRESS_LAST_TS = (new Date()).getTime();
-    var __PROGRESS_HEARTBEAT_MS = (CONFIG && CONFIG.progress && typeof CONFIG.progress.heartbeatMs === "number" && isFinite(CONFIG.progress.heartbeatMs))
-                                  ? CONFIG.progress.heartbeatMs : %PROGRESS_HEARTBEAT%;
-    function __progressDetailText(detail){
-      if (!detail) return "";
-      try{
-        if (typeof detail === "string") return detail;
-        var parts = [];
-        for (var key in detail){
-          if (!detail.hasOwnProperty(key)) continue;
-          parts.push(key + "=" + detail[key]);
-        }
-        return parts.join(" ");
-      }catch(_){ return ""; }
-    }
-    function __progressBump(kind, detail, forceLog){
-      if (!__PROGRESS_TOTAL || __PROGRESS_TOTAL <= 0) return;
-      __PROGRESS_DONE++;
-      var doneDisplay = __PROGRESS_DONE;
-      if (__PROGRESS_TOTAL > 0){
-        doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
-      }
-      var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
-      var now = (new Date()).getTime();
-      var shouldLog = !!forceLog;
-      if (!shouldLog && pct !== __PROGRESS_LAST_PCT){
-        shouldLog = true;
-      }
-      if (!shouldLog && (now - __PROGRESS_LAST_TS) >= __PROGRESS_HEARTBEAT_MS){
-        shouldLog = true;
-      }
-      if (shouldLog){
-        __PROGRESS_LAST_PCT = pct;
-        __PROGRESS_LAST_TS = now;
-        var suffix = "";
-        var detailText = __progressDetailText(detail);
-        if (detailText) suffix = " " + detailText;
+    function __createProgressTracker(){
+      var __PARA_SEQ = 0;
+      var __PROGRESS_TOTAL = %PROGRESS_TOTAL%;
+      var __PROGRESS_DONE = 0;
+      var __PROGRESS_LAST_PCT = -1;
+      var __PROGRESS_LAST_TS = (new Date()).getTime();
+      var __PROGRESS_HEARTBEAT_MS = (CONFIG && CONFIG.progress && typeof CONFIG.progress.heartbeatMs === "number" && isFinite(CONFIG.progress.heartbeatMs))
+                                    ? CONFIG.progress.heartbeatMs : %PROGRESS_HEARTBEAT%;
+      function detailText(detail){
+        if (!detail) return "";
         try{
-        info("[PROGRESS][" + kind + "] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
+          if (typeof detail === "string") return detail;
+          var parts = [];
+          for (var key in detail){
+            if (!detail.hasOwnProperty(key)) continue;
+            parts.push(key + "=" + detail[key]);
+          }
+          return parts.join(" ");
+        }catch(_){ return ""; }
+      }
+      function bump(kind, detail, forceLog){
+        if (!__PROGRESS_TOTAL || __PROGRESS_TOTAL <= 0) return;
+        __PROGRESS_DONE++;
+        var doneDisplay = __PROGRESS_DONE;
+        if (__PROGRESS_TOTAL > 0){
+          doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
+        }
+        var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
+        var now = (new Date()).getTime();
+        var shouldLog = !!forceLog;
+        if (!shouldLog && pct !== __PROGRESS_LAST_PCT){
+          shouldLog = true;
+        }
+        if (!shouldLog && (now - __PROGRESS_LAST_TS) >= __PROGRESS_HEARTBEAT_MS){
+          shouldLog = true;
+        }
+        if (shouldLog){
+          __PROGRESS_LAST_PCT = pct;
+          __PROGRESS_LAST_TS = now;
+          var suffix = "";
+          var dt = detailText(detail);
+          if (dt) suffix = " " + dt;
+          try{ info("[PROGRESS][" + kind + "] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix); }catch(_){}
+        }
+      }
+      function finalize(detail){
+        if (!__PROGRESS_TOTAL || __PROGRESS_TOTAL <= 0) return;
+        var suffix = "";
+        var dt = detailText(detail);
+        if (dt) suffix = " " + dt;
+        var doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
+        var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
+        try{
+          info("[PROGRESS][COMPLETE] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
         }catch(_){}
       }
+      function resetSeq(){ __PARA_SEQ = 0; }
+      function nextSeq(){ __PARA_SEQ++; return __PARA_SEQ; }
+      return {
+        bump: bump,
+        finalize: finalize,
+        resetSeq: resetSeq,
+        nextSeq: nextSeq
+      };
     }
-    function __progressFinalize(detail){
-      if (!__PROGRESS_TOTAL || __PROGRESS_TOTAL <= 0) return;
-      var suffix = "";
-      var detailText = __progressDetailText(detail);
-      if (detailText) suffix = " " + detailText;
-      var doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
-      var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
-      try{
-        info("[PROGRESS][COMPLETE] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
-      }catch(_){}
-    }
-
-    function __resetParaSeq(){ __PARA_SEQ = 0; }
-    function __nextParaSeq(){ __PARA_SEQ++; return __PARA_SEQ; }
+    var __PROGRESS = __createProgressTracker();
+    function __progressBump(kind, detail, forceLog){ __PROGRESS.bump(kind, detail, forceLog); }
+    function __progressFinalize(detail){ __PROGRESS.finalize(detail); }
+    function __resetParaSeq(){ __PROGRESS.resetSeq(); }
+    function __nextParaSeq(){ return __PROGRESS.nextSeq(); }
     function __logSkipParagraph(seq, styleName, reason, textSample){
       try{
         var preview = "";
