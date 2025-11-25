@@ -757,12 +757,19 @@ function _holderInnerBounds(holder){
         }catch(_){}
     }
 
-function __openAndPrepareTemplate(){
-  var templateFile = File("%TEMPLATE_PATH%");
-  if (!templateFile.exists) { alert("Template file not found: template.idml"); return null; }
-  var doc = app.open(templateFile);
-  try{
-    doc.allowPageShuffle = true;
+    function __openAndPrepareTemplate(){
+      var templateFile = File("%TEMPLATE_PATH%");
+      try{
+        var tplPathStr = String(templateFile && templateFile.absoluteURI ? templateFile.absoluteURI : templateFile || "");
+        if (tplPathStr.indexOf("%") >= 0){
+          try{ log("[ERR] placeholder not replaced for template path: " + tplPathStr); }catch(_){}
+          return null;
+        }
+      }catch(_){}
+      if (!templateFile.exists) { alert("Template file not found: template.idml"); return null; }
+      var doc = app.open(templateFile);
+      try{
+        doc.allowPageShuffle = true;
     try{
       var __dp = doc.documentPreferences;
       var __fpBefore = null;
