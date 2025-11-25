@@ -97,6 +97,7 @@
     var __ENV_STATE = __initEnvironment();
     __LOG_CTX.selfCheck();
     function __finalizeDocument(doc, story, page, tf){
+      if (!doc || !doc.isValid) { __restoreEnvironment(__ENV_STATE); return; }
       try{ __trimTrailingEmptyFrames(story); }catch(_){}
       try{ __trimTrailingEmptyPages(doc); }catch(_){}
       try { fixAllTables(); } catch(_){}
