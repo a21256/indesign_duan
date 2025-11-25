@@ -383,11 +383,15 @@ function flushOverflow(currentStory, lastPage, lastFrame) {
         var stallCharCount = 0;
         var lastCharLen = null;
         function __logFlushWarn(msg){
+            var pgName = "NA";
+            var frameId = "NA";
+            try{ if (lastPage && lastPage.isValid && lastPage.name) pgName = lastPage.name; }catch(_){}
+            try{ if (lastFrame && lastFrame.isValid && lastFrame.id != null) frameId = lastFrame.id; }catch(_){}
+            var payload = "flushOverflow " + msg + " page=" + pgName + " frame=" + frameId;
             try{
-                var pgName = (lastPage && lastPage.isValid && lastPage.name) ? lastPage.name : "NA";
-                var frameId = (lastFrame && lastFrame.isValid && lastFrame.id != null) ? lastFrame.id : "NA";
-                log("[ERROR] " + msg + " page=" + pgName + " frame=" + frameId);
-            }catch(_){}
+                if (typeof warn === "function") { warn(payload); return; }
+            }catch(_warnFail){}
+            try{ log("[WARN] " + payload); }catch(_logFail){}
         }
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
             var docRef = app && app.activeDocument;

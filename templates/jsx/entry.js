@@ -277,14 +277,27 @@
     function __progressFinalize(detail){ __PROGRESS.finalize(detail); }
     function __resetParaSeq(){ __PROGRESS.resetSeq(); }
     function __nextParaSeq(){ return __PROGRESS.nextSeq(); }
-    function __logSkipParagraph(seq, styleName, reason, textSample){
+    function __logSkipParagraph(seq, styleName, reason, textSample, ctx){
       try{
         var preview = "";
         if (textSample){
           preview = String(textSample).replace(/\s+/g, " ");
           if (preview.length > 80) preview = preview.substring(0, 80) + "...";
         }
-        warn("[SKIP][PARA " + seq + "] style=" + styleName + " reason=" + reason + (preview ? " text=\"" + preview + "\"" : ""));
+        var pName = "NA";
+        var fId   = "NA";
+        try{
+          if (ctx && ctx.page && ctx.page.isValid && ctx.page.name) pName = ctx.page.name;
+          else if (page && page.isValid && page.name) pName = page.name;
+        }catch(_pg){}
+        try{
+          if (ctx && ctx.frame && ctx.frame.isValid && ctx.frame.id!=null) fId = ctx.frame.id;
+          else if (tf && tf.isValid && tf.id!=null) fId = tf.id;
+          else if (curTextFrame && curTextFrame.isValid && curTextFrame.id!=null) fId = curTextFrame.id;
+        }catch(_fr){}
+        var msg = "[SKIP][PARA " + seq + "] style=" + styleName + " page=" + pName + " frame=" + fId + " reason=" + reason;
+        if (preview) msg += " text=\"" + preview + "\"";
+        warn(msg);
       }catch(_){}
     }
     function __recoverAfterParagraph(storyObj, startIdx){
@@ -773,20 +786,21 @@ function _holderInnerBounds(holder){
             if (st2 && st2.frame && st2.page) { page = st2.page; tf = st2.frame; story = tf.parentStory; curTextFrame = tf; }
             if (st2 && st2.overset){
               var pageHint = "NA";
+              var frameHint = null;
               try{
                 var _ipHint = story && story.isValid ? story.insertionPoints[-1] : null;
-                var _hHint = (_ipHint && _ipHint.isValid && _ipHint.parentTextFrames && _ipHint.parentTextFrames.length) ? _ipHint.parentTextFrames[0] : null;
-                var _pgHint = (_hHint && _hHint.isValid) ? _hHint.parentPage : null;
+                frameHint = (_ipHint && _ipHint.isValid && _ipHint.parentTextFrames && _ipHint.parentTextFrames.length) ? _ipHint.parentTextFrames[0] : null;
+                var _pgHint = (frameHint && frameHint.isValid) ? frameHint.parentPage : null;
                 if (_pgHint && _pgHint.isValid && _pgHint.name) pageHint = _pgHint.name;
               }catch(_ph){}
-              __logSkipParagraph(paraSeq, styleName, "overset/no-progress page="+pageHint, text);
+              __logSkipParagraph(paraSeq, styleName, "overset/no-progress page="+pageHint, text, {page:(frameHint&&frameHint.isValid?frameHint.parentPage:null), frame:frameHint});
               __recoverAfterParagraph(story, insertionStart);
               return;
             }
           }
         }catch(_skipFlush){}
         }catch(eAddPara){
-            __logSkipParagraph(paraSeq, styleName, String(eAddPara||"error"), text);
+            __logSkipParagraph(paraSeq, styleName, String(eAddPara||"error"), text, {page:page, frame:tf});
             __recoverAfterParagraph(story, insertionStart);
         }
         try{
