@@ -59,6 +59,9 @@ var __ALLOW_IMG_EXT_FALLBACK = (typeof __ALLOW_IMG_EXT_FALLBACK !== "undefined")
                                ? __ALLOW_IMG_EXT_FALLBACK
                                : (CONFIG && CONFIG.flags && typeof CONFIG.flags.allowImgExtFallback === "boolean"
                                   ? CONFIG.flags.allowImgExtFallback : true);
+// record start context for image placement to avoid undefined access
+var startIdxFloat = null;
+var startPageCountFloat = null;
 // safe recomposition wrapper
 function __imgRecomposeSafe(obj){
   try{ if (obj && obj.isValid && typeof obj.recompose === "function"){ obj.recompose(); return true; } }catch(_){}
@@ -288,9 +291,14 @@ function __imgLogPlacedRect(rect){
 }
 // place an image inline and return its rectangle (or null on failure)
 // post-processing for block images: add CR/ZWS and flush overset
-function __imgFloatPostProcess(rect, st, page, tf){
+function __imgFloatPostProcess(rect, st, page, tf, opts){
   var story = st;
   if (!rect || !rect.isValid || !story || !story.isValid) return {page: page, tf: tf, story: story};
+  opts = opts || {};
+  var startIdxLocal = (typeof opts.startIdx === "number") ? opts.startIdx : (typeof startIdxFloat === "number" ? startIdxFloat : null);
+  var startPageCountLocal = (typeof opts.startPageCount === "number") ? opts.startPageCount : (typeof startPageCountFloat === "number" ? startPageCountFloat : null);
+  var srcLabel = opts.src || "";
+  var startPageName = opts.startPageName || "NA";
   // ensure next content starts in a new paragraph
   try{
     var aIP = rect.storyOffset;
@@ -326,7 +334,7 @@ function __imgFloatPostProcess(rect, st, page, tf){
     if (!__tf && typeof tf!=="undefined") __tf = tf;
     if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
     if (__pg && __tf && typeof flushOverflow === "function") {
-      var fl = flushOverflow(story, __pg, __tf);
+      var fl = flushOverflow(story, __pg, __tf, 1);
       if (fl && fl.frame && fl.page) {
         page  = fl.page;
         tf    = fl.frame;
@@ -339,6 +347,17 @@ function __imgFloatPostProcess(rect, st, page, tf){
             + " over(tf)=" + (tf&&tf.isValid?tf.overflows:"NA")
             + " over(curTF)=" + (curTextFrame&&curTextFrame.isValid?curTextFrame.overflows:"NA"));
       }catch(_){}
+      try{
+        if (fl && fl.overset){
+          try{ log("[WARN][IMG] skip due to overset src=" + srcLabel + " startPage=" + startPageName); }catch(_){}
+          try{ if (rect && rect.isValid) rect.remove(); }catch(_rmRect){}
+          if (story && story.isValid && startIdxLocal !== null){
+            __imgRecoverAfterSkip(story, startIdxLocal);
+          }
+          try{ __imgRemoveTailEmptyPages(app.activeDocument, startPageCountLocal==null?app.activeDocument.pages.length: startPageCountLocal); }catch(_trim){}
+          return {page: page, tf: tf, story: story};
+        }
+      }catch(_ov){}
     }
     try{
       if ((!curTextFrame || !curTextFrame.isValid) && rect && rect.isValid){
@@ -630,24 +649,31 @@ function __imgAlignFloatingRect(rect, holder, innerW, alignMode){
 }
 
 function __imgAddImageAtV2(ip, spec) {
-      var doc = app.activeDocument;
-      function _logBegin(){
-        try{
-          log("[IMG] begin __imgAddImageAtV2 src=" + (spec&&spec.src)
-              + " w=" + (spec&&spec.w) + " h=" + (spec&&spec.h)
-              + " align=" + (spec&&spec.align) + " sb=" + (spec&&spec.spaceBefore) + " sa=" + (spec&&spec.spaceAfter));
-        }catch(_){}
-      }
+        var doc = app.activeDocument;
+        // record starting context for cleanup/log
+        startPageCountFloat = null;
+        startIdxFloat = null;
+        function _logBegin(){
+          try{
+            log("[IMG] begin __imgAddImageAtV2 src=" + (spec&&spec.src)
+                + " w=" + (spec&&spec.w) + " h=" + (spec&&spec.h)
+                + " align=" + (spec&&spec.align) + " sb=" + (spec&&spec.spaceBefore) + " sa=" + (spec&&spec.spaceAfter));
+          }catch(_){}
+        }
       function _checkFile(){
         var f0 = File(spec && spec.src);
         if (!f0 || !f0.exists) { __imgErr("IMG", "__imgAddImageAtV2: file missing", spec, ip); return null; }
         return f0;
       }
-      function _initStory(){
-        var st0 = __imgResolveStory(ip, (typeof tf!=="undefined"?tf:null), doc);
-        if (!st0) { __imgErr("IMG", "__imgAddImageAtV2: no valid story", spec, ip); return null; }
-        return st0;
-      }
+        function _initStory(){
+          var st0 = __imgResolveStory(ip, (typeof tf!=="undefined"?tf:null), doc);
+          if (!st0) { __imgErr("IMG", "__imgAddImageAtV2: no valid story", spec, ip); return null; }
+          try{
+            startPageCountFloat = (doc && doc.pages) ? doc.pages.length : null;
+            startIdxFloat = st0.characters.length;
+          }catch(_ctx){}
+          return st0;
+        }
       function _resolveInlineFlag(){
         var inlineFlag = String((spec && spec.inline)||"").toLowerCase();
         var isInline = !(inlineFlag==="0" || inlineFlag==="false");
@@ -711,7 +737,7 @@ function __imgAddImageAtV2(ip, spec) {
 
       // 8 & 9) post-process block image (newline + flush)
       if (!isInline) {
-        var _post = __imgFloatPostProcess(rect, st, page, tf);
+        var _post = __imgFloatPostProcess(rect, st, page, tf, {startIdx:startIdxFloat, startPageCount:startPageCountFloat, startPageName:(page&&page.isValid?page.name:null), src:(spec&&spec.src)||""});
         page  = _post.page;
         tf    = _post.tf;
         story = _post.story;
@@ -1778,4 +1804,44 @@ function __imgAddFloatingFrame(tf, story, page, spec){
     try{ log("[FRAMEFLOAT][EXC] " + eFrame); }catch(_){}
     throw eFrame;
   }
+}
+// remove trailing empty pages beyond a baseline count; stops at first non-empty page
+function __imgRemoveTailEmptyPages(docObj, baseCount){
+  try{
+    if (!docObj || !docObj.isValid) return;
+    if (baseCount === null || baseCount === undefined) return;
+    while (docObj.pages.length > baseCount){
+      var pg = docObj.pages[docObj.pages.length - 1];
+      if (!pg || !pg.isValid) break;
+      var keep = false;
+      try{ if (pg.allGraphics && pg.allGraphics.length > 0) keep = true; }catch(_g){}
+      var tfs = null;
+      try{ tfs = pg.textFrames; }catch(_tf){}
+      if (tfs && tfs.length){
+        for (var i=tfs.length-1; i>=0; i--){
+          var tfLocal = tfs[i];
+          if (!tfLocal || !tfLocal.isValid) continue;
+          try{ if (tfLocal.tables && tfLocal.tables.length>0){ keep = true; break; } }catch(_tbl){}
+          try{
+            var txt = String(tfLocal.contents||"");
+            if (txt.replace(/[\s\u0000-\u001f\u2028\u2029\uFFFC\uF8FF]+/g,"") !== ""){ keep = true; break; }
+          }catch(_txt){}
+          try{ if (tfLocal.overflows){ keep = true; break; } }catch(_ov){}
+        }
+      }
+      if (keep) break;
+      try{
+        if (tfs && tfs.length){
+          var tf0 = tfs[0];
+          try{
+            var prev = tf0.previousTextFrame;
+            if (prev && prev.isValid){
+              try{ prev.nextTextFrame = null; }catch(_lnk){}
+            }
+          }catch(_pv){}
+        }
+      }catch(_dec){}
+      try{ pg.remove(); }catch(_rm){ break; }
+    }
+  }catch(_){}
 }
