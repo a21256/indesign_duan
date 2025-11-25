@@ -767,6 +767,24 @@ function _holderInnerBounds(holder){
                 curTextFrame = tf;
             }
         } catch(_){}
+        try{
+          if (typeof flushOverflow === "function" && tf && tf.isValid){
+            var st2 = flushOverflow(story, page, tf);
+            if (st2 && st2.frame && st2.page) { page = st2.page; tf = st2.frame; story = tf.parentStory; curTextFrame = tf; }
+            if (st2 && st2.overset){
+              var pageHint = "NA";
+              try{
+                var _ipHint = story && story.isValid ? story.insertionPoints[-1] : null;
+                var _hHint = (_ipHint && _ipHint.isValid && _ipHint.parentTextFrames && _ipHint.parentTextFrames.length) ? _ipHint.parentTextFrames[0] : null;
+                var _pgHint = (_hHint && _hHint.isValid) ? _hHint.parentPage : null;
+                if (_pgHint && _pgHint.isValid && _pgHint.name) pageHint = _pgHint.name;
+              }catch(_ph){}
+              __logSkipParagraph(paraSeq, styleName, "overset/no-progress page="+pageHint, text);
+              __recoverAfterParagraph(story, insertionStart);
+              return;
+            }
+          }
+        }catch(_skipFlush){}
         }catch(eAddPara){
             __logSkipParagraph(paraSeq, styleName, String(eAddPara||"error"), text);
             __recoverAfterParagraph(story, insertionStart);
