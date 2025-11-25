@@ -842,8 +842,8 @@ function _holderInnerBounds(holder){
   return doc;
 }
 
-var doc = __openAndPrepareTemplate();
-if (!doc || !doc.isValid) return;
+    var doc = __openAndPrepareTemplate();
+    if (!doc || !doc.isValid) { __restoreEnvironment(__ENV_STATE); return; }
 
 
 
