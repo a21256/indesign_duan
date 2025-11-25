@@ -249,7 +249,7 @@
           var suffix = "";
           var dt = detailText(detail);
           if (dt) suffix = " " + dt;
-          try{ info("[PROGRESS][" + kind + "] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix); }catch(_){}
+          try{ log("[PROGRESS][" + kind + "] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix); }catch(_){}
         }
       }
       function finalize(detail){
@@ -260,7 +260,7 @@
         var doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
         var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
         try{
-          info("[PROGRESS][COMPLETE] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
+          log("[PROGRESS][COMPLETE] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
         }catch(_){}
       }
       function resetSeq(){ __PARA_SEQ = 0; }
@@ -284,7 +284,7 @@
           preview = String(textSample).replace(/\s+/g, " ");
           if (preview.length > 80) preview = preview.substring(0, 80) + "...";
         }
-        log("[SKIP][PARA " + seq + "] style=" + styleName + " reason=" + reason + (preview ? " text=\"" + preview + "\"" : ""));
+        warn("[SKIP][PARA " + seq + "] style=" + styleName + " reason=" + reason + (preview ? " text=\"" + preview + "\"" : ""));
       }catch(_){}
     }
     function __recoverAfterParagraph(storyObj, startIdx){
