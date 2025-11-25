@@ -3,6 +3,30 @@
         var rows = obj.rows|0, cols = obj.cols|0;
         if (rows<=0 || cols<=0) return;
         var __cfgStyles = (typeof CONFIG !== "undefined" && CONFIG.styles) ? CONFIG.styles : {};
+        var __tblDiag = [];
+        var __phaseName = "init";
+        function __diag(label, getter){
+          try{
+            var v = getter();
+            __tblDiag.push(label + "=" + v);
+          }catch(_){ __tblDiag.push(label + "=ERR"); }
+        }
+        function __phase(name){
+          __phaseName = name;
+          try{ __diag("phase", function(){ return name; }); }catch(__){}
+        }
+        function __logErr(phase, err){
+          try{
+            var lineInfo = "";
+            try{ lineInfo = " line=" + err.line; }catch(__){}
+            var fileInfo = "";
+            try{ fileInfo = " file=" + err.fileName; }catch(__){}
+            log(__tableErrTag + " phase=" + phase + " err=" + err + lineInfo + fileInfo + " diag=" + __tblDiag.join("|"));
+          }catch(__){}
+        }
+        __phase("start");
+        try{ __diag("rows", function(){ return rows; }); }catch(__){}
+        try{ __diag("cols", function(){ return cols; }); }catch(__){}
         var __styleCfg = {
           primary:  __cfgStyles.tableBody || %TABLE_BODY_STYLE%,
           fallback: __cfgStyles.tableBodyFallback || %TABLE_BODY_STYLE_FALLBACK%,
@@ -172,6 +196,7 @@
         var layoutSwitchApplied = __tblApplyLayout(layoutSpec);
         try{ log(__tableTag + " begin rows="+rows+" cols="+cols); }catch(__){}
         var doc = app.activeDocument;
+        __phase("layout-applied");
 
         function __tblResolveStoryRef(){
           var s = null;
@@ -204,8 +229,13 @@
           try{ log("[ERR] __tblAddTableHiFi: no valid story"); }catch(__){}
           return;
         }
+        __phase("story-ok");
         story = storyRef;
         try { story.recompose(); } catch(_){ }
+        __diag("pre.storyLen", function(){ return story.characters.length; });
+        __diag("pre.pageCount", function(){ return app.activeDocument.pages.length; });
+        __diag("pre.tf", function(){ return (typeof tf!=="undefined" && tf && tf.isValid) ? tf.id : "NA"; });
+        try{ __diag("hasData", function(){ return obj && obj.data ? ("Y"+obj.data.length) : "N"; }); }catch(__){}
 
         // ensure a clean paragraph and flush overflow before inserting table
         function __tblPrepareStory(){
@@ -460,6 +490,7 @@
           try{ log("[ERR] __tblAddTableHiFi: invalid anchor insertion point"); }catch(__){}
           return;
         }
+        __phase("anchor-ok");
 
         var __storyLenBefore = 0;
         try{ __storyLenBefore = story.characters.length; }catch(_){}
@@ -497,9 +528,11 @@
         try {
           tbl = insertIP.tables.add({ bodyRowCount: rows, columnCount: cols });
         } catch(eAdd) {
-          try{ log('[ERR] __tblAddTableHiFi: table create failed ' + eAdd); }catch(__){}
+          try{ __diag("err.create", function(){ return eAdd; }); }catch(_){}
+          __logErr("create", eAdd);
           return;
         }
+        __phase("table-added");
         try{
           var __colLenInit = 0;
           try{ __colLenInit = tbl.columns.length; }catch(__colErr){}
@@ -571,6 +604,8 @@
           }
         }
 
+        var data = (obj && obj.data) ? obj.data : [];
+        try{ __diag("dataLen", function(){ return data.length; }); }catch(__){}
         for (var r=0; r<rows; r++){
           cellPlan[r] = [];
           cellMeta[r] = [];
@@ -582,8 +617,9 @@
           }
         }
 
+        __phase("plan-init");
         for (var r=0; r<rows; r++){
-          var rowEntries = obj.data[r] || [];
+          var rowEntries = data[r] || [];
           var cPtr = 0;
           for (var e=0; e<rowEntries.length; e++){
             var rawSpec = rowEntries[e];
@@ -622,12 +658,13 @@
           }
         }
 
+        __phase("populate-cells");
         for (var r=0; r<rows; r++){
           for (var c=0; c<cols; c++){
             if (skipPos[r][c] && !cellPlan[r][c]) continue;
             var cellSpec2 = cellPlan[r][c];
             if (!cellSpec2){
-              var src = (obj.data[r] && obj.data[r][c]) ? obj.data[r][c] : {text:""};
+              var src = (data[r] && data[r][c]) ? data[r][c] : {text:""};
               if (typeof src === "string") src = {text: src};
               cellSpec2 = _cloneCellSpec(src, 1, 1);
               cellPlan[r][c] = cellSpec2;
@@ -888,7 +925,16 @@
             }catch(__applyTblStyle){}
           }
         }catch(__tableStyleErr){}
-        try{ fit(FitOptions.FRAME_TO_CONTENT); }catch(__){}
+        try{
+          var tfTbl = (tbl && tbl.isValid) ? tbl.parent : null;
+          if (tfTbl && tfTbl.isValid && typeof tfTbl.fit === "function"){
+            tfTbl.fit(FitOptions.FRAME_TO_CONTENT);
+          } else {
+            __diag("fit.parentMissing", function(){ return (tfTbl&&tfTbl.isValid)?tfTbl.id:"NA"; });
+          }
+        }catch(__fitErr){
+          try{ __diag("fit.err", function(){ return __fitErr; }); }catch(_){}
+        }
         try{
           var __gbFit = geometricBounds;
           var __hFit = (__gbFit && __gbFit.length>=3) ? (__gbFit[2]-__gbFit[0]) : "NA";
@@ -994,7 +1040,7 @@
           }
         }
       }catch(e){
-        log("[ERR] __tblAddTableHiFi " + e);
+        __logErr(__phaseName || "outer", e);
       }
       try{
         var __tblDetail = (__tableCtx && __tableCtx.id) ? ("id=" + __tableCtx.id) : ("rows=" + rows + " cols=" + cols);
