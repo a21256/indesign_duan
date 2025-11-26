@@ -441,8 +441,8 @@ function flushOverflow(currentStory, lastPage, lastFrame, maxPagesPerCall) {
                     break;
                 }
             }
-            if (curLen !== null){
-                if (lastCharLen !== null && curLen === lastCharLen){
+            if (curLen !== null && tailFrameId !== null){
+                if (lastCharLen !== null && curLen === lastCharLen && tailFrameId === stallFrameId){
                     stallCharCount++;
                 }else{
                     stallCharCount = 0;
