@@ -1012,14 +1012,16 @@
         // keep current layout until after post-table flush; default restore happens later
         try{ __LAST_IMG_ANCHOR_IDX = -1; }catch(__resetErr){}
 
+        var __postFlush = {overset:false};
         try{
           story.recompose();
           if (typeof flushOverflow==="function" && tf && tf.isValid){
-            var st = flushOverflow(story, page, tf);
-            page = st.page; tf = st.frame; story = tf.parentStory; curTextFrame = tf;
+            __postFlush = flushOverflow(story, page, tf);
+            page = __postFlush.page; tf = __postFlush.frame; story = tf.parentStory; curTextFrame = tf;
           }
         }catch(e){ log("[WARN] flush after table failed: " + e); }
-        if (layoutSwitchApplied){
+        var __tableStillOverset = (__postFlush && __postFlush.overset);
+        if (layoutSwitchApplied && !__tableStillOverset){
           try{
             story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
             story.recompose();
