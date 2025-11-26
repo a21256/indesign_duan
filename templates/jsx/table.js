@@ -198,6 +198,36 @@
         var doc = app.activeDocument;
         __phase("layout-applied");
 
+        // 如果切换到横版后前一页是空白，移除遗留空页，避免标题与表格之间出现空白
+        try{
+          if (layoutSwitchApplied && page && page.isValid && doc && doc.pages && doc.pages.length > 1){
+            var prevPg = null;
+            try{ prevPg = page.previousPage; }catch(_pp){}
+            if (prevPg && prevPg.isValid){
+              var items = 0;
+              try{ items = prevPg.pageItems.length; }catch(_pi){}
+              var hasText = false;
+              try{
+                if (prevPg.textFrames && prevPg.textFrames.length){
+                  for (var tfi=0; tfi<prevPg.textFrames.length; tfi++){
+                    var tft = prevPg.textFrames[tfi];
+                    if (tft && tft.isValid){
+                      var txt = "";
+                      try{ txt = String(tft.contents||""); }catch(_tc){}
+                      if (txt.replace(/[\s\u0000-\u001f\u2028\u2029\uFFFC\uF8FF]+/g,"") !== ""){
+                        hasText = true; break;
+                      }
+                    }
+                  }
+                }
+              }catch(_chk){}
+              if (!hasText && items === 0){
+                try{ prevPg.remove(); }catch(_rm){}
+              }
+            }
+          }
+        }catch(_cleanPrev){}
+
         function __tblResolveStoryRef(){
           var s = null;
           try{ if (story && story.isValid) s = story; }catch(_){ }
@@ -1021,13 +1051,62 @@
           }
         }catch(e){ log("[WARN] flush after table failed: " + e); }
         var __tableStillOverset = (__postFlush && __postFlush.overset);
+        try{
+          var __dbgTf = (tf && tf.isValid) ? tf.id : "NA";
+          var __dbgPg = (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid) ? tf.parentPage.name : "NA";
+          var __dbgOri = (__CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation) ? __CURRENT_LAYOUT.pageOrientation : "NA";
+          log(__tableTag + " post-table overset=" + __tableStillOverset + " layoutSwitch=" + layoutSwitchApplied + " tf=" + __dbgTf + " page=" + __dbgPg + " curLayoutOri=" + __dbgOri);
+        }catch(__dbgPost){}
         if (layoutSwitchApplied && !__tableStillOverset){
           try{
             story.insertionPoints[-1].contents = SpecialCharacters.PAGE_BREAK;
             story.recompose();
           }catch(__restoreBreak){ try{ log("[WARN] page break before restore failed: " + __restoreBreak); }catch(_){ } }
           try{
-            __ensureLayoutDefault();
+            var restoreTarget = __DEFAULT_LAYOUT ? __cloneLayoutState(__DEFAULT_LAYOUT) : null;
+            var newPage = null;
+            try{
+              if (doc && doc.pages){
+                var basePg = (page && page.isValid) ? page : null;
+                newPage = basePg ? doc.pages.add(LocationOptions.AFTER, basePg) : doc.pages.add();
+              }
+            }catch(__addPgErr){ try{ log("[WARN] restore add page failed: " + __addPgErr); }catch(_){ } }
+            var newFrame = null;
+            try{
+              if (newPage && newPage.isValid){
+                try{ newPage.appliedMaster = NothingEnum.NOTHING; }catch(_m){}
+                try{
+                  if (restoreTarget){
+                    var w = parseFloat(restoreTarget.pageWidthPt), h = parseFloat(restoreTarget.pageHeightPt);
+                    if (isFinite(w) && isFinite(h) && w>0 && h>0){
+                      newPage.resize(
+                        CoordinateSpaces.PASTEBOARD_COORDINATES,
+                        AnchorPoint.TOP_LEFT_ANCHOR,
+                        ResizeMethods.REPLACING_CURRENT_DIMENSIONS_WITH,
+                        [w, h]
+                      );
+                      var mp = newPage.marginPreferences;
+                      var margins = restoreTarget.pageMarginsPt || {};
+                      if (mp){
+                        if (isFinite(margins.top)) mp.top = margins.top;
+                        if (isFinite(margins.bottom)) mp.bottom = margins.bottom;
+                        if (isFinite(margins.left)) mp.left = margins.left;
+                        if (isFinite(margins.right)) mp.right = margins.right;
+                      }
+                    }
+                  }
+                }catch(__resizeRestore){ try{ log("[WARN] restore page resize failed: " + __resizeRestore); }catch(_){ } }
+                newFrame = createTextFrameOnPage(newPage, restoreTarget);
+              }
+            }catch(__newFrameErr){ try{ log("[WARN] restore create frame failed: " + __newFrameErr); }catch(_){ } }
+            if (newFrame && newFrame.isValid){
+              try{ tf.nextTextFrame = newFrame; }catch(_linkErr){}
+              tf = newFrame;
+              page = newPage || page;
+              story = tf.parentStory;
+              curTextFrame = tf;
+              try{ __CURRENT_LAYOUT = restoreTarget ? __cloneLayoutState(restoreTarget) : __CURRENT_LAYOUT; }catch(_cln){}
+            }
             if (typeof flushOverflow==="function" && tf && tf.isValid){
               var __restoreFlush = flushOverflow(story, page, tf);
               if (__restoreFlush && __restoreFlush.frame && __restoreFlush.page){
