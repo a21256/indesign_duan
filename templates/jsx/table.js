@@ -1023,9 +1023,9 @@
         var __tableStillOverset = (__postFlush && __postFlush.overset);
         if (layoutSwitchApplied && !__tableStillOverset){
           try{
-            story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
+            story.insertionPoints[-1].contents = SpecialCharacters.PAGE_BREAK;
             story.recompose();
-          }catch(__restoreBreak){ try{ log("[WARN] frame break before restore failed: " + __restoreBreak); }catch(_){ } }
+          }catch(__restoreBreak){ try{ log("[WARN] page break before restore failed: " + __restoreBreak); }catch(_){ } }
           try{
             __ensureLayoutDefault();
             if (typeof flushOverflow==="function" && tf && tf.isValid){
