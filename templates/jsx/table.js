@@ -161,32 +161,82 @@
               }
               return appliedSwitch;
             }
-            var prevOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
-            var needSwitch = spec.pageOrientation && prevOrientation && spec.pageOrientation !== prevOrientation;
+            var curOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
+            var defaultOrientation = (__DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation) ? __DEFAULT_LAYOUT.pageOrientation : null;
+            var targetOrientation = spec.pageOrientation || null;
+            var needSwitch = false;
+            try{
+              var currentOri = curOrientation || defaultOrientation;
+              needSwitch = !!(targetOrientation && targetOrientation !== currentOri);
+            }catch(__){}
+            try{
+              log(__tableTag + " layout pre cur=" + (curOrientation||"NA") + " default=" + (defaultOrientation||"NA") + " target=" + (targetOrientation||"NA") + " needSwitch=" + needSwitch + " page=" + (page&&page.isValid?page.name:"NA"));
+            }catch(__preLog){}
+            // 若当前尚未记录布局，但目标朝向与默认不一致，也视为需要切换（避免直接把现页改成横版）
+            // ??????????????????????????????????????????
             if (needSwitch){
+              // ?????????????????????????????
               try{
-                story.insertionPoints[-1].contents = SpecialCharacters.FRAME_BREAK;
+                var spreadPages = null; try{ spreadPages = (page && page.parent && page.parent.pages) ? page.parent.pages : null; }catch(_sp){}
+                var spreadLenDbg = (spreadPages && spreadPages.length) ? spreadPages.length : "NA";
+                try{ log(__tableTag + " layout pre-switch spreadLen=" + spreadLenDbg + " page=" + (page&&page.isValid?page.name:"NA")); }catch(__){}
+                try{ log(__tableTag + " layout pre-break to avoid mixed spread page=" + (page&&page.isValid?page.name:"NA")); }catch(__){}
+                story.insertionPoints[-1].contents = SpecialCharacters.PAGE_BREAK;
                 story.recompose();
-              }catch(__preBreakErr){
-                try{ log(__tableWarnTag + " frame break before layout failed: " + __preBreakErr); }catch(_){}
-              }
-              try{
-                if (typeof flushOverflow === "function" && tf && tf.isValid){
-                  var __preFlush = flushOverflow(story, page, tf);
-                  if (__preFlush && __preFlush.frame && __preFlush.page){
-                    page = __preFlush.page;
-                    tf = __preFlush.frame;
+                try{
+                  var ipAlign = story.insertionPoints[-1];
+                  var tfAlign = (ipAlign && ipAlign.isValid && ipAlign.parentTextFrames && ipAlign.parentTextFrames.length) ? ipAlign.parentTextFrames[0] : null;
+                  if (tfAlign && tfAlign.isValid && tfAlign.parentPage && tfAlign.parentPage.isValid){
+                    page = tfAlign.parentPage;
+                    tf = tfAlign;
+                    curTextFrame = tfAlign;
+                    story = tfAlign.parentStory;
+                    __ensureLayoutDefault();
+                    curOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : curOrientation;
+                  }
+                }catch(_align){}
+              }catch(_preSwitch){}
+              // ?????????????
+            try{
+              story.insertionPoints[-1].contents = SpecialCharacters.PAGE_BREAK;
+              story.recompose();
+            }catch(__preBreakErr){ try{ log(__tableWarnTag + " page break before layout failed: " + __preBreakErr); }catch(_){ } }
+            try{
+              var ipAfter = null; try{ ipAfter = story.insertionPoints[-1]; }catch(_){ }
+              var tfAfter = null; try{ if (ipAfter && ipAfter.isValid) tfAfter = ipAfter.parentTextFrames[0]; }catch(_){ }
+              if (tfAfter && tfAfter.isValid && tfAfter.parentPage && tfAfter.parentPage.isValid){
+                  // 创建新的跨页以承载目标方向的表格，避免与上一页混排
+                  var pktSwitch = null;
+                  try{
+                    pktSwitch = __createLayoutFrame(spec, tfAfter, {afterPage: tfAfter.parentPage, forceNewSpread:true});
+                  }catch(_pktErr){}
+                  if (pktSwitch && pktSwitch.frame && pktSwitch.frame.isValid){
+                    try{ tfAfter.nextTextFrame = pktSwitch.frame; }catch(_lnk){}
+                    tf = pktSwitch.frame;
+                    page = pktSwitch.page;
                     story = tf.parentStory;
                     curTextFrame = tf;
+                    try{ __applyFrameLayout(tf, spec); }catch(_apSwitch){}
+                    try{ __CURRENT_LAYOUT = __cloneLayoutState(spec); }catch(_updSwitch){}
+                    appliedSwitch = true;
+                    try{
+                      var spreadAfter = null; try{ spreadAfter = (page && page.parent && page.parent.pages) ? page.parent.pages : null; }catch(_sa){}
+                      var spreadAfterLen = (spreadAfter && spreadAfter.length) ? spreadAfter.length : "NA";
+                      log(__tableTag + " layout switch -> " + (spec.pageOrientation||"") + " page=" + (page&&page.isValid?page.name:"NA") + " spreadLen=" + spreadAfterLen);
+                    }catch(_logSwitch){
+                      try{ log(__tableTag + " layout switch -> " + (spec.pageOrientation||"") + " page=" + (page&&page.isValid?page.name:"NA")); }catch(__){}
+                    }
+                    return appliedSwitch;
                   }
-                }
-              }catch(__flushErr){ try{ log(__tableWarnTag + " flush before layout failed: " + __flushErr); }catch(_){ } }
-            }
+              }
+            }catch(__switchErr){ try{ log(__tableWarnTag + " switch layout apply failed: " + __switchErr); }catch(_){ } }
+          }
             __ensureLayout(spec);
-            var newOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : prevOrientation;
-            if (spec.pageOrientation && newOrientation !== prevOrientation){
+            var newOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : curOrientation;
+            if (spec.pageOrientation && newOrientation !== curOrientation){
               appliedSwitch = true;
             }
+            try{ log(__tableTag + " layout ensured cur=" + (newOrientation||"NA") + " target=" + (spec.pageOrientation||"NA")); }catch(__postLog){}
             log(__tableTag + " layout request orient=" + (spec.pageOrientation||""));
           }catch(__layoutErr){
             try{ log(__tableWarnTag + " ensure layout failed: " + __layoutErr); }catch(__layoutLog){}
@@ -434,6 +484,11 @@
                 if (available < 0) available = 0;
 
                 var approxNeed = _roughTableHeight(rowsCount, objSpec);
+
+                if (layoutSwitchApplied){
+                    // 刚切换版向的第一个文本框，避免预先插入 FRAME_BREAK 而留下一个空页
+                    available = approxNeed;
+                }
 
                 if (approxNeed > available && available >= 0){
                     try{ log(__tableTag + " pre-break forcing approx=" + approxNeed + " avail=" + available + " rows=" + rowsCount); }catch(__log0){}
@@ -1064,49 +1119,33 @@
           }catch(__restoreBreak){ try{ log("[WARN] page break before restore failed: " + __restoreBreak); }catch(_){ } }
           try{
             var restoreTarget = __DEFAULT_LAYOUT ? __cloneLayoutState(__DEFAULT_LAYOUT) : null;
-            var newPage = null;
             try{
-              if (doc && doc.pages){
-                var basePg = (page && page.isValid) ? page : null;
-                newPage = basePg ? doc.pages.add(LocationOptions.AFTER, basePg) : doc.pages.add();
+              var __curOri = (__CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation) ? __CURRENT_LAYOUT.pageOrientation : "";
+              var __pgName = (page && page.isValid && page.name) ? page.name : "NA";
+              var __spreadLenDbg = (page && page.isValid && page.parent && page.parent.pages) ? page.parent.pages.length : "NA";
+              var __tfIdDbg = (tf && tf.isValid && tf.id!=null) ? tf.id : "NA";
+              log(__tableTag + " restore-layout pre curOri=" + __curOri + " target=portrait spreadLen=" + __spreadLenDbg + " page=" + __pgName + " tf=" + __tfIdDbg);
+              }catch(__logRestore){}
+              if (restoreTarget && typeof __createLayoutFrame === "function"){
+                var pktRestore = __createLayoutFrame(restoreTarget, null, {afterPage: page, forceNewSpread:true});
+                if (pktRestore && pktRestore.frame && pktRestore.frame.isValid){
+                  try{ if (tf && tf.isValid) tf.nextTextFrame = pktRestore.frame; }catch(_lnkRestore){}
+                  page = pktRestore.page;
+                  tf = pktRestore.frame;
+                  story = tf.parentStory;
+                  curTextFrame = tf;
+                  try{ __applyFrameLayout(tf, restoreTarget); }catch(_apRestore){}
+                  try{ __CURRENT_LAYOUT = restoreTarget; }catch(_cln){ }
+                  try{
+                    var __spAfter = null; try{ __spAfter = (page && page.parent && page.parent.pages) ? page.parent.pages : null; }catch(_spa){}
+                    var __spAfterLen = (__spAfter && __spAfter.length) ? __spAfter.length : "NA";
+                    log(__tableTag + " restore-layout applied page=" + (page&&page.isValid?page.name:"NA") + " spreadLen=" + __spAfterLen + " tf=" + (tf&&tf.isValid?tf.id:"NA"));
+                  }catch(_logRestoreApplied){}
+                }
+              }else{
+                __ensureLayoutDefault();
               }
-            }catch(__addPgErr){ try{ log("[WARN] restore add page failed: " + __addPgErr); }catch(_){ } }
-            var newFrame = null;
-            try{
-              if (newPage && newPage.isValid){
-                try{ newPage.appliedMaster = NothingEnum.NOTHING; }catch(_m){}
-                try{
-                  if (restoreTarget){
-                    var w = parseFloat(restoreTarget.pageWidthPt), h = parseFloat(restoreTarget.pageHeightPt);
-                    if (isFinite(w) && isFinite(h) && w>0 && h>0){
-                      newPage.resize(
-                        CoordinateSpaces.PASTEBOARD_COORDINATES,
-                        AnchorPoint.TOP_LEFT_ANCHOR,
-                        ResizeMethods.REPLACING_CURRENT_DIMENSIONS_WITH,
-                        [w, h]
-                      );
-                      var mp = newPage.marginPreferences;
-                      var margins = restoreTarget.pageMarginsPt || {};
-                      if (mp){
-                        if (isFinite(margins.top)) mp.top = margins.top;
-                        if (isFinite(margins.bottom)) mp.bottom = margins.bottom;
-                        if (isFinite(margins.left)) mp.left = margins.left;
-                        if (isFinite(margins.right)) mp.right = margins.right;
-                      }
-                    }
-                  }
-                }catch(__resizeRestore){ try{ log("[WARN] restore page resize failed: " + __resizeRestore); }catch(_){ } }
-                newFrame = createTextFrameOnPage(newPage, restoreTarget);
-              }
-            }catch(__newFrameErr){ try{ log("[WARN] restore create frame failed: " + __newFrameErr); }catch(_){ } }
-            if (newFrame && newFrame.isValid){
-              try{ tf.nextTextFrame = newFrame; }catch(_linkErr){}
-              tf = newFrame;
-              page = newPage || page;
-              story = tf.parentStory;
-              curTextFrame = tf;
-              try{ __CURRENT_LAYOUT = restoreTarget ? __cloneLayoutState(restoreTarget) : __CURRENT_LAYOUT; }catch(_cln){}
-            }
+              story.recompose();
             if (typeof flushOverflow==="function" && tf && tf.isValid){
               var __restoreFlush = flushOverflow(story, page, tf);
               if (__restoreFlush && __restoreFlush.frame && __restoreFlush.page){
