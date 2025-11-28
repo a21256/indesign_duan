@@ -756,7 +756,7 @@
         }
         function _flattenRowspan(r, c, rawSpec, spanRows, spanCols){
           degradeNotice = true;
-          try{ log(__tableErrTag + " degrade rowspan rows=" + spanRows + " at r=" + r + " c=" + c); }catch(__warnLog){}
+          try{ log(__tableWarnTag + " degrade rowspan rows=" + spanRows + " at r=" + r + " c=" + c); }catch(__warnLog){}
           var maxR = Math.min(rows, r + spanRows);
           for (var rr=r; rr<maxR; rr++){
             var clone = _cloneCellSpec(rawSpec, 1, spanCols);
@@ -1174,7 +1174,7 @@
         }catch(__ipErr){}
         if (degradeNotice){
           try{
-            log(__tableErrTag + " rowspan>=" + MAX_ROWSPAN_INLINE + " flattened; manual review required");
+            log(__tableWarnTag + " rowspan>=" + MAX_ROWSPAN_INLINE + " flattened; manual review required");
           }catch(__noticeWarn){}
         }
         // keep current layout until after post-table flush; default restore happens later
