@@ -1252,10 +1252,11 @@ def write_jsx(jsx_path, paragraphs):
 
     with open(jsx_path, "w", encoding="utf-8") as f:
         f.write(jsx)
-    print("[OK] JSX 写入:", jsx_path)
+    # print("[OK] JSX 写入:", jsx_path)
     if tpl_used:
-        print("[INFO] JSX 模板来源:", tpl_used)
-    print(f"[INFO] JSX 事件日志: {LOG_PATH}")
+        pass
+        # print("[INFO] JSX 模板来源:", tpl_used)
+    # print(f"[INFO] JSX 事件日志: {LOG_PATH}")
     print("[DEBUG] JSX 是否包含 addImageAtV2：", any("__imgAddImageAtV2(" in ln for ln in add_lines))
 
 

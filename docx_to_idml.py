@@ -13,7 +13,6 @@ docx_to_idml.py（跨平台增强版：Windows + macOS）
 from __future__ import annotations
 
 import os
-import logging
 import sys
 import json
 import argparse
@@ -219,10 +218,10 @@ def _apply_overrides(cli_template: str | None, cli_out: str | None) -> None:
 
 def main(argv=None):
     start_ts = time.time()
-    parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex/hybrid) with style switches + Password Protection + Cross-platform paths")
+    parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex) with style switches + Password Protection + Cross-platform paths")
     parser.add_argument(
         "--mode",
-        choices=["heading", "regex", "hybrid"],
+        choices=["heading", "regex"],
         metavar="{heading,regex}",
         default="heading",
         help="Detection mode（heading 或 regex）",
@@ -239,8 +238,6 @@ def main(argv=None):
     parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    if not args.debug_log:
-        logging.disable(logging.INFO)
 
     input_path = None
     if not args.set_password:
@@ -371,7 +368,7 @@ def main(argv=None):
     )
     _log_user(summary_line)
     if ran:
-        _log_user("InDesign 已执行 JSX；若设置 AUTO_EXPORT_IDML=True，将在脚本目录生成 output.idml。")
+        _log_user("InDesign 已执行 JSX；若设置 AUTO_EXPORT_IDML=True，将在脚本目录生成idml文件。")
 
     converted_tables = 0
     for _, text in paragraphs:
@@ -390,7 +387,6 @@ def main(argv=None):
 
     total_elapsed = time.time() - start_ts
     elapsed_msg = f"[TIME] total={total_elapsed:.2f}s"
-    print(elapsed_msg)
     _log_user(elapsed_msg)
 
     summary_report = (
@@ -402,7 +398,6 @@ def main(argv=None):
         f"convertedImages={converted_images} "
         f"elapsed={total_elapsed:.2f}s"
     )
-    print(summary_report)
     _log_user(summary_report)
     # 清理中间产物：未开启 debug-log 时移除 XML 和 JSX，避免暴露技术文件
     if not args.debug_log:
