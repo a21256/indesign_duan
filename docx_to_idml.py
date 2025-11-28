@@ -262,6 +262,15 @@ def main(argv=None):
             sys.exit(2)
 
     _apply_overrides(args.template, args.out)
+    # 未指定 --out 时，IDML 输出名使用输入 DOCX 同名，放在 JSX 所在目录
+    if not args.out:
+        try:
+            base_name = os.path.splitext(os.path.basename(input_path))[0]
+            out_dir = os.path.abspath(os.path.dirname(JSX_PATH))
+            X.IDML_OUT_PATH = os.path.join(out_dir, base_name + ".idml")
+            _debug_log(f"[IDML] set output path: {X.IDML_OUT_PATH}")
+        except Exception as e:
+            _log_warn(f"[WARN] 设置 IDML 输出名失败，仍使用默认: {e}")
     arg_debug_line = (
         f"[ARGS] mode={args.mode} skip_images={args.no_images} skip_tables={args.no_tables} "
         f"skip_textboxes={args.no_textboxes} template={eff_template} out={getattr(X, 'IDML_OUT_PATH', None)} "
@@ -326,14 +335,23 @@ def main(argv=None):
     elif AUTO_RUN_MACOS and sys.platform == "darwin":
         ran = run_indesign_macos(JSX_PATH)
 
+    # 生成 IDML 文件名与输入 DOCX 同名
+    try:
+        base_name = os.path.splitext(os.path.basename(docx_input))[0]
+        X.IDML_OUT_PATH = os.path.join(OUT_DIR, base_name + ".idml")
+        _debug_log(f"[IDML] set output path: {X.IDML_OUT_PATH}")
+    except Exception as e:
+        _log_user(f"[WARN] 设置 IDML 输出名失败，仍使用默认: {e}")
+
     _log_user("\n=== 完成 ===")
-    _log_user(f"XML: {XML_PATH}")
-    _log_user(f"JSX: {JSX_PATH}")
+    if args.debug_log:
+        _log_user(f"XML: {XML_PATH}")
+        _log_user(f"JSX: {JSX_PATH}")
     _log_user(f"LOG: {LOG_PATH}")
 
     _log_user(f"IDML: {getattr(X, 'IDML_OUT_PATH', None)}")
     stats = X._relay_jsx_events(
-        PIPELINE_LOGGER, LOG_PATH, warn_missing=not ran, cleanup=False
+        PIPELINE_LOGGER, LOG_PATH, warn_missing=not ran, cleanup=not args.debug_log
     )
     summary_line = (
         f"[REPORT] JSX 事件统计 info={stats.get('info', 0)} "
@@ -375,6 +393,15 @@ def main(argv=None):
     )
     print(summary_report)
     _log_user(summary_report)
+    # 清理中间产物：未开启 debug-log 时移除 XML 和 JSX，避免暴露技术文件
+    if not args.debug_log:
+        for path in (XML_PATH, JSX_PATH):
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+                    _debug_log(f"[CLEANUP] removed {path}")
+            except Exception as e:
+                _log_user(f"[WARN] 清理中间文件失败: {e}")
 
 
 

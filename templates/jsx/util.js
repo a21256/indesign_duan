@@ -1,5 +1,7 @@
 ﻿var CONFIG = %JSX_CONFIG%;
 if (!CONFIG) CONFIG = {};
+// debug ??? entry.js ????? false
+var __DEBUG_WRITE = false;
 
 // JSON helpers (ExtendScript 可能没有内置 JSON 对象)
 var __HAS_JSON = (typeof JSON !== "undefined" && JSON && typeof JSON.stringify === "function");
@@ -177,11 +179,12 @@ function __sanitizeLogMessage(m){
 }
 function __initEventLog(fileObj, logWriteFlag){
   __EVENT_LINES = [];
-  var okFile = fileObj && fileObj.exists !== undefined ? fileObj : null;
+  // 保留传入的 File 对象，即使文件尚不存在，后续 __pushEvent 会按需创建
+  var okFile = fileObj || null;
   return { file: okFile, logWrite: !!logWriteFlag };
 }
 function __pushEvent(eventCtx, level, message){
-  if (level === "debug" && !(eventCtx && eventCtx.logWrite)) return;
+  if (level === "debug" && !__DEBUG_WRITE) return;
   var stamp = iso();
   __EVENT_LINES.push(level + "\t" + stamp + "\t" + __sanitizeLogMessage(message));
   var EVENT_FILE = eventCtx && eventCtx.file;

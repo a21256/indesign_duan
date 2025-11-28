@@ -52,6 +52,12 @@
       function logWrap(m){
         if (String(m||"").indexOf("[LAYOUT]") === 0){
           __logLayoutEvent(String(m));
+        } else if (String(m||"").indexOf("[WARN]") === 0){
+          __LAST_LAYOUT_LOG = null;
+          __pushEvent(ctx, "warn", m);
+        } else if (String(m||"").indexOf("[ERR]") === 0 || String(m||"").indexOf("[ERROR]") === 0){
+          __LAST_LAYOUT_LOG = null;
+          __pushEvent(ctx, "error", m);
         } else {
           __LAST_LAYOUT_LOG = null;
           __pushEvent(ctx, "debug", m);
@@ -87,6 +93,7 @@
     var __LOG_CTX = __initEntryLogging();
     var EVENT_FILE = __LOG_CTX.EVENT_FILE;
     var LOG_WRITE  = __LOG_CTX.LOG_WRITE;
+    try{ __DEBUG_WRITE = __LOG_CTX.LOG_WRITE; }catch(_){}
     var __EVENT_CTX = __LOG_CTX.ctx;
     var __logLayoutEvent = __LOG_CTX.logLayout;
     var info = __LOG_CTX.info;
@@ -369,7 +376,7 @@
           var suffix = "";
           var dt = detailText(detail);
           if (dt) suffix = " " + dt;
-          try{ log("[PROGRESS][" + kind + "] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix); }catch(_){}
+          try{ __pushEvent(__EVENT_CTX, "progress", "[PROGRESS][" + kind + "] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix); }catch(_){}
         }
       }
       function finalize(detail){
@@ -380,7 +387,7 @@
         var doneDisplay = Math.min(__PROGRESS_DONE, __PROGRESS_TOTAL);
         var pct = Math.min(100, Math.floor((doneDisplay * 100) / __PROGRESS_TOTAL));
         try{
-          log("[PROGRESS][COMPLETE] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
+          __pushEvent(__EVENT_CTX, "progress", "[PROGRESS][COMPLETE] done=" + doneDisplay + "/" + __PROGRESS_TOTAL + " pct=" + pct + suffix);
         }catch(_){}
       }
       function resetSeq(){ __PARA_SEQ = 0; }
