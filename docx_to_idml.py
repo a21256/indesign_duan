@@ -13,6 +13,7 @@ docx_to_idml.py（跨平台增强版：Windows + macOS）
 from __future__ import annotations
 
 import os
+import logging
 import sys
 import json
 import argparse
@@ -238,6 +239,8 @@ def main(argv=None):
     parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if not args.debug_log:
+        logging.disable(logging.INFO)
 
     input_path = None
     if not args.set_password:
@@ -296,9 +299,9 @@ def main(argv=None):
     X.LOG_PATH = str(PIPELINE_LOGGER.jsx_event_log_path)
     LOG_PATH = X.LOG_PATH
     X.LOG_WRITE = args.debug_log
-    PIPELINE_LOGGER.describe_paths()
-    _log_user(f"[LOG] 用户日志: {PIPELINE_LOGGER.user_log_path}")
     if args.debug_log:
+        PIPELINE_LOGGER.describe_paths()
+        _log_user(f"[LOG] 用户日志: {PIPELINE_LOGGER.user_log_path}")
         _log_user(f"[LOG] 调试日志: {PIPELINE_LOGGER.debug_log_path}")
     PIPELINE_LOGGER.user(arg_debug_line)
     _debug_log(arg_debug_line)
@@ -317,17 +320,23 @@ def main(argv=None):
     if not export_summary:
         export_summary = exporter.summary()
     image_stats = export_summary.get("image_fragments", 0) or 0
-    _log_user(f"[OK] mode={args.mode} XML saved -> {XML_PATH}")
+    if args.debug_log:
+        _log_user(f"[OK] mode={args.mode} XML saved -> {XML_PATH}")
 
     # 2)  XML -> paragraphs
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
-    _log_user(f"[INFO] 解析到 {len(paragraphs)} 段；示例前3段: {paragraphs[:3]}")
+    if args.debug_log:
+        _log_user(f"[INFO] 解析到 {len(paragraphs)} 段；示例前3段: {paragraphs[:3]}")
     if PIPELINE_LOGGER and args.debug_log:
         PIPELINE_LOGGER.debug(
             f"[DOCX2IDML] skip_flags images={args.no_images} tables={args.no_tables} textboxes={args.no_textboxes}"
         )
 
     write_jsx(JSX_PATH, paragraphs)
+    if args.debug_log:
+        _log_user(f"[OK] JSX 写入: {JSX_PATH}")
+        _log_user(f"[INFO] JSX 模板来源: {X.TEMPLATE_PATH}")
+        _log_user(f"[INFO] JSX 事件日志: {LOG_PATH}")
 
     ran = False
     if AUTO_RUN_WINDOWS and sys.platform.startswith("win"):
@@ -337,17 +346,19 @@ def main(argv=None):
 
     # 生成 IDML 文件名与输入 DOCX 同名
     try:
-        base_name = os.path.splitext(os.path.basename(docx_input))[0]
-        X.IDML_OUT_PATH = os.path.join(OUT_DIR, base_name + ".idml")
+        base_name = os.path.splitext(os.path.basename(input_path))[0]
+        out_dir = os.path.abspath(os.path.dirname(JSX_PATH))
+        X.IDML_OUT_PATH = os.path.join(out_dir, base_name + ".idml")
         _debug_log(f"[IDML] set output path: {X.IDML_OUT_PATH}")
     except Exception as e:
-        _log_user(f"[WARN] 设置 IDML 输出名失败，仍使用默认: {e}")
+        if args.debug_log:
+            _log_user(f"[WARN] 设置 IDML 输出名失败，仍使用默认: {e}")
 
     _log_user("\n=== 完成 ===")
     if args.debug_log:
         _log_user(f"XML: {XML_PATH}")
         _log_user(f"JSX: {JSX_PATH}")
-    _log_user(f"LOG: {LOG_PATH}")
+        _log_user(f"LOG: {LOG_PATH}")
 
     _log_user(f"IDML: {getattr(X, 'IDML_OUT_PATH', None)}")
     stats = X._relay_jsx_events(
