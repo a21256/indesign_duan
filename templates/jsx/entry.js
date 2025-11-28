@@ -189,6 +189,120 @@
     }
 
     log("[BOOT] JSX loaded");
+    try{ log("[BOOT] entry.js restore-hook version=force-call"); }catch(_){}
+    function __tableRestoreLayout(){
+        try{
+            var mainLayout = __DEFAULT_LAYOUT || __CURRENT_LAYOUT;
+            if (!mainLayout){
+                try{ log("[TABLE][restore] skip: no mainLayout"); }catch(_){}
+                return;
+            }
+            var lastLayout = __CURRENT_LAYOUT;
+            if (mainLayout.pageOrientation === "portrait"
+                && lastLayout && lastLayout.pageOrientation === "portrait"){
+                try{ log("[TABLE][restore] skip: same portrait layout; no restore needed"); }catch(_){}
+                return;
+            }
+            try{ log("[TABLE][restore] enter mainLayout orient=" + (mainLayout.pageOrientation||"") + " w=" + mainLayout.pageWidthPt + " h=" + mainLayout.pageHeightPt + " page=" + (page && page.name)); }catch(_){}
+            try{
+                var _docLen = (doc && doc.pages) ? doc.pages.length : "NA";
+                var _docOff = (page && page.isValid && typeof page.documentOffset !== "undefined") ? page.documentOffset : "NA";
+                log("[TABLE][restore] before create: docLen=" + _docLen + " page=" + (page&&page.name) + " docOff=" + _docOff + " tf=" + (tf&&tf.isValid?tf.id:"NA"));
+            }catch(_){}
+            try{ __pageBreak(); }catch(_){}
+            var newFrame = null;
+            var padPage = null;
+            // 如果上一段布局是横版，则无条件先补一页横版空白，以保证跨页对齐
+            try{
+                var lastLayout = __CURRENT_LAYOUT;
+                var needPadLandscape = (lastLayout && lastLayout.pageOrientation === "landscape");
+                if (needPadLandscape){
+                    try{ log("[TABLE][restore] add landscape pad to align spread; docOff=" + (page&&page.documentOffset)); }catch(_){}
+                    try{ doc.allowPageShuffle = true; }catch(_){}
+                    try{ padPage = doc.pages.add(LocationOptions.AFTER, page); }catch(_addPad){ try{ log("[TABLE][restore] pad page add failed: " + _addPad); }catch(__){} }
+                    if (padPage && padPage.isValid){
+                        try{
+                            var wL = lastLayout.pageWidthPt, hL = lastLayout.pageHeightPt;
+                            if (isFinite(wL) && isFinite(hL) && wL > 0 && hL > 0){
+                                padPage.resize(CoordinateSpaces.PASTEBOARD_COORDINATES, AnchorPoint.TOP_LEFT_ANCHOR, ResizeMethods.REPLACING_CURRENT_DIMENSIONS_WITH, [wL, hL]);
+                            }
+                            var mpL = padPage.marginPreferences, marginsL = lastLayout.pageMarginsPt || {};
+                            if (mpL){
+                                if (isFinite(marginsL.top)) mpL.top = marginsL.top;
+                                if (isFinite(marginsL.bottom)) mpL.bottom = marginsL.bottom;
+                                if (isFinite(marginsL.left)) mpL.left = marginsL.left;
+                                if (isFinite(marginsL.right)) mpL.right = marginsL.right;
+                            }
+                        }catch(_padApply){ try{ log("[TABLE][restore] pad apply layout failed: " + _padApply); }catch(__){} }
+                    }
+                }
+            }catch(_padAll){ try{ log("[TABLE][restore] pad landscape failed: " + _padAll); }catch(__){} }
+
+            // 创建竖版新跨页，并保证两页都为竖版，正文从新跨页第一页开始
+            var portraitSpread = null;
+            var baseSpread = (padPage && padPage.isValid) ? padPage.parent : (page && page.isValid ? page.parent : null);
+            try{
+                try{ doc.allowPageShuffle = true; }catch(_){}
+                if (baseSpread && baseSpread.isValid){
+                    portraitSpread = doc.spreads.add(LocationOptions.AFTER, baseSpread);
+                } else {
+                    portraitSpread = doc.spreads.add(LocationOptions.AT_END);
+                }
+            }catch(_addSp){ try{ log("[TABLE][restore] add portrait spread failed: " + _addSp); }catch(__){} }
+            if (portraitSpread && portraitSpread.isValid){
+                try{ portraitSpread.allowPageShuffle = true; }catch(_){}
+                // 确保有两页
+                try{
+                    while(portraitSpread.pages.length > 1){ portraitSpread.pages[-1].remove(); }
+                    if (portraitSpread.pages.length < 1){ portraitSpread.pages.add(); }
+                }catch(_trim){}
+                // 设定两页为竖版尺寸/边距
+                try{
+                    var wP = mainLayout.pageWidthPt, hP = mainLayout.pageHeightPt;
+                    var marginsP = mainLayout.pageMarginsPt || {};
+                    for (var pi=0; pi<portraitSpread.pages.length; pi++){
+                        var pg = portraitSpread.pages[pi];
+                        if (!pg || !pg.isValid) continue;
+                        try{
+                            if (isFinite(wP) && isFinite(hP) && wP>0 && hP>0){
+                                pg.resize(CoordinateSpaces.PASTEBOARD_COORDINATES, AnchorPoint.TOP_LEFT_ANCHOR, ResizeMethods.REPLACING_CURRENT_DIMENSIONS_WITH, [wP, hP]);
+                            }
+                            var mp = pg.marginPreferences;
+                            if (mp){
+                                if (isFinite(marginsP.top)) mp.top = marginsP.top;
+                                if (isFinite(marginsP.bottom)) mp.bottom = marginsP.bottom;
+                                if (isFinite(marginsP.left)) mp.left = marginsP.left;
+                                if (isFinite(marginsP.right)) mp.right = marginsP.right;
+                            }
+                        }catch(_pgApply){}
+                    }
+                }catch(_applyAll){ try{ log("[TABLE][restore] apply portrait layout failed: " + _applyAll); }catch(__){} }
+                var targetPage = portraitSpread.pages.length ? portraitSpread.pages[0] : null;
+                if (targetPage && targetPage.isValid){
+                    try{
+                        newFrame = createTextFrameOnPage(targetPage, mainLayout);
+                    }catch(_cf2){ try{ log("[TABLE][restore] create frame failed: " + _cf2); }catch(__){} }
+                    page = targetPage;
+                }
+            }
+            if (newFrame && newFrame.isValid){
+                try{ if (tf && tf.isValid) tf.nextTextFrame = newFrame; }catch(_){}
+                tf = newFrame;
+                story = tf.parentStory;
+                curTextFrame = tf;
+                try{ __CURRENT_LAYOUT = __cloneLayoutState(mainLayout); }catch(_){}
+                try{
+                    var _docLen2 = (doc && doc.pages) ? doc.pages.length : "NA";
+                    var _docOff2 = (page && page.isValid && typeof page.documentOffset !== "undefined") ? page.documentOffset : "NA";
+                    log("[LAYOUT] table restore new frame=" + tf.id + " page=" + (page && page.name) + " docOff=" + _docOff2 + " docLen=" + _docLen2);
+                }catch(_){}
+            } else {
+                try{ log("[TABLE][restore] failed to create frame"); }catch(_){}
+            }
+        }catch(e){
+            try{ log("[WARN] table restore layout failed: " + e); }catch(_){}
+        }
+    }
     log("[LOG] start");
 
     var __DEFAULT_LAYOUT = null;
@@ -800,14 +914,26 @@ function _holderInnerBounds(holder){
                 last = re.lastIndex;
                 continue;
             } else if (m[7]) {
+                try{ log("[TABLE][restore] branch entered raw=" + String(m[7]).substring(0,120)); }catch(_){}
                 try {
                     var obj = __jsonParseSafe(m[7]);
+                    try{ log("[TABLE][restore] parse json start"); }catch(_){}
                     __tblAddTableHiFi(obj);
+                    try{ log("[TABLE][restore] FORCE call after JSON table"); }catch(_){}
                 } catch(e){
-                    try { var obj2 = eval("("+m[7]+")"); __tblAddTableHiFi(obj2); } catch(__){}
+                    try {
+                        try{ log("[TABLE][restore] json failed, eval start: " + e); }catch(_){}
+                        var obj2 = eval("("+m[7]+")");
+                        __tblAddTableHiFi(obj2);
+                        try{ log("[TABLE][restore] FORCE call after eval table"); }catch(_){}
+                    } catch(__evalErr){
+                        try{ log("[TABLE][restore] parse table failed: " + __evalErr); }catch(_){}
+                    }
                 }
-            } else {
-                var closing = !!m[4];
+                try{ __tableRestoreLayout(); }catch(__callRestore){ try{ log("[TABLE][restore] call error: " + __callRestore); }catch(_){}} 
+                try{ __ensureLayoutDefault(); }catch(__callEns){ try{ log("[TABLE][restore] ensure default error: " + __callEns); }catch(_){}} 
+        } else {
+            var closing = !!m[4];
                 var tag = (m[5] || "").toUpperCase();
                 if (tag === "I") st.i += closing ? -1 : 1;
                 else if (tag === "B") st.b += closing ? -1 : 1;
