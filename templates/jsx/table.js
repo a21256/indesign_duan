@@ -1197,53 +1197,38 @@
         }catch(__dbgPost){}
         if (layoutSwitchApplied && !__tableStillOverset){
           try{
+            // extra diag: last container/page after table
+            var __lastTfDbg = "NA", __lastPgDbg = "NA", __lastOffDbg = "NA", __lastSideDbg = "NA";
+            try{
+              var tcsDbg = story.textContainers;
+              if (tcsDbg && tcsDbg.length){
+                for (var ltd=tcsDbg.length-1; ltd>=0; ltd--){
+                  var tcObj = tcsDbg[ltd];
+                  if (tcObj && tcObj.isValid){
+                    __lastTfDbg = tcObj.id;
+                    try{
+                      var pgObj = tcObj.parentPage;
+                      if (pgObj && pgObj.isValid){
+                        __lastPgDbg = pgObj.name;
+                        try{ __lastOffDbg = pgObj.documentOffset; }catch(_off){}
+                        try{ __lastSideDbg = pgObj.side; }catch(_sd){}
+                      }
+                    }catch(_pgDbg){}
+                    break;
+                  }
+                }
+              }
+            }catch(_tcDbg){}
+            log(__tableTag + " post-table containers diag lastTf=" + __lastTfDbg + " lastPage=" + __lastPgDbg + " docOff=" + __lastOffDbg + " side=" + __lastSideDbg);
+          }catch(_diagLast){}
+          try{
             story.insertionPoints[-1].contents = SpecialCharacters.PAGE_BREAK;
             story.recompose();
           }catch(__restoreBreak){ try{ log("[WARN] page break before restore failed: " + __restoreBreak); }catch(_){ } }
           try{
             __maybePadSpreadCurrent(__CURRENT_LAYOUT || __DEFAULT_LAYOUT, "pad-before-restore");
           }catch(_padRestore){}
-          try{
-            var restoreTarget = __DEFAULT_LAYOUT ? __cloneLayoutState(__DEFAULT_LAYOUT) : null;
-            try{
-              var __curOri = (__CURRENT_LAYOUT && __CURRENT_LAYOUT.pageOrientation) ? __CURRENT_LAYOUT.pageOrientation : "";
-              var __pgName = (page && page.isValid && page.name) ? page.name : "NA";
-              var __spreadLenDbg = (page && page.isValid && page.parent && page.parent.pages) ? page.parent.pages.length : "NA";
-              var __tfIdDbg = (tf && tf.isValid && tf.id!=null) ? tf.id : "NA";
-              log(__tableTag + " restore-layout pre curOri=" + __curOri + " target=portrait spreadLen=" + __spreadLenDbg + " page=" + __pgName + " tf=" + __tfIdDbg);
-              }catch(__logRestore){}
-              if (restoreTarget && typeof __createLayoutFrame === "function"){
-                var pktRestore = __createLayoutFrame(restoreTarget, null, {afterPage: page, forceNewSpread:true});
-                if (pktRestore && pktRestore.frame && pktRestore.frame.isValid){
-                  try{ if (tf && tf.isValid) tf.nextTextFrame = pktRestore.frame; }catch(_lnkRestore){}
-                  page = pktRestore.page;
-                  tf = pktRestore.frame;
-                  story = tf.parentStory;
-                  curTextFrame = tf;
-                  try{ __applyFrameLayout(tf, restoreTarget); }catch(_apRestore){}
-                  try{ __CURRENT_LAYOUT = restoreTarget; }catch(_cln){ }
-                  try{
-                    var __spAfter = null; try{ __spAfter = (page && page.parent && page.parent.pages) ? page.parent.pages : null; }catch(_spa){}
-                    var __spAfterLen = (__spAfter && __spAfter.length) ? __spAfter.length : "NA";
-                    log(__tableTag + " restore-layout applied page=" + (page&&page.isValid?page.name:"NA") + " spreadLen=" + __spAfterLen + " tf=" + (tf&&tf.isValid?tf.id:"NA"));
-                  }catch(_logRestoreApplied){}
-                }
-              }else{
-                __ensureLayoutDefault();
-              }
-              story.recompose();
-            if (typeof flushOverflow==="function" && tf && tf.isValid){
-              var __restoreFlush = flushOverflow(story, page, tf);
-              if (__restoreFlush && __restoreFlush.frame && __restoreFlush.page){
-                page = __restoreFlush.page;
-                tf = __restoreFlush.frame;
-                story = tf.parentStory;
-                curTextFrame = tf;
-              }
-            }
-          }catch(__restoreErr){
-            try{ log("[WARN] restore default layout failed: " + __restoreErr); }catch(_){ }
-          }
+          // 不在表格函数内恢复版式，交由调用方处理
         }
       }catch(e){
         __logErr(__phaseName || "outer", e);
