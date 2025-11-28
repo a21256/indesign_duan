@@ -987,7 +987,7 @@ def _handle_table_marker(text, add_lines, ctx=None):
             "preview": ctx.get("preview"),
         }
     # rows/cols/data kept here for debugging
-    add_lines.append('__tblAddTableHiFi(%s);\ntry{__tableRestoreLayout(); __ensureLayoutDefault();}catch(__tblRest){}' % (json.dumps(obj, ensure_ascii=False)))
+    add_lines.append('__tblAddTableHiFi(%s);\ntry{if(__DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation=="landscape"){log("[TABLE][restore] skip: default landscape (py-gen)");}else{__tableRestoreLayout(); __ensureLayoutDefault();}}catch(__tblRest){}' % (json.dumps(obj, ensure_ascii=False)))
     return True
 
 
@@ -1049,7 +1049,7 @@ def _handle_html_table(text, add_lines, ctx=None):
             "style": ctx.get("style"),
             "preview": ctx.get("preview"),
         }
-    add_lines.append('__tblAddTableHiFi(%s);\ntry{__tableRestoreLayout(); __ensureLayoutDefault();}catch(__tblRest){}' % (json.dumps(obj, ensure_ascii=False)))
+    add_lines.append('__tblAddTableHiFi(%s);\ntry{if(__DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation=="landscape"){log("[TABLE][restore] skip: default landscape (py-gen)");}else{__tableRestoreLayout(); __ensureLayoutDefault();}}catch(__tblRest){}' % (json.dumps(obj, ensure_ascii=False)))
     return True
 
 

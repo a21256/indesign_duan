@@ -198,6 +198,12 @@
                 return;
             }
             var lastLayout = __CURRENT_LAYOUT;
+            // 横版模版：不做恢复，避免破坏横版布局
+            var isDefaultLandscape = (__DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation === "landscape");
+            if (isDefaultLandscape){
+                try{ log("[TABLE][restore] skip: default layout is landscape"); }catch(_){}
+                return;
+            }
             if (mainLayout.pageOrientation === "portrait"
                 && lastLayout && lastLayout.pageOrientation === "portrait"){
                 try{ log("[TABLE][restore] skip: same portrait layout; no restore needed"); }catch(_){}
