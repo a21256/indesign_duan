@@ -161,6 +161,55 @@
               }
               return appliedSwitch;
             }
+            function __pageIdxInSpread(pg){
+              try{
+                if (pg && pg.isValid && pg.parent && pg.parent.pages){
+                  var ps = pg.parent.pages;
+                  for (var i=0;i<ps.length;i++){
+                    try{ if (ps[i] === pg) return i; }catch(_){}
+                  }
+                }
+              }catch(_){}
+              return -1;
+            }
+            function __pageDocOffset(pg){
+              try{
+                if (pg && pg.isValid && pg.documentOffset !== undefined && pg.documentOffset !== null){
+                  return parseInt(pg.documentOffset, 10);
+                }
+              }catch(_){}
+              return null;
+            }
+            function __maybePadSpreadCurrent(specPad, reason){
+              var info = {added:false};
+              try{
+                var pg = (page && page.isValid) ? page : null;
+                if (!pg || !specPad) return info;
+                var ps = null; try{ ps = (pg.parent && pg.parent.pages) ? pg.parent.pages : null; }catch(_){}
+                var spreadLen = (ps && ps.length) ? ps.length : 0;
+                var idx = __pageIdxInSpread(pg);
+                try{ log(__tableTag + " pad-check spreadLen=" + spreadLen + " idx=" + idx + " reason=" + (reason||"")); }catch(_dbgPad){}
+                if (spreadLen < 2 || idx !== 0) return info; // only pad when on spread first page of a facing spread
+                var pktPad = null;
+                try{ pktPad = __createLayoutFrame(specPad, tf, {afterPage: pg}); }catch(_padCreate){}
+                if (pktPad && pktPad.frame && pktPad.frame.isValid){
+                  try{ if (tf && tf.isValid) tf.nextTextFrame = pktPad.frame; }catch(_lnkPad){}
+                  page = pktPad.page;
+                  tf = pktPad.frame;
+                  story = tf.parentStory;
+                  curTextFrame = tf;
+                  try{ __applyFrameLayout(tf, specPad); }catch(_apPad){}
+                  try{ pktPad.page.label = "layout_pad"; }catch(_lbl){}
+                  try{ story.recompose(); }catch(_recPad){}
+                  info.added = true;
+                  try{
+                    var spreadDbg = null; try{ spreadDbg = (page && page.parent && page.parent.pages) ? page.parent.pages.length : "NA"; }catch(_sd){}
+                    log(__tableTag + " pad spread added page=" + (page&&page.isValid?page.name:"NA") + " spreadLen=" + spreadDbg + " reason=" + (reason||""));
+                  }catch(_logPad){}
+                }
+              }catch(_){}
+              return info;
+            }
             var curOrientation = __CURRENT_LAYOUT ? __CURRENT_LAYOUT.pageOrientation : null;
             var defaultOrientation = (__DEFAULT_LAYOUT && __DEFAULT_LAYOUT.pageOrientation) ? __DEFAULT_LAYOUT.pageOrientation : null;
             var targetOrientation = spec.pageOrientation || null;
@@ -198,36 +247,64 @@
               }catch(_preSwitch){}
               // ?????????????
             try{
+              var docOff = __pageDocOffset(page);
+              if (docOff !== null && docOff % 2 === 1){
+                try{ log(__tableTag + " parity pad before switch docOff=" + docOff); }catch(_logParity){}
+                var padParity = __createLayoutFrame(__CURRENT_LAYOUT || __DEFAULT_LAYOUT, tf, {afterPage: page});
+                if (padParity && padParity.frame && padParity.frame.isValid){
+                  try{ if (tf && tf.isValid) tf.nextTextFrame = padParity.frame; }catch(_lnkPar){}
+                  page = padParity.page;
+                  tf = padParity.frame;
+                  story = tf.parentStory;
+                  curTextFrame = tf;
+                  try{ padParity.page.label = "layout_pad"; }catch(_lblPar){}
+                  try{ log(__tableTag + " parity pad added page=" + (page&&page.isValid?page.name:"NA")); }catch(_logParDone){}
+                }
+              }
+            }catch(_parity){}
+            try{
+              __maybePadSpreadCurrent(__CURRENT_LAYOUT || __DEFAULT_LAYOUT, "pad-before-switch");
+            }catch(_padBefore){}
+            try{
               story.insertionPoints[-1].contents = SpecialCharacters.PAGE_BREAK;
               story.recompose();
             }catch(__preBreakErr){ try{ log(__tableWarnTag + " page break before layout failed: " + __preBreakErr); }catch(_){ } }
             try{
               var ipAfter = null; try{ ipAfter = story.insertionPoints[-1]; }catch(_){ }
               var tfAfter = null; try{ if (ipAfter && ipAfter.isValid) tfAfter = ipAfter.parentTextFrames[0]; }catch(_){ }
-              if (tfAfter && tfAfter.isValid && tfAfter.parentPage && tfAfter.parentPage.isValid){
-                  // 创建新的跨页以承载目标方向的表格，避免与上一页混排
-                  var pktSwitch = null;
+              var holderForSwitch = (tfAfter && tfAfter.isValid) ? tfAfter : ((tf && tf.isValid) ? tf : null);
+              if (!holderForSwitch || !holderForSwitch.isValid){
+                try{ log(__tableWarnTag + " no holder frame after page break; skip switch"); }catch(_skipSw){}
+              } else {
+                var basePageForSwitch = null;
+                try{ if (holderForSwitch.parentPage && holderForSwitch.parentPage.isValid) basePageForSwitch = holderForSwitch.parentPage; }catch(_bp){}
+                // 创建新的跨页以承载目标方向的表格，避免与上一页混排
+                var pktSwitch = null;
+                try{
+                  pktSwitch = __createLayoutFrame(spec, holderForSwitch, {afterPage: basePageForSwitch, forceNewSpread:true});
+                }catch(_pktErr){
+                  try{ log(__tableWarnTag + " switch layout create frame failed: " + _pktErr); }catch(_){ }
+                }
+                if (pktSwitch && pktSwitch.frame && pktSwitch.frame.isValid){
+                  try{ holderForSwitch.nextTextFrame = pktSwitch.frame; }catch(_lnk){}
+                  tf = pktSwitch.frame;
+                  page = pktSwitch.page;
+                  story = tf.parentStory;
+                  curTextFrame = tf;
+                  try{ __applyFrameLayout(tf, spec); }catch(_apSwitch){}
+                  try{ __CURRENT_LAYOUT = __cloneLayoutState(spec); }catch(_updSwitch){}
+                  appliedSwitch = true;
                   try{
-                    pktSwitch = __createLayoutFrame(spec, tfAfter, {afterPage: tfAfter.parentPage, forceNewSpread:true});
-                  }catch(_pktErr){}
-                  if (pktSwitch && pktSwitch.frame && pktSwitch.frame.isValid){
-                    try{ tfAfter.nextTextFrame = pktSwitch.frame; }catch(_lnk){}
-                    tf = pktSwitch.frame;
-                    page = pktSwitch.page;
-                    story = tf.parentStory;
-                    curTextFrame = tf;
-                    try{ __applyFrameLayout(tf, spec); }catch(_apSwitch){}
-                    try{ __CURRENT_LAYOUT = __cloneLayoutState(spec); }catch(_updSwitch){}
-                    appliedSwitch = true;
-                    try{
-                      var spreadAfter = null; try{ spreadAfter = (page && page.parent && page.parent.pages) ? page.parent.pages : null; }catch(_sa){}
-                      var spreadAfterLen = (spreadAfter && spreadAfter.length) ? spreadAfter.length : "NA";
-                      log(__tableTag + " layout switch -> " + (spec.pageOrientation||"") + " page=" + (page&&page.isValid?page.name:"NA") + " spreadLen=" + spreadAfterLen);
-                    }catch(_logSwitch){
-                      try{ log(__tableTag + " layout switch -> " + (spec.pageOrientation||"") + " page=" + (page&&page.isValid?page.name:"NA")); }catch(__){}
-                    }
-                    return appliedSwitch;
+                    var spreadAfter = null; try{ spreadAfter = (page && page.parent && page.parent.pages) ? page.parent.pages : null; }catch(_sa){}
+                    var spreadAfterLen = (spreadAfter && spreadAfter.length) ? spreadAfter.length : "NA";
+                    log(__tableTag + " layout switch -> " + (spec.pageOrientation||"") + " page=" + (page&&page.isValid?page.name:"NA") + " spreadLen=" + spreadAfterLen);
+                  }catch(_logSwitch){
+                    try{ log(__tableTag + " layout switch -> " + (spec.pageOrientation||"") + " page=" + (page&&page.isValid?page.name:"NA")); }catch(__){}
                   }
+                  return appliedSwitch;
+                } else {
+                  try{ log(__tableWarnTag + " switch layout pkt missing; fallback ensureLayout on holder page=" + (basePageForSwitch&&basePageForSwitch.isValid?basePageForSwitch.name:"NA")); }catch(_noPkt){}
+                }
               }
             }catch(__switchErr){ try{ log(__tableWarnTag + " switch layout apply failed: " + __switchErr); }catch(_){ } }
           }
@@ -254,6 +331,12 @@
             var prevPg = null;
             try{ prevPg = page.previousPage; }catch(_pp){}
             if (prevPg && prevPg.isValid){
+              try{
+                if (String(prevPg.label||"") === "layout_pad"){
+                  // keep alignment pad page
+                  throw "__skip_remove_pad__";
+                }
+              }catch(_keepPad){}
               var items = 0;
               try{ items = prevPg.pageItems.length; }catch(_pi){}
               var hasText = false;
@@ -1117,6 +1200,9 @@
             story.insertionPoints[-1].contents = SpecialCharacters.PAGE_BREAK;
             story.recompose();
           }catch(__restoreBreak){ try{ log("[WARN] page break before restore failed: " + __restoreBreak); }catch(_){ } }
+          try{
+            __maybePadSpreadCurrent(__CURRENT_LAYOUT || __DEFAULT_LAYOUT, "pad-before-restore");
+          }catch(_padRestore){}
           try{
             var restoreTarget = __DEFAULT_LAYOUT ? __cloneLayoutState(__DEFAULT_LAYOUT) : null;
             try{
