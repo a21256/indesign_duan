@@ -535,6 +535,14 @@ function __imgClampSize(rect, spec, ratio, innerW){
   var hPt = __imgToPtLocal(spec && spec.h);
   var gb  = rect.geometricBounds;
   var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
+  // 如果 innerW 未取到，使用默认/显式宽度兜底，避免把显式 w 压缩掉
+  if (!innerW || innerW <= 0){
+    var fallbackW = 0;
+    try{ if (typeof __DEFAULT_INNER_WIDTH !== "undefined") fallbackW = __DEFAULT_INNER_WIDTH; }catch(_){}
+    if (wPt > 0) fallbackW = Math.max(fallbackW, wPt);
+    if (!fallbackW) fallbackW = curW;
+    innerW = fallbackW;
+  }
   var widthLimit = innerW>0 ? innerW : curW;
   var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
   var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio || (curW/curH), 1e-6)));
