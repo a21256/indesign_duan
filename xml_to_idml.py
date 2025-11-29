@@ -761,10 +761,31 @@ def _prepare_paragraphs_for_jsx(paragraphs, img_pattern):
     expanded = []
     for idx, (style, text) in enumerate(paragraphs, 1):
         chunks = _split_media_chunks(style, text)
+        # group consecutive ImageSpec chunks for multi-image placement
+        merged = []
+        img_group = []
+        for sty, chunk in chunks:
+            if isinstance(chunk, ImageSpec):
+                img_group.append(chunk)
+                continue
+            if img_group:
+                if len(img_group) == 1:
+                    merged.append((sty, img_group[0]))
+                else:
+                    _debug_log(f"[PARA-GROUP] idx={idx} style={style} imgs={len(img_group)}")
+                    merged.append((sty, img_group.copy()))
+                img_group = []
+            merged.append((sty, chunk))
+        if img_group:
+            if len(img_group) == 1:
+                merged.append((style, img_group[0]))
+            else:
+                _debug_log(f"[PARA-GROUP] idx={idx} style={style} imgs={len(img_group)}")
+                merged.append((style, img_group.copy()))
         if PIPELINE_LOGGER:
-            kinds = [_classify_chunk_value(chunk) for _, chunk in chunks]
-            _debug_log(f"[PARA-SPLIT idx={idx} style={style}] origLen={len(text or '')} chunks={len(chunks)} kinds={kinds}")
-        expanded.extend(chunks)
+            kinds = [_classify_chunk_value(chunk) for _, chunk in merged]
+            _debug_log(f"[PARA-SPLIT idx={idx} style={style}] origLen={len(text or '')} chunks={len(merged)} kinds={kinds}")
+        expanded.extend(merged)
     return expanded or paragraphs
 
 
@@ -992,6 +1013,28 @@ def _handle_table_marker(text, add_lines, ctx=None):
 
 
 def _handle_img_marker(text, add_lines, ctx=None):
+    # support multiple IMG markers in one chunk
+    all_matches = re.findall(IMG_PLACEHOLDER_ANY_RE, text)
+    if not all_matches:
+        return False
+    if len(all_matches) > 1:
+        specs = []
+        for m in all_matches:
+            spec = _image_spec_from_attrs(m, force_block=False)
+            spec.log_context = {
+                "id": ctx.get("id") if ctx else None,
+                "paraIndex": ctx.get("paraIndex") if ctx else None,
+                "style": ctx.get("style") if ctx else None,
+                "preview": ctx.get("preview") if ctx else None,
+            } if ctx else None
+            specs.append(spec)
+        ctx_label = _ctx_label(ctx)
+        _debug_log(f"[IMG-GROUP]{ctx_label} count={len(specs)}")
+        specs_js = "[" + ",".join([s._build_spec_js_literal() for s in specs]) + "]"
+        add_lines.append("__ensureLayoutDefault();")
+        add_lines.append("(function(){ try{ __imgPlaceImageGroup(tf, story, page, %s); }catch(__e){ try{ log('[IMG-GROUP][ERR] '+__e); }catch(_){ } } })();" % specs_js)
+        return True
+
     match, only_img = _match_img_marker(text)
     if not match:
         return False
@@ -1153,6 +1196,12 @@ def write_jsx(jsx_path, paragraphs):
             if isinstance(chunk, ImageSpec):
                 add_lines.append("__ensureLayoutDefault();")
                 add_lines.append(chunk.to_js_block())
+                continue
+            if isinstance(chunk, list) and chunk and all(isinstance(x, ImageSpec) for x in chunk):
+                specs_js = "[" + ",".join([x._build_spec_js_literal() for x in chunk]) + "]"
+                _debug_log(f"[WRITE-JSX][IMG-GROUP] idx={idx} count={len(chunk)} style={sub_style}")
+                add_lines.append("__ensureLayoutDefault();")
+                add_lines.append("(function(){try{__imgPlaceImageGroup(tf, story, page, %s);}catch(__e){try{log('[IMG-GROUP][ERR] '+__e);}catch(_ee){}}})();" % specs_js)
                 continue
             if isinstance(chunk, FrameSpec):
                 add_lines.append("__ensureLayoutDefault();")

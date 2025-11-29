@@ -546,6 +546,79 @@ function __imgClampSize(rect, spec, ratio, innerW){
 function __imgApplyFit(rect){
   try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
 }
+
+// group placement for multiple images: create an anchored text frame wrapper and place inline images inside
+function __imgPlaceImageGroup(tf, story, page, specs){
+  try{ log("[IMG-GROUP] enter count=" + (specs&&specs.length)); }catch(_){}
+  if (!specs || !specs.length) return null;
+  var doc = app && app.activeDocument;
+  var holder = null;
+  var innerW = 0;
+  try{
+    if (tf && tf.isValid){
+      holder = tf;
+      innerW = _innerFrameWidth(tf);
+    }
+  }catch(_){}
+  if ((!holder || !holder.isValid) && story && story.isValid){
+    try{
+      var ipTmp = story.insertionPoints && story.insertionPoints.length ? story.insertionPoints[-1] : null;
+      if (ipTmp && ipTmp.isValid && ipTmp.parentTextFrames && ipTmp.parentTextFrames.length){
+        holder = ipTmp.parentTextFrames[0];
+        innerW = _innerFrameWidth(holder);
+      }
+    }catch(_){}
+  }
+  if (!innerW || innerW <= 0) innerW = (typeof __DEFAULT_INNER_WIDTH !== "undefined") ? __DEFAULT_INNER_WIDTH : 400;
+  try{ log("[IMG-GROUP] holderW=" + innerW); }catch(_){}
+  var ip = null;
+  try{
+    if (tf && tf.isValid) ip = tf.insertionPoints[-1];
+    else if (story && story.isValid && story.insertionPoints.length) ip = story.insertionPoints[-1];
+  }catch(_){}
+  if (!ip || !ip.isValid) return null;
+  var frame = null;
+  try{
+    frame = ip.textFrames.add();
+    frame.geometricBounds = [0,0,10, innerW];
+    try{
+      var aos = frame.anchoredObjectSettings;
+      if (aos && aos.isValid){
+        aos.anchoredPosition = AnchorPosition.ABOVE_LINE;
+        aos.anchorPoint = AnchorPoint.TOP_LEFT_ANCHOR;
+      }
+    }catch(_){}
+    try{
+      frame.textFramePreferences.autoSizingType = AutoSizingTypeEnum.HEIGHT_ONLY;
+      frame.textFramePreferences.autoSizingReferencePoint = AutoSizingReferenceEnum.TOP_LEFT_POINT;
+      frame.textFramePreferences.textColumnCount = 1;
+      frame.textFramePreferences.textColumnFixedWidth = innerW;
+    }catch(_){}
+    __imgApplyFloatTextWrap(frame, {wrap:"topbottom", distT:"6pt", distB:"6pt", distL:"12pt", distR:"12pt"});
+  }catch(_){ frame=null; }
+  if (!frame || !frame.isValid) return null;
+  var innerStory = null;
+  try{ innerStory = frame.parentStory; }catch(_){}
+  if (!innerStory || !innerStory.isValid) return {frame:frame, tf:tf, story:story, page:page};
+  for (var i=0;i<specs.length;i++){
+    var si = specs[i] || {};
+    try{
+      var fobj = __imgNormPath(si.src);
+      try{ log("[IMG-GROUP] #" + (i+1) + " src=" + si.src + " norm=" + (fobj?fobj.fsName:"NA") + " exists=" + (fobj&&fobj.exists)); }catch(_){}
+      if (!fobj || !fobj.exists) continue;
+      var ipIn = innerStory.insertionPoints[-1];
+      var rect = __imgPlaceInline(ipIn, fobj);
+      if (rect && rect.isValid){
+        __imgFloatSizeAndWrap(rect, si, true);
+      } else {
+        try{ log("[IMG-GROUP][WARN] place failed idx=" + (i+1)); }catch(_){}
+      }
+      try{ ipIn.contents = " "; }catch(_s){ }
+    }catch(_place){ }
+  }
+  try{ innerStory.recompose(); }catch(_){}
+  return {frame:frame, tf:tf, story:story, page:page};
+}
 function __imgFloatSizeAndWrap(rect, spec, isInline){
   if (!rect || !rect.isValid) return;
   __imgApplyFit(rect);

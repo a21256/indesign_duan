@@ -783,6 +783,10 @@ function _holderInnerBounds(holder){
 
         var insertionStart = 0;
         try{ insertionStart = (story && story.isValid) ? story.characters.length : 0; }catch(_){ }
+        var __IMG_MARK_RE = /\[\[IMG\s+[^\]]+\]\]/g;
+        var __imgMatchArr = text.match(__IMG_MARK_RE) || [];
+        var __multiImgPara = (__imgMatchArr.length > 1);
+        var __imgGroupSpecs = []; // collect when multi
 
         try{
                 var re = /\[{2,}FNI:(\d+)\]{2,}|\[{2,}(FN|EN):(.*?)\]{2,}|\[\[(\/?)(I|B|U)\]\]|\[\[IMG\s+([^\]]+)\]\]|\[\[TABLE\s+(\{[\s\S]*?\})\]\]/g;
@@ -823,6 +827,12 @@ function _holderInnerBounds(holder){
                 if (spec.spaceAfter  == null) spec.spaceAfter  = 2;
                 if (!spec.wrap) spec.wrap = "none"; 
 
+                if (__multiImgPara){
+                  __imgGroupSpecs.push(spec);
+                  last = re.lastIndex;
+                  continue;
+                }
+                // single image path
                 try{
                   var __ipEnd0 = story.insertionPoints[-1];
                   var __holder0 = (__ipEnd0 && __ipEnd0.isValid && __ipEnd0.parentTextFrames && __ipEnd0.parentTextFrames.length)
@@ -926,7 +936,7 @@ function _holderInnerBounds(holder){
                 try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
                 last = re.lastIndex;
                 continue;
-            } else if (m[7]) {
+                    } else if (m[7]) {
                 try{ log("[TABLE][restore] branch entered raw=" + String(m[7]).substring(0,120)); }catch(_){}
                 try {
                     var obj = __jsonParseSafe(m[7]);
@@ -966,6 +976,20 @@ function _holderInnerBounds(holder){
         }
         try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
 
+        // place grouped images if collected
+        try{
+          if (__multiImgPara && __imgGroupSpecs && __imgGroupSpecs.length>1){
+            try{ log("[IMG-GROUP] placing group count=" + __imgGroupSpecs.length); }catch(_){}
+            try{
+              if (typeof __imgPlaceImageGroup === "function"){
+                var _ctx = __imgPlaceImageGroup(tf, story, page, __imgGroupSpecs);
+                if (_ctx && _ctx.tf && _ctx.tf.isValid) tf = _ctx.tf;
+                if (_ctx && _ctx.page && _ctx.page.isValid) page = _ctx.page;
+                if (_ctx && _ctx.story && _ctx.story.isValid) story = _ctx.story;
+              }
+            }catch(_grp){}
+          }
+        }catch(_){}
 
         story.insertionPoints[-1].contents = "\r";
         story.paragraphs[-1].appliedParagraphStyle = s;
