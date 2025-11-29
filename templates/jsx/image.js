@@ -647,7 +647,9 @@ function __imgFloatSizeAndWrap(rect, spec, isInline){
           + " wPt=" + (clamp.wPt||0) + " hPt=" + (clamp.hPt||0)
           + " ratio=" + (clamp.ratio||0).toFixed(4));
     } catch(__){}
-  } catch(_){}
+  } catch(__sz){
+    try{ log("[IMG][ERR] size failed " + __sz); }catch(_){}
+  }
 
   try{
     var p = rect.storyOffset.paragraphs[0];
