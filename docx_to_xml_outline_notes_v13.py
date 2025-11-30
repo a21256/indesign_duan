@@ -2105,6 +2105,13 @@ class DOCXOutlineExporter:
 
         for ln in lines:
             s = ln.strip()
+            if s.startswith("[[LAYOUT"):
+                # Keep layout markers in place with the current scope
+                if found_first and current is not None:
+                    current._pending_for_children.append(ln)
+                else:
+                    self._append_body_fragment(parent, ln)
+                continue
             if splitter.matches(s) and not _is_regex_excluded(s):
                 index = len(nodes) + 1
                 props = {"mode": "regex"}

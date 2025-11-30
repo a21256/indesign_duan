@@ -523,6 +523,8 @@
                 }
             }catch(_){}
             if (!isFinite(approxLine) || approxLine<=0) approxLine = 14;
+            // Clamp to a safer minimum to avoid under-estimating tall tables (e.g., 10pt defaults)
+            if (approxLine < 12) approxLine = 12;
             var total = rowsCount * approxLine;
             try{
                 var hdr = parseInt(objSpec && objSpec.headerRows || 0, 10);
