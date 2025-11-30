@@ -628,15 +628,73 @@ function __imgPlaceImageGroup(tf, story, page, specs){
   return {frame:frame, tf:tf, story:story, page:page};
 }
 function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
+  // refresh story and try to recompose before sizing
+  var st0 = null;
+  try{ st0 = (rect && rect.isValid && rect.parentStory && rect.parentStory.isValid) ? rect.parentStory : null; }catch(_s){}
+  if (st0 && st0.isValid) __imgRecomposeSafe(st0);
+  // if rect already invalid, try to locate a fresh one by src in the same story
+  if (!rect || !rect.isValid){
+    try{
+      if (st0 && st0.isValid && spec && spec.src){
+        var found = null;
+        var rects = st0.rectangles;
+        for (var rIdx = rects.length-1; rIdx >= 0; rIdx--){
+          try{
+            var r1 = rects[rIdx];
+            if (!r1 || !r1.isValid) continue;
+            var imgs = r1.images;
+            if (!imgs || !imgs.length) continue;
+            var linkPath = "";
+            try{ linkPath = imgs[0].itemLink ? imgs[0].itemLink.filePath : ""; }catch(_lp){}
+            if (linkPath && String(linkPath).replace(/\\/g,"/").toLowerCase() === String(spec.src).replace(/\\/g,"/").toLowerCase()){
+              found = r1;
+              break;
+            }
+          }catch(_rr){}
+        }
+        if (found && found.isValid){
+          rect = found;
+          try{ log("[IMGDBG] recovered rect by src for sizing id=" + found.id); }catch(_l){}
+        }
+      }
+    }catch(_recovery){}
+  }
   if (!rect || !rect.isValid) return;
   __imgApplyFit(rect);
+  try{ log("[IMGDBG] size enter rect.id=" + (rect.id||"NA") + " isInline=" + isInline); }catch(_){}
   try {
     try { rect.fittingOptions.autoFit=false; } catch(__){}
+    // if rect became invalid after placement, try to recover by src before sizing
+    if (!rect || !rect.isValid){
+      try{
+        if (st0 && st0.isValid && spec && spec.src){
+          var rec2 = null, rs = st0.rectangles;
+          for (var j=rs.length-1;j>=0;j--){
+            try{
+              var rj = rs[j];
+              if (!rj || !rj.isValid) continue;
+              var imgj = (rj.images && rj.images.length) ? rj.images[0] : null;
+              var lp = ""; try{ lp = imgj && imgj.itemLink ? imgj.itemLink.filePath : ""; }catch(_li){}
+              if (lp && String(lp).replace(/\\/g,"/").toLowerCase() === String(spec.src).replace(/\\/g,"/").toLowerCase()){
+                rec2 = rj; break;
+              }
+            }catch(_loop){}
+          }
+          if (rec2 && rec2.isValid){
+            rect = rec2;
+            try{ log("[IMGDBG] recovered rect in sizing step id=" + rect.id); }catch(_lr){}
+          }
+        }
+      }catch(_reco){}
+    }
+    if (!rect || !rect.isValid) throw new Error("rect invalid before sizing");
     var gb  = rect.geometricBounds;
+    try{ log("[IMGDBG] gb=" + gb); }catch(_){}
     var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
     var ratio = curW / curH;
 
     var holderInfo = __imgResolveHolder(rect);
+    try{ log("[IMGDBG] holder id=" + (holderInfo.holder?holderInfo.holder.id:"NA") + " innerW=" + holderInfo.innerW); }catch(_){}
     var clamp = __imgClampSize(rect, spec, ratio, holderInfo.innerW);
 
     __imgApplyFit(rect);
@@ -664,6 +722,58 @@ function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
         }
       }
     }catch(_r){}
+    try{
+      // fallback sizing: recover rect by src if needed, then size by holder or explicit w
+      try{
+        if ((!rect || !rect.isValid) && st0 && st0.isValid && spec && spec.src){
+          var recov = null, rs2 = st0.rectangles;
+          for (var jj=rs2.length-1;jj>=0;jj--){
+            try{
+              var r2 = rs2[jj];
+              if (!r2 || !r2.isValid) continue;
+              var img2 = (r2.images && r2.images.length) ? r2.images[0] : null;
+              var lp2 = ""; try{ lp2 = img2 && img2.itemLink ? img2.itemLink.filePath : ""; }catch(_li2){}
+              if (lp2 && String(lp2).replace(/\\/g,"/").toLowerCase() === String(spec.src).replace(/\\/g,"/").toLowerCase()){
+                recov = r2; break;
+              }
+            }catch(_loop2){}
+          }
+          if (recov && recov.isValid) rect = recov;
+        }
+        if ((!rect || !rect.isValid) && app && app.activeDocument && spec && spec.src){
+          try{
+            var gAll = app.activeDocument.allGraphics;
+            for (var gg=0; gg<gAll.length; gg++){
+              var g = gAll[gg];
+              var lpG = ""; try{ lpG = g && g.itemLink ? g.itemLink.filePath : ""; }catch(_lg){}
+              if (lpG && String(lpG).replace(/\\/g,"/").toLowerCase() === String(spec.src).replace(/\\/g,"/").toLowerCase()){
+                var pr = null; try{ pr = g.parent; }catch(_pr){}
+                if (pr && pr.isValid && String(pr.constructor.name)==="Rectangle"){ rect = pr; break; }
+              }
+            }
+          }catch(_gfind){}
+        }
+      }catch(_reco2){}
+      if (!rect || !rect.isValid) throw __sz;
+      var hW = 0;
+      try{
+        var hTf = (rect && rect.isValid && rect.parentTextFrames && rect.parentTextFrames.length) ? rect.parentTextFrames[0] : null;
+        if (hTf && hTf.isValid) hW = _innerFrameWidth(hTf);
+      }catch(_hw){}
+      var wPtFb = __imgToPtLocal(spec && spec.w);
+      var hPtFb = __imgToPtLocal(spec && spec.h);
+      var ratioFb = (wPtFb>0 && hPtFb>0) ? (wPtFb/hPtFb) : 1.0;
+      if (!hW || hW<=0) hW = (typeof __DEFAULT_INNER_WIDTH!=="undefined") ? __DEFAULT_INNER_WIDTH : 400;
+      var targetWFb = wPtFb>0 ? Math.min(wPtFb, hW) : hW;
+      if (rect && rect.isValid){
+        try{
+          var gbFb = rect.geometricBounds || [0,0,0,0];
+          rect.geometricBounds = [gbFb[0], gbFb[1], gbFb[0] + targetWFb/Math.max(ratioFb,1e-6), gbFb[1] + targetWFb];
+          __imgApplyFit(rect);
+          log("[IMG][WARN] size fallback applied targetW=" + targetWFb.toFixed(2) + " holderW=" + hW.toFixed(2) + " wPt=" + wPtFb + " hPt=" + hPtFb);
+        }catch(_set){}
+      }
+    }catch(_fb){}
     try{ log("[IMG][ERR] size failed " + __sz); }catch(_){}
   }
 
@@ -775,10 +885,11 @@ function __imgAddImageAtV2(ip, spec) {
         }
       function _resolveInlineFlag(){
         var inlineFlag = String((spec && spec.inline)||"").toLowerCase();
-        var isInline = !(inlineFlag==="0" || inlineFlag==="false");
-        if (spec && spec.forceBlock) isInline = false;
-        return isInline;
-      }
+      var isInline = !(inlineFlag==="0" || inlineFlag==="false");
+      if (spec && spec.forceBlock) isInline = false;
+      try{ log("[IMGDBG] inlineFlag=" + inlineFlag + " forceBlock=" + (spec&&spec.forceBlock) + " isInline=" + isInline); }catch(_dbgInline){}
+      return isInline;
+    }
       _logBegin();
 
       // 1) verity file
@@ -788,6 +899,38 @@ function __imgAddImageAtV2(ip, spec) {
       var st = _initStory(); if (!st) return null;
 
       var isInline = _resolveInlineFlag();
+      function _findRectBySrc(){
+        try{
+          var srcPath = (spec && spec.src) ? String(spec.src).replace(/\\/g,"/").toLowerCase() : "";
+          if (!srcPath) return null;
+          if (st && st.isValid && st.rectangles){
+            var rs = st.rectangles;
+            for (var ii=rs.length-1; ii>=0; ii--){
+              try{
+                var r = rs[ii];
+                if (!r || !r.isValid) continue;
+                var im = (r.images && r.images.length) ? r.images[0] : null;
+                var lp = ""; try{ lp = im && im.itemLink ? im.itemLink.filePath : ""; }catch(_lp){}
+                if (lp && String(lp).replace(/\\/g,"/").toLowerCase() === srcPath) return r;
+              }catch(_loop){}
+            }
+          }
+          var docG = app && app.activeDocument ? app.activeDocument.allGraphics : null;
+          if (docG){
+            for (var gIdx=0; gIdx<docG.length; gIdx++){
+              try{
+                var g = docG[gIdx];
+                var lp2 = ""; try{ lp2 = g && g.itemLink ? g.itemLink.filePath : ""; }catch(_lg){}
+                if (lp2 && String(lp2).replace(/\\/g,"/").toLowerCase() === srcPath){
+                  var pr = null; try{ pr = g.parent; }catch(_pr){}
+                  if (pr && pr.isValid && String(pr.constructor.name)==="Rectangle") return pr;
+                }
+              }catch(_gfind){}
+            }
+          }
+        }catch(_f){}
+        return null;
+      }
 
       // Key point: by default use the insertion point at the end of the current writable text frame (tf)
       // to avoid ending up in the last frame of the story on the previous page.
@@ -829,10 +972,11 @@ function __imgAddImageAtV2(ip, spec) {
         }
       } catch(_){ }
 
-      __imgFloatSizeAndWrap(rect, spec, isInline);
-
-      // 7) paragraph alignment/spacing for the placed image
-      __imgAdjustImageParagraph(rect, spec, isInline);
+      var __sizeDeferred = (!isInline && spec && spec.forceBlock);
+      if (!__sizeDeferred){
+        __imgFloatSizeAndWrap(rect, spec, isInline);
+        __imgAdjustImageParagraph(rect, spec, isInline);
+      }
 
       // 8 & 9) post-process block image (newline + flush)
       if (!isInline) {
@@ -840,6 +984,14 @@ function __imgAddImageAtV2(ip, spec) {
         page  = _post.page;
         tf    = _post.tf;
         story = _post.story;
+        if (__sizeDeferred){
+          var rect2 = _findRectBySrc() || rect;
+          if (rect2 && rect2.isValid){
+            __imgFloatSizeAndWrap(rect2, spec, isInline, true);
+            __imgAdjustImageParagraph(rect2, spec, isInline);
+            rect = rect2;
+          }
+        }
       }
       return rect;
     }
