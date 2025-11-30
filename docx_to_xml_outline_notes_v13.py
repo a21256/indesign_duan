@@ -40,7 +40,24 @@ import zipfile
 import argparse
 from typing import Any, Dict, List, Optional, Tuple
 
-from regex_rules import REGEX_ORDER, NEGATIVE_PATTERNS
+try:
+    from regex_rules import REGEX_ORDER as DEFAULT_REGEX_ORDER, NEGATIVE_PATTERNS as DEFAULT_NEGATIVE_PATTERNS
+except Exception:
+    DEFAULT_REGEX_ORDER = [
+        ("fixed", r'^第[\d一二三四五六七八九十百]+章[ 　\t]*'),
+        ("fixed", r'^第[\d一二三四五六七八九十百]+节[ 　\t]*'),
+        ("fixed", r'^第[\d一二三四五六七八九十百]+条[ 　\t]*'),
+        ("numeric_dotted", None),
+        ("fixed", r'^[�?]\s*\d+\s*[)）]'),
+        ("fixed", r'^[�?]\s*[一二三四五六七八九十百]+\s*[)）]'),
+        ("fixed", r'^\d+\s*[)）]'),
+        ("fixed", r'^[一二三四五六七八九十百]+、\s*'),
+    ]
+    DEFAULT_NEGATIVE_PATTERNS = []
+
+REGEX_ORDER = list(DEFAULT_REGEX_ORDER)
+NEGATIVE_PATTERNS = list(DEFAULT_NEGATIVE_PATTERNS)
+ACTIVE_REGEX_RULES_PATH: Optional[str] = None
 
 from docx import Document
 from docx.oxml.ns import qn
@@ -98,6 +115,37 @@ NOTE_MARKER_CHAR_SET = set(
 )
 NOTE_MARKER_SINGLE_ALPHA = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+def _iter_regex_config_paths(explicit_path: Optional[str] = None) -> List[str]:
+    """Return possible regex config paths, ordered by priority."""
+    paths: List[str] = []
+    for cand in (explicit_path, os.environ.get("REGEX_RULES_PATH")):
+        if cand:
+            paths.append(os.path.abspath(cand))
+    base_dirs = []
+    if getattr(sys, "frozen", False):
+        base_dirs.append(os.path.dirname(sys.executable))
+    base_dirs.extend([os.getcwd(), os.path.dirname(os.path.abspath(__file__))])
+    seen_dirs = set()
+    for d in base_dirs:
+        if not d or d in seen_dirs:
+            continue
+        seen_dirs.add(d)
+        paths.append(os.path.join(d, "regex_rules.json"))
+    out: List[str] = []
+    seen_paths = set()
+    for p in paths:
+        if p and p not in seen_paths:
+            out.append(p)
+            seen_paths.add(p)
+    return out
+
+def _load_rules_from_json(path: str):
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    order = data.get("REGEX_ORDER") or data.get("regex_order")
+    negative = data.get("NEGATIVE_PATTERNS") or data.get("negative_patterns")
+    return order, negative
+
 def _emu_to_pt(val_emu: Optional[str]) -> Optional[float]:
     try:
         return float(val_emu) / 12700.0
@@ -125,7 +173,39 @@ def _compile_patterns():
         except re.error:
             logger.warning(f"Invalid negative regex pattern skipped: {pat}")
             COMPILED_NEGATIVE.append(None)
-_compile_patterns()
+
+def load_regex_rules(config_path: Optional[str] = None) -> Optional[str]:
+    """
+    Load regex rules from an external JSON file (next to the executable or via REGEX_RULES_PATH).
+    Falls back to bundled defaults when no override is present.
+    """
+    global REGEX_ORDER, NEGATIVE_PATTERNS, ACTIVE_REGEX_RULES_PATH
+    chosen_path: Optional[str] = None
+    for candidate in _iter_regex_config_paths(config_path):
+        if not os.path.exists(candidate):
+            continue
+        try:
+            if candidate.lower().endswith(".json"):
+                order, negative = _load_rules_from_json(candidate)
+            else:
+                continue
+            if order is None and negative is None:
+                continue
+            REGEX_ORDER = list(order or DEFAULT_REGEX_ORDER)
+            NEGATIVE_PATTERNS = list(negative or DEFAULT_NEGATIVE_PATTERNS)
+            chosen_path = candidate
+            logger.info(f"Regex rules loaded from {candidate}")
+            break
+        except Exception as exc:
+            logger.warning(f"Failed to load regex rules from {candidate}: {exc}")
+    if chosen_path is None:
+        REGEX_ORDER = list(DEFAULT_REGEX_ORDER)
+        NEGATIVE_PATTERNS = list(DEFAULT_NEGATIVE_PATTERNS)
+    ACTIVE_REGEX_RULES_PATH = chosen_path
+    _compile_patterns()
+    return chosen_path
+
+load_regex_rules()
 
 def _is_regex_excluded(text: str) -> bool:
     if not text:
@@ -307,9 +387,11 @@ class NumericDepthSplitter(Splitter):
 class DOCXOutlineExporter:
     _NOTE_STYLE_HINTS = {"footnotereference", "endnotereference"}
     _MAX_NOTE_MARKER_LEN = 4
-    def __init__(self, input_path: str, mode: str = "heading", skip_images: bool = False, skip_tables: bool = False, skip_textboxes: bool = False):
+    def __init__(self, input_path: str, mode: str = "heading", skip_images: bool = False, skip_tables: bool = False, skip_textboxes: bool = False, regex_config_path: Optional[str] = None):
         assert mode in ("heading", "regex", "hybrid"), "mode must be 'heading', 'regex', or 'hybrid'"
         self.mode = mode
+        load_regex_rules(regex_config_path)
+        self.regex_rules_path = ACTIVE_REGEX_RULES_PATH
         self.input_path = input_path
         self.doc = Document(input_path)
         self.skip_images = bool(skip_images)
@@ -2272,11 +2354,12 @@ class DOCXOutlineExporter:
 def main(argv=None):
     parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex/hybrid) with style switches")
     parser.add_argument("--mode", choices=["heading", "regex", "hybrid"], default="heading", help="Detection mode")
+    parser.add_argument("--regex-config", help="Path to regex_rules.json override (optional)")
     parser.add_argument("input", help="Input .docx path")
     parser.add_argument("output", help="Output .xml path")
     args = parser.parse_args(argv)
 
-    exporter = DOCXOutlineExporter(args.input, mode=args.mode)
+    exporter = DOCXOutlineExporter(args.input, mode=args.mode, regex_config_path=args.regex_config)
     exporter.process(args.output)
     # print(f"[OK] mode={args.mode} XML saved -> {args.output}")
 

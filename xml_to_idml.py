@@ -1460,32 +1460,36 @@ def _relay_jsx_events(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="DOCX → XML → JSX → InDesign 自动化管线"
+        description="DOCX ?? XML ?? JSX ?? InDesign ?????????"
     )
     parser.add_argument(
         "docx",
         nargs="?",
-        help="待转换的 DOCX 文件（默认使用脚本目录下的 1.docx）",
+        help="??????? DOCX ?????????????????? 1.docx??",
     )
     parser.add_argument(
         "--mode",
         choices=("heading", "regex", "hybrid"),
         default="heading",
-        help="DOCXOutlineExporter 的解析模式（默认 heading）",
+        help="DOCXOutlineExporter ???????????? heading??",
+    )
+    parser.add_argument(
+        "--regex-config",
+        help="指定 regex_rules.json（不再支持 .py），用于 --mode=regex 或 hybrid 时自定义正则规则",
     )
     parser.add_argument(
         "--skip-docx",
         action="store_true",
-        help="跳过 DOCX→XML，直接使用已有的 XML",
+        help="???? DOCX??XML????????????? XML",
     )
     parser.add_argument(
         "--xml-path",
-        help="手动指定 XML 输出/输入路径（默认 formatted_output.xml）",
+        help="?????? XML ???/???????????? formatted_output.xml??",
     )
     parser.add_argument(
         "--no-run",
         action="store_true",
-        help="仅生成 XML/JSX，不实际调用 InDesign",
+        help="?????? XML/JSX?????????? InDesign",
     )
     parser.add_argument(
         "--dump-jsx-template",
@@ -1541,7 +1545,17 @@ def main():
             print(msg)
             PIPELINE_LOGGER.error(msg)
             return
-        exporter = DOCXOutlineExporter(docx_input, mode=args.mode)
+        exporter = DOCXOutlineExporter(
+            docx_input, mode=args.mode, regex_config_path=args.regex_config
+        )
+        if args.mode in ("regex", "hybrid"):
+            rules_path = getattr(exporter, "regex_rules_path", None)
+            if rules_path:
+                msg = f"[INFO] regex �����������ļ�: {rules_path}"
+            else:
+                msg = "[INFO] regex ����ʹ��Ĭ�Ϲ���"
+            print(msg)
+            PIPELINE_LOGGER.user(msg)
         summary = exporter.process(XML_PATH)
         _debug_log(f"[DOCX] summary raw={summary}")
         report = (

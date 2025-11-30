@@ -224,17 +224,21 @@ def main(argv=None):
         choices=["heading", "regex"],
         metavar="{heading,regex}",
         default="heading",
-        help="Detection mode（heading 或 regex）",
+        help="Detection mode?heading ? regex",
     )
-    parser.add_argument("--set-password", action="store_true", help="修改程序密码（先验证当前密码）")
-    parser.add_argument("--password", default=None, help="以参数形式传入运行密码（可选，否则将提示输入）")
-    parser.add_argument("--template", "-t", dest="template", default=None, help="覆盖 TEMPLATE_PATH（模板 .idml 的路径）")
-    parser.add_argument("--out", "-o", dest="out", default=None, help="覆盖 IDML_OUT_PATH（导出的 .idml 路径）")
+    parser.add_argument(
+        "--regex-config",
+        help="指定 regex_rules.json（不再支持 .py），用于 --mode=regex 时自定义正则规则",
+    )
+    parser.add_argument("--set-password", action="store_true", help="???????????????")
+    parser.add_argument("--password", default=None, help="??????????????????????")
+    parser.add_argument("--template", "-t", dest="template", default=None, help="?? TEMPLATE_PATH??? .idml ???")
+    parser.add_argument("--out", "-o", dest="out", default=None, help="?? IDML_OUT_PATH??? .idml ??")
     parser.add_argument("input", nargs="?", help="Input .docx path")
-    parser.add_argument("--no-images", action="store_true", help="生成 XML 时跳过 Word 图片")
-    parser.add_argument("--no-tables", action="store_true", help="生成 XML 时跳过 Word 表格")
-    parser.add_argument("--no-textboxes", action="store_true", help="生成 XML 时跳过文本框/框架")
-    parser.add_argument("--log-dir", help="指定日志目录，默认写入脚本目录的 logs")
+    parser.add_argument("--no-images", action="store_true", help="?? XML ??? Word ??")
+    parser.add_argument("--no-tables", action="store_true", help="?? XML ??? Word ??")
+    parser.add_argument("--no-textboxes", action="store_true", help="?? XML ??????/??")
+    parser.add_argument("--log-dir", help="???????????????? logs?")
     parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -272,7 +276,8 @@ def main(argv=None):
         except Exception as e:
             _log_warn(f"[WARN] 设置 IDML 输出名失败，仍使用默认: {e}")
     arg_debug_line = (
-        f"[ARGS] mode={args.mode} skip_images={args.no_images} skip_tables={args.no_tables} "
+        f"[ARGS] mode={args.mode} regex_cfg={args.regex_config or '(default)'} "
+        f"skip_images={args.no_images} skip_tables={args.no_tables} "
         f"skip_textboxes={args.no_textboxes} template={eff_template} out={getattr(X, 'IDML_OUT_PATH', None)} "
         f"log_dir={args.log_dir or '(default)'} no_run={args.no_run}"
     )
@@ -309,10 +314,17 @@ def main(argv=None):
     exporter = DOCXOutlineExporter(
         input_path,
         mode=args.mode,
+        regex_config_path=args.regex_config,
         skip_images=args.no_images,
         skip_tables=args.no_tables,
         skip_textboxes=args.no_textboxes,
     )
+    if args.mode == "regex":
+        rules_path = getattr(exporter, "regex_rules_path", None)
+        if rules_path:
+            _log_user(f"[INFO] regex 规则来源: {rules_path}")
+        else:
+            _log_user("[INFO] regex 规则使用内置默认")
     export_summary = exporter.process(XML_PATH)
     if not export_summary:
         export_summary = exporter.summary()

@@ -6,7 +6,7 @@
 !docx_to_idml.py
 !xml_to_idml.py
 !docx_to_xml_outline_notes_v13.py
-!regex_rules.py
+!regex_rules.json
 !pipeline_logger.py
 !README.md
 !templates/
