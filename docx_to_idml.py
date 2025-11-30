@@ -228,7 +228,13 @@ def main(argv=None):
     )
     parser.add_argument(
         "--regex-config",
-        help="指定 regex_rules.json（不再支持 .py），用于 --mode=regex 时自定义正则规则",
+        help="?? regex_rules.json????? .py???? --mode=regex ????????",
+    )
+    parser.add_argument(
+        "--regex-max-depth",
+        type=int,
+        default=None,
+        help="?????????0 ???????? 200?",
     )
     parser.add_argument("--set-password", action="store_true", help="???????????????")
     parser.add_argument("--password", default=None, help="??????????????????????")
@@ -277,6 +283,7 @@ def main(argv=None):
             _log_warn(f"[WARN] 设置 IDML 输出名失败，仍使用默认: {e}")
     arg_debug_line = (
         f"[ARGS] mode={args.mode} regex_cfg={args.regex_config or '(default)'} "
+        f"regex_max_depth={args.regex_max_depth if args.regex_max_depth is not None else '(default 200)'} "
         f"skip_images={args.no_images} skip_tables={args.no_tables} "
         f"skip_textboxes={args.no_textboxes} template={eff_template} out={getattr(X, 'IDML_OUT_PATH', None)} "
         f"log_dir={args.log_dir or '(default)'} no_run={args.no_run}"
@@ -315,6 +322,7 @@ def main(argv=None):
         input_path,
         mode=args.mode,
         regex_config_path=args.regex_config,
+        regex_max_depth=args.regex_max_depth,
         skip_images=args.no_images,
         skip_tables=args.no_tables,
         skip_textboxes=args.no_textboxes,

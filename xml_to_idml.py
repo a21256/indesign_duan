@@ -1478,6 +1478,12 @@ def main():
         help="指定 regex_rules.json（不再支持 .py），用于 --mode=regex 或 hybrid 时自定义正则规则",
     )
     parser.add_argument(
+        "--regex-max-depth",
+        type=int,
+        default=None,
+        help="正则分级最大层级，0 表示不限制（默认 200）",
+    )
+    parser.add_argument(
         "--skip-docx",
         action="store_true",
         help="???? DOCX??XML????????????? XML",
@@ -1546,7 +1552,10 @@ def main():
             PIPELINE_LOGGER.error(msg)
             return
         exporter = DOCXOutlineExporter(
-            docx_input, mode=args.mode, regex_config_path=args.regex_config
+            docx_input,
+            mode=args.mode,
+            regex_config_path=args.regex_config,
+            regex_max_depth=args.regex_max_depth,
         )
         if args.mode in ("regex", "hybrid"):
             rules_path = getattr(exporter, "regex_rules_path", None)

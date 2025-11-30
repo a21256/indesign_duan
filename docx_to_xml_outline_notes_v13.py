@@ -398,11 +398,18 @@ class NumericDepthSplitter(Splitter):
 class DOCXOutlineExporter:
     _NOTE_STYLE_HINTS = {"footnotereference", "endnotereference"}
     _MAX_NOTE_MARKER_LEN = 4
-    def __init__(self, input_path: str, mode: str = "heading", skip_images: bool = False, skip_tables: bool = False, skip_textboxes: bool = False, regex_config_path: Optional[str] = None):
+    def __init__(self, input_path: str, mode: str = "heading", skip_images: bool = False, skip_tables: bool = False, skip_textboxes: bool = False, regex_config_path: Optional[str] = None, regex_max_depth: Optional[int] = None):
         assert mode in ("heading", "regex", "hybrid"), "mode must be 'heading', 'regex', or 'hybrid'"
         self.mode = mode
         load_regex_rules(regex_config_path)
         self.regex_rules_path = ACTIVE_REGEX_RULES_PATH
+        # None -> default 200; <=0 -> unlimited
+        if regex_max_depth is None:
+            self._regex_max_depth: Optional[int] = 200
+        elif regex_max_depth <= 0:
+            self._regex_max_depth = None
+        else:
+            self._regex_max_depth = int(regex_max_depth)
         self.input_path = input_path
         self.doc = Document(input_path)
         self.skip_images = bool(skip_images)
@@ -2116,8 +2123,8 @@ class DOCXOutlineExporter:
                     current._pending_for_children.append(ln)
         return nodes
 
-    def _regex_build_recursive(self, parent: MyDOCNode, level: int, lines: List[str], max_depth: int = 200):
-        if level > max_depth:
+    def _regex_build_recursive(self, parent: MyDOCNode, level: int, lines: List[str], max_depth: Optional[int] = 200):
+        if max_depth is not None and level > max_depth:
             for ln in lines:
                 if ln and ln.strip():
                     self._append_body_fragment(parent, ln)
@@ -2262,7 +2269,7 @@ class DOCXOutlineExporter:
                 ph = self._table_placeholder(obj._element, section_state)
                 if ph:
                     lines.append(ph)
-        self._regex_build_recursive(self.root, level=1, lines=lines, max_depth=200)
+        self._regex_build_recursive(self.root, level=1, lines=lines, max_depth=self._regex_max_depth)
         self._regex_finalize_pending_to_body(self.root)
         logger.info("Regex tree build complete.")
 
@@ -2272,7 +2279,7 @@ class DOCXOutlineExporter:
             lines = node.body_paragraphs[:]
             node.body_paragraphs = []
             before = len(node.children)
-            self._regex_build_recursive(node, level=node.level + 1, lines=lines, max_depth=200)
+            self._regex_build_recursive(node, level=node.level + 1, lines=lines, max_depth=self._regex_max_depth)
             self._regex_finalize_pending_to_body(node)
             after = len(node.children)
             if after > before:
@@ -2366,11 +2373,17 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="DOCX -> XML exporter (heading/regex/hybrid) with style switches")
     parser.add_argument("--mode", choices=["heading", "regex", "hybrid"], default="heading", help="Detection mode")
     parser.add_argument("--regex-config", help="Path to regex_rules.json override (optional)")
+    parser.add_argument("--regex-max-depth", type=int, help="Max depth for regex segmentation (0 for unlimited, default 200)")
     parser.add_argument("input", help="Input .docx path")
     parser.add_argument("output", help="Output .xml path")
     args = parser.parse_args(argv)
 
-    exporter = DOCXOutlineExporter(args.input, mode=args.mode, regex_config_path=args.regex_config)
+    exporter = DOCXOutlineExporter(
+        args.input,
+        mode=args.mode,
+        regex_config_path=args.regex_config,
+        regex_max_depth=args.regex_max_depth,
+    )
     exporter.process(args.output)
     # print(f"[OK] mode={args.mode} XML saved -> {args.output}")
 
