@@ -48,8 +48,8 @@ except Exception:
         ("fixed", r'^第[\d一二三四五六七八九十百]+节[ 　\t]*'),
         ("fixed", r'^第[\d一二三四五六七八九十百]+条[ 　\t]*'),
         ("numeric_dotted", None),
-        ("fixed", r'^[�?]\s*\d+\s*[)）]'),
-        ("fixed", r'^[�?]\s*[一二三四五六七八九十百]+\s*[)）]'),
+        ("fixed", r'^[\uFF08(]\s*\d+\s*[)\uFF09]'),
+        ("fixed", r'^[\uFF08(]\s*[一二三四五六七八九十百]+\s*[)\uFF09]'),
         ("fixed", r'^\d+\s*[)）]'),
         ("fixed", r'^[一二三四五六七八九十百]+、\s*'),
     ]
@@ -104,7 +104,8 @@ XP_RUN_LAST_PAGEBREAK = etree.XPath(".//w:lastRenderedPageBreak", namespaces=NSM
 
 COMPILED_FIXED: List[Optional[re.Pattern]] = []
 COMPILED_NEGATIVE: List[Optional[re.Pattern]] = []
-NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)(?=[\.．]\d+|[\.．]\s+|\s+)')
+# allow “1.1标题”无空格也算编号；终止于非数字字符
+NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)(?!\d)')
 NOTE_MARKER_TRIM = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』.,．、，。:：;-—﹣﹘"
 NOTE_MARKER_EDGE = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』"
 NOTE_MARKER_CHAR_SET = set(
