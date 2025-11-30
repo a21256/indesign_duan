@@ -697,6 +697,14 @@ function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
     try{ log("[IMGDBG] holder id=" + (holderInfo.holder?holderInfo.holder.id:"NA") + " innerW=" + holderInfo.innerW); }catch(_){}
     var clamp = __imgClampSize(rect, spec, ratio, holderInfo.innerW);
 
+    // for inline images, keep bottom aligned to baseline to avoid overlapping previous lines
+    if (isInline){
+      try{
+        var bottom = gb[2], left = gb[1];
+        rect.geometricBounds = [bottom - clamp.targetH, left, bottom, left + clamp.targetW];
+      }catch(_pos){}
+    }
+
     __imgApplyFit(rect);
 
     try {
@@ -958,17 +966,22 @@ function __imgAddImageAtV2(ip, spec) {
       try {
         var _anch = rect.anchoredObjectSettings;
         if (_anch && _anch.isValid !== false) {
-          _anch.anchoredPosition = isInline ? AnchorPosition.INLINE_POSITION : AnchorPosition.ABOVE_LINE;
-          var _anchorPoint = AnchorPoint.TOP_LEFT_ANCHOR;
-          var _alignKey = String((spec&&spec.align)||"left").toLowerCase();
-          if (!isInline) {
+          // 对内联图采用 above-line + 少量 wrap，避免压字；其他保持原逻辑
+          if (isInline) {
+            _anch.anchoredPosition = AnchorPosition.ABOVE_LINE;
+            _anch.anchorPoint = AnchorPoint.TOP_LEFT_ANCHOR;
+            __imgApplyFloatTextWrap(rect, {wrap:"topbottom", distT:"2pt", distB:"2pt", distL:"0pt", distR:"0pt"});
+          } else {
+            _anch.anchoredPosition = AnchorPosition.ABOVE_LINE;
+            var _anchorPoint = AnchorPoint.TOP_LEFT_ANCHOR;
+            var _alignKey = String((spec&&spec.align)||"left").toLowerCase();
             if (_alignKey === "center") {
               _anchorPoint = AnchorPoint.TOP_CENTER_ANCHOR;
             } else if (_alignKey === "right") {
               _anchorPoint = AnchorPoint.TOP_RIGHT_ANCHOR;
             }
+            _anch.anchorPoint = _anchorPoint;
           }
-          _anch.anchorPoint = _anchorPoint;
         }
       } catch(_){ }
 
@@ -976,6 +989,20 @@ function __imgAddImageAtV2(ip, spec) {
       if (!__sizeDeferred){
         __imgFloatSizeAndWrap(rect, spec, isInline);
         __imgAdjustImageParagraph(rect, spec, isInline);
+        // inline images: add breathing room to avoid overlay with text
+        try{
+          if (isInline){
+            var pInline = rect.storyOffset.paragraphs[0];
+            if (pInline && pInline.isValid){
+              var sbInl = __imgToPtLocal(spec && spec.spaceBefore);
+              var saInl = __imgToPtLocal(spec && spec.spaceAfter);
+              if (!sbInl || sbInl <= 0) sbInl = 4;
+              if (!saInl || saInl <= 0) saInl = 2;
+              try{ pInline.spaceBefore = sbInl; }catch(_sbi){}
+              try{ pInline.spaceAfter  = saInl; }catch(_sai){}
+            }
+          }
+        }catch(_inlinePad){}
       }
 
       // 8 & 9) post-process block image (newline + flush)
