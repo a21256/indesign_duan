@@ -35,5 +35,6 @@
   ],
   "NEGATIVE_PATTERNS": [
     "^\\s*\\d+\\.\\s*(cop[0-4]|sp|sol|un)"
-  ]
+  ],
+  "NUMERIC_DOTTED": "^(\\d+(?:[\\.．]\\d+)*)(?!\\d)"
 }

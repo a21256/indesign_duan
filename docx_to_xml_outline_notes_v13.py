@@ -104,8 +104,10 @@ XP_RUN_LAST_PAGEBREAK = etree.XPath(".//w:lastRenderedPageBreak", namespaces=NSM
 
 COMPILED_FIXED: List[Optional[re.Pattern]] = []
 COMPILED_NEGATIVE: List[Optional[re.Pattern]] = []
-# allow “1.1标题”无空格也算编号；终止于非数字字符
-NUMERIC_DOTTED = re.compile(r'^(\d+(?:[\.．]\d+)*)(?!\d)')
+# allow “1.1标题”无空格也算编号；终止于非数字字符（可被 JSON 覆盖）
+DEFAULT_NUMERIC_DOTTED_PATTERN = r'^(\d+(?:[\.．]\d+)*)(?!\d)'
+NUMERIC_DOTTED_PATTERN = DEFAULT_NUMERIC_DOTTED_PATTERN
+NUMERIC_DOTTED: re.Pattern = re.compile(NUMERIC_DOTTED_PATTERN)
 NOTE_MARKER_TRIM = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』.,．、，。:：;-—﹣﹘"
 NOTE_MARKER_EDGE = " \t\r\n()（）[]【】〔〕{}<>《》〈〉「」『』"
 NOTE_MARKER_CHAR_SET = set(
@@ -145,7 +147,8 @@ def _load_rules_from_json(path: str):
         data = json.load(fh)
     order = data.get("REGEX_ORDER") or data.get("regex_order")
     negative = data.get("NEGATIVE_PATTERNS") or data.get("negative_patterns")
-    return order, negative
+    numeric = data.get("NUMERIC_DOTTED") or data.get("numeric_dotted")
+    return order, negative, numeric
 
 def _emu_to_pt(val_emu: Optional[str]) -> Optional[float]:
     try:
@@ -160,7 +163,7 @@ def _twip_to_pt(val: Optional[str]) -> Optional[float]:
         return None
 
 def _compile_patterns():
-    global COMPILED_FIXED, COMPILED_NEGATIVE
+    global COMPILED_FIXED, COMPILED_NEGATIVE, NUMERIC_DOTTED
     COMPILED_FIXED = []
     for kind, pat in REGEX_ORDER:
         if kind == "fixed" and pat:
@@ -174,26 +177,32 @@ def _compile_patterns():
         except re.error:
             logger.warning(f"Invalid negative regex pattern skipped: {pat}")
             COMPILED_NEGATIVE.append(None)
+    try:
+        NUMERIC_DOTTED = re.compile(NUMERIC_DOTTED_PATTERN)
+    except re.error:
+        logger.warning(f"Invalid numeric_dotted pattern, falling back to default: {NUMERIC_DOTTED_PATTERN}")
+        NUMERIC_DOTTED = re.compile(DEFAULT_NUMERIC_DOTTED_PATTERN)
 
 def load_regex_rules(config_path: Optional[str] = None) -> Optional[str]:
     """
     Load regex rules from an external JSON file (next to the executable or via REGEX_RULES_PATH).
     Falls back to bundled defaults when no override is present.
     """
-    global REGEX_ORDER, NEGATIVE_PATTERNS, ACTIVE_REGEX_RULES_PATH
+    global REGEX_ORDER, NEGATIVE_PATTERNS, ACTIVE_REGEX_RULES_PATH, NUMERIC_DOTTED_PATTERN
     chosen_path: Optional[str] = None
     for candidate in _iter_regex_config_paths(config_path):
         if not os.path.exists(candidate):
             continue
         try:
             if candidate.lower().endswith(".json"):
-                order, negative = _load_rules_from_json(candidate)
+                order, negative, numeric = _load_rules_from_json(candidate)
             else:
                 continue
-            if order is None and negative is None:
+            if order is None and negative is None and numeric is None:
                 continue
             REGEX_ORDER = list(order or DEFAULT_REGEX_ORDER)
             NEGATIVE_PATTERNS = list(negative or DEFAULT_NEGATIVE_PATTERNS)
+            NUMERIC_DOTTED_PATTERN = str(numeric) if numeric else DEFAULT_NUMERIC_DOTTED_PATTERN
             chosen_path = candidate
             logger.info(f"Regex rules loaded from {candidate}")
             break
@@ -202,6 +211,7 @@ def load_regex_rules(config_path: Optional[str] = None) -> Optional[str]:
     if chosen_path is None:
         REGEX_ORDER = list(DEFAULT_REGEX_ORDER)
         NEGATIVE_PATTERNS = list(DEFAULT_NEGATIVE_PATTERNS)
+        NUMERIC_DOTTED_PATTERN = DEFAULT_NUMERIC_DOTTED_PATTERN
     ACTIVE_REGEX_RULES_PATH = chosen_path
     _compile_patterns()
     return chosen_path
