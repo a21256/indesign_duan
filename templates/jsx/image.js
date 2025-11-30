@@ -627,7 +627,7 @@ function __imgPlaceImageGroup(tf, story, page, specs){
   try{ innerStory.recompose(); }catch(_){}
   return {frame:frame, tf:tf, story:story, page:page};
 }
-function __imgFloatSizeAndWrap(rect, spec, isInline){
+function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
   if (!rect || !rect.isValid) return;
   __imgApplyFit(rect);
   try {
@@ -648,6 +648,22 @@ function __imgFloatSizeAndWrap(rect, spec, isInline){
           + " ratio=" + (clamp.ratio||0).toFixed(4));
     } catch(__){}
   } catch(__sz){
+    try{
+      if (!_retry){
+        var stRetry = null;
+        try{ stRetry = rect && rect.isValid ? rect.parentStory : null; }catch(_st){}
+        var altRect = null;
+        try{
+          if (stRetry && stRetry.isValid && stRetry.rectangles && stRetry.rectangles.length){
+            altRect = stRetry.rectangles[-1];
+          }
+        }catch(_alt){}
+        if (altRect && altRect.isValid){
+          try{ log("[IMG][WARN] size retry with story rectangle id=" + altRect.id); }catch(_l){}
+          return __imgFloatSizeAndWrap(altRect, spec, isInline, true);
+        }
+      }
+    }catch(_r){}
     try{ log("[IMG][ERR] size failed " + __sz); }catch(_){}
   }
 
