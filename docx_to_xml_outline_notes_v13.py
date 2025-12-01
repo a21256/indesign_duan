@@ -433,9 +433,9 @@ class DOCXOutlineExporter:
         self.assets_dir = None  # set in process()
         self.default_section_state = self._resolve_default_section_state()
         self._body_iter_items: List[Tuple[str, int, Dict[str, Any]]] = []
+        self._doc_paragraphs: List[Any] = []
+        self._doc_tables: List[Any] = []
         self._build_body_iter_index()
-        self._doc_paragraphs = list(self.doc.paragraphs)
-        self._doc_tables = list(self.doc.tables)
         self._frame_seq = 0
         self._word_page_width_pt, self._word_page_height_pt = self._resolve_word_page_size()
         self._word_page_seq = 1
@@ -996,7 +996,14 @@ class DOCXOutlineExporter:
         default_state = self.default_section_state
         if not children:
             self._body_iter_items = []
+            self._doc_paragraphs = []
+            self._doc_tables = []
             return
+
+        para_map = {p._element: p for p in getattr(self.doc, "paragraphs", [])}
+        tbl_map = {t._element: t for t in getattr(self.doc, "tables", [])}
+        collected_paras: List[Any] = []
+        collected_tbls: List[Any] = []
         states: List[Dict[str, Any]] = [self._copy_section_state(default_state) for _ in children]
         next_state = self._copy_section_state(default_state)
         for idx in range(len(children) - 1, -1, -1):
@@ -1012,12 +1019,24 @@ class DOCXOutlineExporter:
             nonlocal p_idx, t_idx, items
             tag = child.tag
             if tag.endswith('}p'):
+                pobj = para_map.get(child)
+                if pobj is None:
+                    logger.warning("Paragraph element not found in doc.paragraphs; skipping to avoid misaligned index.")
+                    return
                 items.append(('p', p_idx, state))
+                collected_paras.append(pobj)
                 p_idx += 1
             elif tag.endswith('}tbl'):
                 if not self.skip_tables:
-                    items.append(('tbl', t_idx, state))
-                t_idx += 1
+                    tobj = tbl_map.get(child)
+                    if tobj is None:
+                        logger.warning("Table element not found in doc.tables; skipping to avoid misaligned index.")
+                    else:
+                        items.append(('tbl', t_idx, state))
+                        collected_tbls.append(tobj)
+                        t_idx += 1
+                else:
+                    t_idx += 1
             elif tag.endswith('}sdt'):
                 content = child.find("./w:sdtContent", NSMAP)
                 if content is not None:
@@ -1026,6 +1045,8 @@ class DOCXOutlineExporter:
         for idx, child in enumerate(children):
             append_child(child, states[idx])
         self._body_iter_items = items
+        self._doc_paragraphs = collected_paras
+        self._doc_tables = collected_tbls
 
     def _table_placeholder(self, tbl_el, section_state) -> Optional[str]:
         def _unwrap_nested_table(table_el):
@@ -2170,9 +2191,15 @@ class DOCXOutlineExporter:
         """Yield ('p'/'tbl', object, section_state) in document order."""
         for kind, index, state in self._body_iter_items:
             if kind == 'p':
+                if index >= len(self._doc_paragraphs):
+                    logger.warning(f"Paragraph index {index} out of range (len={len(self._doc_paragraphs)}); skipped.")
+                    continue
                 yield ('p', self._doc_paragraphs[index], self._copy_section_state(state))
             elif kind == 'tbl':
                 if self.skip_tables:
+                    continue
+                if index >= len(self._doc_tables):
+                    logger.warning(f"Table index {index} out of range (len={len(self._doc_tables)}); skipped.")
                     continue
                 yield ('tbl', self._doc_tables[index], self._copy_section_state(state))
 
