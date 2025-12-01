@@ -10,8 +10,28 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 from pipeline_logger import PipelineLogger
 
+def _runtime_base_dir() -> str:
+    """
+    Resolve a stable base dir for outputs/assets.
+    Order: NUITKA_ONEFILE_PARENT (real exe dir) > argv[0] dir > sys.executable dir > this file dir.
+    This avoids writing to the onefile temp extraction dir that gets cleaned up.
+    """
+    env_parent = os.environ.get("NUITKA_ONEFILE_PARENT")
+    if env_parent and os.path.isdir(env_parent):
+        return os.path.abspath(env_parent)
+
+    argv0 = sys.argv[0] if sys.argv else None
+    if argv0 and os.path.exists(argv0):
+        return os.path.abspath(os.path.dirname(argv0))
+
+    exe_path = getattr(sys, "executable", None)
+    if exe_path and os.path.exists(exe_path):
+        return os.path.abspath(os.path.dirname(exe_path))
+
+    return os.path.abspath(os.path.dirname(__file__))
+
 # ========== 路径与配置 ==========
-OUT_DIR = os.path.abspath(os.path.dirname(__file__))
+OUT_DIR = _runtime_base_dir()
 XML_PATH = os.path.join(OUT_DIR, "formatted_output.xml")
 TEMPLATE_PATH = os.path.join(OUT_DIR, "template.idml")
 IDML_OUT_PATH = os.path.join(OUT_DIR, "output.idml") 

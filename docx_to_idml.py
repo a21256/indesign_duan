@@ -24,7 +24,26 @@ import zipfile
 from xml.etree import ElementTree as ET
 from typing import Optional
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+def _runtime_base_dir() -> str:
+    """
+    Resolve a stable base dir (prefer real exe dir, avoid onefile temp).
+    Order: NUITKA_ONEFILE_PARENT > argv[0] dir (if exists) > sys.executable dir > this file dir.
+    """
+    env_parent = os.environ.get("NUITKA_ONEFILE_PARENT")
+    if env_parent and os.path.isdir(env_parent):
+        return os.path.abspath(env_parent)
+
+    argv0 = sys.argv[0] if sys.argv else None
+    if argv0 and os.path.exists(argv0):
+        return os.path.abspath(os.path.dirname(argv0))
+
+    exe_path = getattr(sys, "executable", None)
+    if exe_path and os.path.exists(exe_path):
+        return os.path.abspath(os.path.dirname(exe_path))
+
+    return os.path.abspath(os.path.dirname(__file__))
+
+BASE_DIR = _runtime_base_dir()
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
