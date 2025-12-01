@@ -1460,18 +1460,18 @@ def _relay_jsx_events(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="DOCX ?? XML ?? JSX ?? InDesign ?????????"
+        description="DOCX -> XML -> JSX -> InDesign 自动排版"
     )
     parser.add_argument(
         "docx",
         nargs="?",
-        help="??????? DOCX ?????????????????? 1.docx??",
+        help="要转换的 DOCX 文件，未提供则默认脚本目录的 1.docx",
     )
     parser.add_argument(
         "--mode",
         choices=("heading", "regex", "hybrid"),
         default="heading",
-        help="DOCXOutlineExporter ???????????? heading??",
+        help="DOCXOutlineExporter 的解析模式，默认 heading",
     )
     parser.add_argument(
         "--regex-config",
@@ -1486,16 +1486,16 @@ def main():
     parser.add_argument(
         "--skip-docx",
         action="store_true",
-        help="???? DOCX??XML????????????? XML",
+        help="跳过 DOCX->XML，直接使用已有 XML",
     )
     parser.add_argument(
         "--xml-path",
-        help="?????? XML ???/???????????? formatted_output.xml??",
+        help="手动指定 XML 输入/输出路径，默认 formatted_output.xml",
     )
     parser.add_argument(
         "--no-run",
         action="store_true",
-        help="?????? XML/JSX?????????? InDesign",
+        help="只生成 XML/JSX，不实际调用 InDesign",
     )
     parser.add_argument(
         "--dump-jsx-template",

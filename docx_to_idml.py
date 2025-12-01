@@ -224,22 +224,22 @@ def main(argv=None):
         choices=["heading", "regex"],
         metavar="{heading,regex}",
         default="heading",
-        help="Detection mode?heading ? regex",
+        help="Detection mode：heading 或 regex",
     )
     parser.add_argument(
         "--regex-config",
-        help="?? regex_rules.json????? .py???? --mode=regex ????????",
+        help="指定 regex_rules.json（不再支持 .py），用于 --mode=regex 时自定义正则规则",
     )
     parser.add_argument(
         "--regex-max-depth",
         type=int,
         default=None,
-        help="?????????0 ???????? 200?",
+        help="正则分级最大层级，0 表示不限制（默认 200）",
     )
-    parser.add_argument("--set-password", action="store_true", help="???????????????")
-    parser.add_argument("--password", default=None, help="??????????????????????")
-    parser.add_argument("--template", "-t", dest="template", default=None, help="?? TEMPLATE_PATH??? .idml ???")
-    parser.add_argument("--out", "-o", dest="out", default=None, help="?? IDML_OUT_PATH??? .idml ??")
+    parser.add_argument("--set-password", action="store_true", help="修改程序密码（需验证当前密码）")
+    parser.add_argument("--password", default=None, help="以非交互形式提供密码（可选，留空则提示输入）")
+    parser.add_argument("--template", "-t", dest="template", default=None, help="覆盖 TEMPLATE_PATH，模板 .idml 的路径")
+    parser.add_argument("--out", "-o", dest="out", default=None, help="覆盖 IDML_OUT_PATH，输出 .idml 路径")
     parser.add_argument("input", nargs="?", help="Input .docx path")
     parser.add_argument("--no-images", action="store_true", help="?? XML ??? Word ??")
     parser.add_argument("--no-tables", action="store_true", help="?? XML ??? Word ??")
