@@ -1799,8 +1799,8 @@ class DOCXOutlineExporter:
                         pass
 
                     if (not posV) and offY:
-                        posV = "paragraph"  # 璁?offY 鏈夊弬鐓?
-                    out_path = out_path.replace("\\", "/")  # 缁熶竴涓烘鏂滄潬
+                        posV = "paragraph" 
+                    out_path = out_path.replace("\\", "/")  
 
 
                     inline_flag = "1" if is_inline else "0"

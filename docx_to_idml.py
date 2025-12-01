@@ -228,7 +228,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--regex-config",
-        help="指定 regex_rules.json（不再支持 .py），用于 --mode=regex 时自定义正则规则",
+        help="指定 regex_rules.json，用于 --mode=regex 时自定义正则规则",
     )
     parser.add_argument(
         "--regex-max-depth",
@@ -241,10 +241,10 @@ def main(argv=None):
     parser.add_argument("--template", "-t", dest="template", default=None, help="覆盖 TEMPLATE_PATH，模板 .idml 的路径")
     parser.add_argument("--out", "-o", dest="out", default=None, help="覆盖 IDML_OUT_PATH，输出 .idml 路径")
     parser.add_argument("input", nargs="?", help="Input .docx path")
-    parser.add_argument("--no-images", action="store_true", help="?? XML ??? Word ??")
-    parser.add_argument("--no-tables", action="store_true", help="?? XML ??? Word ??")
-    parser.add_argument("--no-textboxes", action="store_true", help="?? XML ??????/??")
-    parser.add_argument("--log-dir", help="???????????????? logs?")
+    parser.add_argument("--no-images", action="store_true", help="不处理图片")
+    parser.add_argument("--no-tables", action="store_true", help="不处理表格")
+    parser.add_argument("--no-textboxes", action="store_true", help="不处理文本框")
+    parser.add_argument("--log-dir", help="日志文件目录")
     parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)

@@ -222,9 +222,7 @@
               log(__tableTag + " layout pre cur=" + (curOrientation||"NA") + " default=" + (defaultOrientation||"NA") + " target=" + (targetOrientation||"NA") + " needSwitch=" + needSwitch + " page=" + (page&&page.isValid?page.name:"NA"));
             }catch(__preLog){}
             // 若当前尚未记录布局，但目标朝向与默认不一致，也视为需要切换（避免直接把现页改成横版）
-            // ??????????????????????????????????????????
             if (needSwitch){
-              // ?????????????????????????????
               try{
                 var spreadPages = null; try{ spreadPages = (page && page.parent && page.parent.pages) ? page.parent.pages : null; }catch(_sp){}
                 var spreadLenDbg = (spreadPages && spreadPages.length) ? spreadPages.length : "NA";
@@ -245,7 +243,6 @@
                   }
                 }catch(_align){}
               }catch(_preSwitch){}
-              // ?????????????
             try{
               var docOff = __pageDocOffset(page);
               if (docOff !== null && docOff % 2 === 1){

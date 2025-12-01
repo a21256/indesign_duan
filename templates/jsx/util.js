@@ -1,6 +1,5 @@
 ﻿var CONFIG = %JSX_CONFIG%;
 if (!CONFIG) CONFIG = {};
-// debug ??? entry.js ????? false
 var __DEBUG_WRITE = false;
 
 // JSON helpers (ExtendScript 可能没有内置 JSON 对象)

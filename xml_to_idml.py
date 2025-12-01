@@ -1560,9 +1560,9 @@ def main():
         if args.mode in ("regex", "hybrid"):
             rules_path = getattr(exporter, "regex_rules_path", None)
             if rules_path:
-                msg = f"[INFO] regex �����������ļ�: {rules_path}"
+                msg = f"[INFO] regex 规则文件: {rules_path}"
             else:
-                msg = "[INFO] regex ����ʹ��Ĭ�Ϲ���"
+                msg = "[INFO] regex 使用默认规则"
             print(msg)
             PIPELINE_LOGGER.user(msg)
         summary = exporter.process(XML_PATH)
