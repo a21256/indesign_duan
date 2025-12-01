@@ -269,6 +269,30 @@ def _parse_pstyle_marker(text: str) -> Tuple[str, Dict[str, str]]:
     text_wo = text[:m.start()].rstrip()
     return text_wo, attrs
 
+def _parse_list_marker(text: str) -> Tuple[str, Dict[str, str]]:
+    """Extract [[LIST ...]] from tail and return (text_wo_marker, attrs_dict)."""
+    attrs: Dict[str, str] = {}
+    m = re.search(r'\[\[LIST\s+([^\]]+)\]\]\s*$', text or '')
+    if not m:
+        return text, attrs
+    attr_s = m.group(1)
+    for k, v in re.findall(r'([a-zA-Z\-]+)="([^"]*)"', attr_s):
+        attrs[k] = v
+    text_wo = text[:m.start()].rstrip()
+    return text_wo, attrs
+
+def _parse_list_marker(text: str) -> Tuple[str, Dict[str, str]]:
+    """Extract [[LIST ...]] from tail and return (text_wo_marker, attrs_dict)."""
+    attrs: Dict[str, str] = {}
+    m = re.search(r'\[\[LIST\s+([^\]]+)\]\]\s*$', text or '')
+    if not m:
+        return text, attrs
+    attr_s = m.group(1)
+    for k, v in re.findall(r'([a-zA-Z\-]+)="([^"]*)"', attr_s):
+        attrs[k] = v
+    text_wo = text[:m.start()].rstrip()
+    return text_wo, attrs
+
 class MyDOCNode(object):
     LEVEL_TAGS = {1: "chapter", 2: "section", 3: "subsection"}
 
@@ -350,9 +374,14 @@ class MyDOCNode(object):
     def to_xml_string(self, notes: dict = None, indent: int = 0) -> str:
         pad = "  " * indent
         parts = [f'{pad}<{self.container_tag(self.level)}>']
-        heading_text = self._escape_xml(self.name)
+        heading_raw, heading_list_attrs = _parse_list_marker(self.name)
+        heading_text = self._escape_xml(heading_raw)
         heading_text = self._convert_refs_to_xml(heading_text)
-        parts.append(f'{pad}  <{self.heading_tag(self.level)}>{heading_text}</{self.heading_tag(self.level)}>')
+        h_attrs = []
+        if heading_list_attrs:
+            h_attrs.extend([f'{k}="{self._escape_attr(v)}"' for k, v in heading_list_attrs.items() if v is not None])
+        h_attr_str = (" " + " ".join(h_attrs)) if h_attrs else ""
+        parts.append(f'{pad}  <{self.heading_tag(self.level)}{h_attr_str}>{heading_text}</{self.heading_tag(self.level)}>')
         if self.properties:
             parts.append(f'{pad}  <meta>')
             for k, v in self.properties.items():
@@ -360,15 +389,21 @@ class MyDOCNode(object):
                 parts.append(f'{pad}    <prop name="{k}">{v_str}</prop>')
             parts.append(f'{pad}  </meta>')
         for para in self.body_paragraphs:
-            text, pattrs = _parse_pstyle_marker(para) if STYLE_FLAGS.get("paragraph", True) else (para, {})
+            text = para
+            pattrs: Dict[str, str] = {}
+            lattrs: Dict[str, str] = {}
+            if STYLE_FLAGS.get("paragraph", True):
+                text, pattrs = _parse_pstyle_marker(text)
+            text, lattrs = _parse_list_marker(text)
             escaped = self._escape_xml(text)
             escaped = self._convert_refs_to_xml(escaped)
             # build <p ...attrs>
-            attrs_str = ""
+            attrs_pairs: List[str] = []
             if STYLE_FLAGS.get("paragraph", True) and pattrs:
-                attrs_pairs = [f'{k}="{self._escape_attr(v)}"' for k, v in pattrs.items() if v is not None and v != ""]
-                if attrs_pairs:
-                    attrs_str = " " + " ".join(attrs_pairs)
+                attrs_pairs.extend([f'{k}="{self._escape_attr(v)}"' for k, v in pattrs.items() if v is not None and v != ""])
+            if lattrs:
+                attrs_pairs.extend([f'{k}="{self._escape_attr(v)}"' for k, v in lattrs.items() if v is not None and v != ""])
+            attrs_str = (" " + " ".join(attrs_pairs)) if attrs_pairs else ""
             parts.append(f'{pad}  <p{attrs_str}>{escaped}</p>')
         for c in self.children:
             parts.append(c.to_xml_string(notes, indent + 1))
@@ -1540,19 +1575,19 @@ class DOCXOutlineExporter:
                 out = out.replace(f"%{i}", self._format_level_num(anid, level_idx, val))
         return out
 
-    def list_label_for_paragraph(self, paragraph) -> str:
+    def list_info_for_paragraph(self, paragraph) -> Tuple[str, Dict[str, str]]:
         p_el = paragraph._element
         numPr = p_el.find("./w:pPr/w:numPr", NSMAP)
         if numPr is None:
-            return ""
+            return "", {}
         numId_el = numPr.find("./w:numId", NSMAP)
         if numId_el is None or numId_el.get(f"{{{W_NS}}}val") is None:
-            return ""
+            return "", {}
         ilvl_el = numPr.find("./w:ilvl", NSMAP)
         try:
             numId = int(numId_el.get(f"{{{W_NS}}}val"))
         except Exception:
-            return ""
+            return "", {}
         ilvl = 0
         if ilvl_el is not None and ilvl_el.get(f"{{{W_NS}}}val") is not None:
             try:
@@ -1576,7 +1611,15 @@ class DOCXOutlineExporter:
         label = self._build_label_from_lvlText(anid, ilvl, counters)
         if label and not re.search(r'\s$', label):
             label = label + " "
-        return label
+        meta: Dict[str, str] = {"list-level": str(ilvl)}
+        numFmt = None
+        if anid in self.abstract_lvls and ilvl in self.abstract_lvls[anid]:
+            numFmt = self.abstract_lvls[anid][ilvl].get("numFmt")
+        if numFmt:
+            meta["list-type"] = numFmt
+        meta["numId"] = str(numId)
+        meta["abstractNumId"] = str(anid) if anid is not None else ""
+        return label, meta
 
     # ---------- Paragraph style helpers ----------
     @staticmethod
@@ -1656,16 +1699,17 @@ class DOCXOutlineExporter:
         return {k:v for k,v in attrs.items() if v}
 
     # ---------- Text with inline refs + numbering + styles ----------
-    def _paragraph_text_with_refs(self, paragraph, include_pstyle: bool = True) -> str:
+    def _paragraph_text_with_refs(self, paragraph, include_pstyle: bool = True, include_list_prefix: bool = False) -> str:
         chunks = []
         para_align = self._paragraph_align_token(paragraph)
         # list numbering
+        list_meta: Dict[str, str] = {}
         try:
-            label = self.list_label_for_paragraph(paragraph)
+            label, list_meta = self.list_info_for_paragraph(paragraph)
         except Exception as e:
             logger.debug(f"list label error: {e}")
             label = ""
-        if label:
+        if label and include_list_prefix:
             chunks.append(label)
 
         # Traverse runs: inline images and text/notes/tabs
@@ -2056,6 +2100,9 @@ class DOCXOutlineExporter:
             if pattrs:
                 kv = " ".join([f'{k}="{v}"' for k, v in pattrs.items()])
                 out += f' [[PSTYLE {kv}]]'
+        if list_meta and not include_list_prefix:
+            kv = " ".join([f'{k}=\"{v}\"' for k, v in list_meta.items() if v is not None])
+            out += f' [[LIST {kv}]]'
         return out
 
     # ---------- Heading detection (heading mode) ----------
@@ -2260,7 +2307,7 @@ class DOCXOutlineExporter:
                     parent = stack[level - 1]
                     index = sum(1 for c in parent.children if c.level == level) + 1
                     props = {"style": getattr(p.style, "name", None), "outline_level": level, "mode": "heading"}
-                    heading_text = self._paragraph_text_with_refs(p, include_pstyle=False) or raw_text
+                    heading_text = self._paragraph_text_with_refs(p, include_pstyle=False, include_list_prefix=False) or raw_text
                     node = MyDOCNode(name=heading_text, level=level, index=index,
                                      parent=parent, element_type="heading", properties=props)
                     parent.add_child(node)
@@ -2271,7 +2318,7 @@ class DOCXOutlineExporter:
                         stack = stack[:level + 1]
                     current = node
                 else:
-                    text_with_refs = self._paragraph_text_with_refs(p, include_pstyle=True)
+                    text_with_refs = self._paragraph_text_with_refs(p, include_pstyle=True, include_list_prefix=False)
                     if text_with_refs or raw_text:
                         target = current if current is not None else self.root
                         if text_with_refs.strip():
@@ -2297,7 +2344,7 @@ class DOCXOutlineExporter:
                     lines.append(marker)
                 continue
             if kind == "p":
-                line = self._paragraph_text_with_refs(obj, include_pstyle=True)
+                line = self._paragraph_text_with_refs(obj, include_pstyle=True, include_list_prefix=False)
                 lines.append(line)
             elif kind == "tbl":
                 ph = self._table_placeholder(obj._element, section_state)
