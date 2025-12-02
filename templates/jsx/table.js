@@ -397,13 +397,42 @@
         __diag("pre.tf", function(){ return (typeof tf!=="undefined" && tf && tf.isValid) ? tf.id : "NA"; });
         try{ __diag("hasData", function(){ return obj && obj.data ? ("Y"+obj.data.length) : "N"; }); }catch(__){}
 
+        // debug helper: dump overset context (tail frames/pages)
+        function __tblLogOverset(label){
+          try{
+            var ip = null;
+            try{ ip = story && story.isValid ? story.insertionPoints[-1] : null; }catch(_){}
+            var hold = (ip && ip.isValid && ip.parentTextFrames && ip.parentTextFrames.length) ? ip.parentTextFrames[0] : null;
+            var holdPage = null; try{ holdPage = hold && hold.isValid ? hold.parentPage : null; }catch(_){}
+            var tails = [];
+            try{
+              var containers = story && story.isValid ? story.textContainers : null;
+              if (containers && containers.length){
+                for (var i=Math.max(0, containers.length-3); i<containers.length; i++){
+                  var c = containers[i];
+                  if (!c || !c.isValid) continue;
+                  var pg = null; try{ pg = c.parentPage; }catch(_pg){}
+                  var nxt = null; try{ nxt = c.nextTextFrame; }catch(_nx){}
+                  tails.push("id=" + c.id + " over=" + c.overflows + " page=" + (pg&&pg.isValid?pg.name:"NA") + " next=" + (nxt&&nxt.isValid?nxt.id:"NA"));
+                }
+              }
+            }catch(_tc){}
+            log(__tableTag + " overset?" + (story && story.isValid ? story.overflows : "NA")
+                + " label=" + label
+                + " ipFrame=" + (hold&&hold.isValid?hold.id:"NA")
+                + " ipPage=" + (holdPage&&holdPage.isValid?holdPage.name:"NA")
+                + " tail=[" + tails.join(";") + "]");
+          }catch(_dbg){}
+        }
+
         // ensure a clean paragraph and flush overflow before inserting table
         function __tblPrepareStory(){
+          __tblLogOverset("pre-prepare");
           try { story.insertionPoints[-1].contents = "\r"; } catch(_){ }
           try { story.recompose(); } catch(_){ }
           try{
             if (typeof flushOverflow === "function" && typeof tf !== "undefined" && tf && tf.isValid){
-              var __pre = flushOverflow(story, page, tf, 1);
+              var __pre = flushOverflow(story, page, tf);
               if (__pre && __pre.frame && __pre.page){
                 page = __pre.page;
                 tf   = __pre.frame;
@@ -412,6 +441,7 @@
               }
             }
           }catch(_){ }
+          __tblLogOverset("post-prepare");
         }
         __tblPrepareStory();
 
@@ -582,7 +612,7 @@
                     try{ storyArg.recompose(); }catch(_){}
                     try{
                         if (typeof flushOverflow === "function" && holder && holder.isValid){
-                            var __fl = flushOverflow(storyArg, page, holder, 1);
+                            var __fl = flushOverflow(storyArg, page, holder);
                             if (__fl && __fl.frame && __fl.frame.isValid){
                                 result.frame = __fl.frame;
                                 result.page  = __fl.page;
@@ -1183,7 +1213,7 @@
         try{
           story.recompose();
           if (typeof flushOverflow==="function" && tf && tf.isValid){
-            __postFlush = flushOverflow(story, page, tf, 1);
+            __postFlush = flushOverflow(story, page, tf);
             page = __postFlush.page; tf = __postFlush.frame; story = tf.parentStory; curTextFrame = tf;
           }
         }catch(e){ log("[WARN] flush after table failed: " + e); }

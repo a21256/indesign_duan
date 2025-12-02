@@ -333,6 +333,32 @@ function __imgFloatPostProcess(rect, st, page, tf, opts){
     }catch(_){}
     if (!__tf && typeof tf!=="undefined") __tf = tf;
     if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
+    function __imgLogOverset(label){
+      try{
+        var ip = null;
+        try{ ip = story && story.isValid ? story.insertionPoints[-1] : null; }catch(_){}
+        var hold = (ip && ip.isValid && ip.parentTextFrames && ip.parentTextFrames.length) ? ip.parentTextFrames[0] : null;
+        var holdPage = null; try{ holdPage = hold && hold.isValid ? hold.parentPage : null; }catch(_){}
+        var tails = [];
+        try{
+          var containers = story && story.isValid ? story.textContainers : null;
+          if (containers && containers.length){
+            for (var i=Math.max(0, containers.length-3); i<containers.length; i++){
+              var c = containers[i];
+              if (!c || !c.isValid) continue;
+              var pg = null; try{ pg = c.parentPage; }catch(_pg){}
+              var nxt = null; try{ nxt = c.nextTextFrame; }catch(_nx){}
+              tails.push("id=" + c.id + " over=" + c.overflows + " page=" + (pg&&pg.isValid?pg.name:"NA") + " next=" + (nxt&&nxt.isValid?nxt.id:"NA"));
+            }
+          }
+        }catch(_tc){}
+        log("[IMG][OVR] " + label + " over=" + (story && story.isValid ? story.overflows : "NA")
+            + " ipFrame=" + (hold&&hold.isValid?hold.id:"NA")
+            + " ipPage=" + (holdPage&&holdPage.isValid?holdPage.name:"NA")
+            + " tail=[" + tails.join(";") + "]");
+      }catch(_dbg){}
+    }
+    __imgLogOverset("pre-flush");
     if (__pg && __tf && typeof flushOverflow === "function") {
       var fl = flushOverflow(story, __pg, __tf, 1);
       if (fl && fl.frame && fl.page) {
@@ -341,6 +367,7 @@ function __imgFloatPostProcess(rect, st, page, tf, opts){
         story = tf.parentStory;
         curTextFrame = tf;
       }
+      __imgLogOverset("post-flush");
       try{
         log("[IMG] after.flush  tf=" + (tf&&tf.isValid?tf.id:"NA")
             + " page=" + (page?page.name:"NA")
