@@ -395,9 +395,9 @@ function flushOverflow(currentStory, lastPage, lastFrame, maxPagesPerCall) {
             try{ if (lastFrame && lastFrame.isValid && lastFrame.id != null) frameId = lastFrame.id; }catch(_){}
             var payload = "flushOverflow " + msg + " page=" + pgName + " frame=" + frameId;
             try{
-                if (typeof log === "function") { log("[DBG][FLUSH] " + payload); return; }
+                if (typeof warn === "function") { warn(payload); return; }
             }catch(_warnFail){}
-            // 不再向 warn 通道输出
+            try{ log("[WARN] " + payload); }catch(_logFail){}
         }
         for (var guard = 0; currentStory && currentStory.overflows && guard < MAX_PAGES; guard++) {
             var docRef = app && app.activeDocument;

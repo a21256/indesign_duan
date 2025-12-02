@@ -1759,7 +1759,9 @@ class DOCXOutlineExporter:
             label = ""
             list_meta = {}
         want_prefix = include_list_prefix or self.inline_list_labels
-        if label and want_prefix:
+        # 如果缺少有效的列表定义（无 list-type/abstractNumId），则忽略编号前缀
+        has_valid_list = bool(list_meta.get("list-type") or list_meta.get("abstractNumId"))
+        if label and want_prefix and has_valid_list:
             chunks.append(label)
 
         # Traverse runs: inline images and text/notes/tabs
