@@ -403,7 +403,7 @@
           try { story.recompose(); } catch(_){ }
           try{
             if (typeof flushOverflow === "function" && typeof tf !== "undefined" && tf && tf.isValid){
-              var __pre = flushOverflow(story, page, tf);
+              var __pre = flushOverflow(story, page, tf, 1);
               if (__pre && __pre.frame && __pre.page){
                 page = __pre.page;
                 tf   = __pre.frame;
@@ -582,7 +582,7 @@
                     try{ storyArg.recompose(); }catch(_){}
                     try{
                         if (typeof flushOverflow === "function" && holder && holder.isValid){
-                            var __fl = flushOverflow(storyArg, page, holder);
+                            var __fl = flushOverflow(storyArg, page, holder, 1);
                             if (__fl && __fl.frame && __fl.frame.isValid){
                                 result.frame = __fl.frame;
                                 result.page  = __fl.page;
@@ -1183,7 +1183,7 @@
         try{
           story.recompose();
           if (typeof flushOverflow==="function" && tf && tf.isValid){
-            __postFlush = flushOverflow(story, page, tf);
+            __postFlush = flushOverflow(story, page, tf, 1);
             page = __postFlush.page; tf = __postFlush.frame; story = tf.parentStory; curTextFrame = tf;
           }
         }catch(e){ log("[WARN] flush after table failed: " + e); }
