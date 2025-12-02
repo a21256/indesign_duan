@@ -21,6 +21,7 @@ import base64
 import hashlib
 import time
 import zipfile
+import logging
 from xml.etree import ElementTree as ET
 from typing import Optional
 
@@ -266,6 +267,8 @@ def main(argv=None):
     parser.add_argument("--log-dir", help="日志文件目录")
     parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-inline-list-labels", dest="inline_list_labels", action="store_false", help="不把列表编号前缀写回正文，仅保留为元数据（默认写回，与 Word 视觉一致）")
+    parser.set_defaults(inline_list_labels=True)
     args = parser.parse_args(argv)
 
     input_path = None
@@ -328,6 +331,24 @@ def main(argv=None):
     LOG_PATH = X.LOG_PATH
     X.LOG_WRITE = args.debug_log
     if args.debug_log:
+        # reduce console noise; forward all logs to pipeline debug log
+        root_logger = logging.getLogger()
+        for h in list(root_logger.handlers):
+            try:
+                h.setLevel(logging.WARNING)
+            except Exception:
+                pass
+        class _PipelineLogHandler(logging.Handler):
+            def emit(self_inner, record):
+                try:
+                    msg = record.getMessage()
+                except Exception:
+                    msg = str(record)
+                if PIPELINE_LOGGER and PIPELINE_LOGGER.enable_debug:
+                    PIPELINE_LOGGER.debug(f"[{record.name}] {msg}")
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.addHandler(_PipelineLogHandler())
+    if args.debug_log:
         PIPELINE_LOGGER.describe_paths()
         _log_user(f"[LOG] 用户日志: {PIPELINE_LOGGER.user_log_path}")
         _log_user(f"[LOG] 调试日志: {PIPELINE_LOGGER.debug_log_path}")
@@ -345,6 +366,7 @@ def main(argv=None):
         skip_images=args.no_images,
         skip_tables=args.no_tables,
         skip_textboxes=args.no_textboxes,
+        inline_list_labels=args.inline_list_labels,
     )
     if args.mode == "regex":
         rules_path = getattr(exporter, "regex_rules_path", None)
