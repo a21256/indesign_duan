@@ -662,11 +662,30 @@ function __imgPlaceImageGroup(tf, story, page, specs){
     }catch(_place){ }
   }
   try{ innerStory.recompose(); }catch(_){}
+  var over = false;
+  try{ over = innerStory.overflows === true; }catch(_){}
   try{
-    var over = false;
-    try{ over = innerStory.overflows === true; }catch(_){}
-    log("[IMG-GROUP] placed=" + placedCount + "/" + specs.length + " overflow=" + over);
+    var ctxPage = null;
+    try{
+      var tfOver = (frame && frame.isValid && frame.parentTextFrames && frame.parentTextFrames.length) ? frame.parentTextFrames[0] : null;
+      if (tfOver && tfOver.parentPage && tfOver.parentPage.isValid) ctxPage = tfOver.parentPage.name;
+    }catch(_pg){}
+    log("[IMG-GROUP] placed=" + placedCount + "/" + specs.length + " overflow=" + over + (ctxPage ? (" page=" + ctxPage) : ""));
   }catch(_){}
+  if (over){
+    try{
+      var ctxPreview = "";
+      try{
+        if (specs && specs.length){
+          var s0 = specs[0] || {};
+          ctxPreview = s0.src ? (" src=" + s0.src) : "";
+        }
+      }catch(_prev){}
+      log("[IMG-GROUP][WARN] overflow detected; removing group frame to avoid overset" + (ctxPage ? (" page=" + ctxPage) : "") + ctxPreview);
+    }catch(_){}
+    try{ if (frame && frame.isValid) frame.remove(); }catch(_rem){}
+    return {frame:null, tf:tf, story:story, page:page};
+  }
   return {frame:frame, tf:tf, story:story, page:page};
 }
 function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
@@ -2210,3 +2229,4 @@ function __imgRemoveTailEmptyPages(docObj, baseCount){
     }
   }catch(_){}
 }
+
