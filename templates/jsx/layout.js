@@ -395,7 +395,7 @@ function flushOverflow(currentStory, lastPage, lastFrame, maxPagesPerCall) {
             try{ if (lastFrame && lastFrame.isValid && lastFrame.id != null) frameId = lastFrame.id; }catch(_){}
             var payload = "flushOverflow " + msg + " page=" + pgName + " frame=" + frameId;
             try{
-                if (typeof warn === "function") { warn(payload); return; }
+                if (typeof log === "function") { log("[INFO][FLUSH] " + payload); return; }
             }catch(_warnFail){}
             try{ log("[WARN] " + payload); }catch(_logFail){}
         }
