@@ -565,29 +565,64 @@ function __imgFindRectBySrcGlobal(spec, storyMaybe){
 }
 // clamp target size based on desired w/h and available width; writes geometricBounds
 function __imgClampSize(rect, spec, ratio, innerW){
-  if (!rect || !rect.isValid) return {targetW:0, targetH:0, innerW:innerW, wPt:0, hPt:0, ratio:ratio};
+  if (!rect || !rect.isValid) return {targetW:0, targetH:0, innerW:innerW, wPt:0, hPt:0, ratio:ratio, fillProportional:false};
   var wPt = __imgToPtLocal(spec && spec.w);
   var hPt = __imgToPtLocal(spec && spec.h);
   var gb  = rect.geometricBounds;
   var curW = Math.max(1e-6, gb[3]-gb[1]), curH = Math.max(1e-6, gb[2]-gb[0]);
-  // 如果 innerW 未取到，使用默认/显式宽度兜底，避免把显式 w 压缩掉
+  var imgRatio = ratio || (curW/curH) || 1.0;
+  // ??? innerW ????????????/??????????????????? w ?????
   if (!innerW || innerW <= 0){
     var fallbackW = 0;
-    try{ if (typeof __DEFAULT_INNER_WIDTH !== "undefined") fallbackW = __DEFAULT_INNER_WIDTH; }catch(_){}
+    try{ if (typeof __DEFAULT_INNER_WIDTH !== "undefined") fallbackW = __DEFAULT_INNER_WIDTH; }catch(_){ }
     if (wPt > 0) fallbackW = Math.max(fallbackW, wPt);
     if (!fallbackW) fallbackW = curW;
     innerW = fallbackW;
   }
   var widthLimit = innerW>0 ? innerW : curW;
   var targetW = (wPt>0 ? Math.min(wPt, widthLimit) : widthLimit);
-  var targetH = (hPt>0 ? hPt : (targetW / Math.max(ratio || (curW/curH), 1e-6)));
+  var targetH = 0;
+  var fillProportional = false;
+  var specRatio = (wPt>0 && hPt>0) ? (wPt / Math.max(hPt,1e-6)) : null;
+  var ratioDiff = (specRatio && imgRatio>0) ? Math.abs(specRatio - imgRatio)/imgRatio : 0;
+  var specRatioOk = specRatio && ratioDiff <= 0.05;
+  if (specRatio && !specRatioOk){
+    try{ log("[IMGDBG] aspect adjust specRatio=" + specRatio.toFixed(4) + " imgRatio=" + imgRatio.toFixed(4) + " widthLimit=" + (widthLimit||0).toFixed(2)); }catch(_){ }
+  }
+  if (wPt>0 && hPt>0){
+    if (specRatioOk){
+      var scaleW = targetW / Math.max(wPt, 1e-6);
+      targetH = hPt * scaleW;
+    } else {
+      targetH = targetW / Math.max(imgRatio, 1e-6);
+    }
+    // 如果 docx 给了高度且矫正后高度变大，保持 docx 宽（或限宽），高度用 docx 值，后续用填充式缩放避免再缩小宽度
+    if (hPt>0 && targetH > hPt){
+      targetH = hPt;
+      targetW = (wPt>0 ? Math.min(wPt, widthLimit) : targetW);
+      fillProportional = true;
+    }
+  } else if (hPt>0){
+    targetH = hPt;
+    targetW = targetH * imgRatio;
+    if (widthLimit > 0 && targetW > widthLimit){
+      var scale = widthLimit / Math.max(targetW, 1e-6);
+      targetW = widthLimit;
+      targetH = targetH * scale;
+    }
+  } else {
+    targetH = targetW / Math.max(imgRatio, 1e-6);
+  }
   try{ rect.absoluteHorizontalScale=100; rect.absoluteVerticalScale=100; }catch(_){ }
   rect.geometricBounds = [gb[0], gb[1], gb[0] + targetH, gb[1] + targetW];
-  return {targetW:targetW, targetH:targetH, innerW:innerW, wPt:wPt, hPt:hPt, ratio:ratio || (curW/curH)};
+  return {targetW:targetW, targetH:targetH, innerW:innerW, wPt:wPt, hPt:hPt, ratio:imgRatio, fillProportional:fillProportional};
 }
 // apply proportional fit and recenter content
-function __imgApplyFit(rect){
-  try { rect.fit(FitOptions.PROPORTIONALLY); rect.fit(FitOptions.CENTER_CONTENT); } catch(_){}
+function __imgApplyFit(rect, fillProportional){
+  try {
+    rect.fit(fillProportional ? FitOptions.FILL_PROPORTIONALLY : FitOptions.PROPORTIONALLY);
+    rect.fit(FitOptions.CENTER_CONTENT);
+  } catch(_){}
 }
 
 // group placement for multiple images: create an anchored text frame wrapper and place inline images inside
@@ -733,7 +768,7 @@ function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
     }catch(_recovery){}
   }
   if (!rect || !rect.isValid) return;
-  if (!isInline) __imgApplyFit(rect);
+  if (!isInline) __imgApplyFit(rect, false);
   try{ log("[IMGDBG] size enter rect.id=" + (rect.id||"NA") + " isInline=" + isInline); }catch(_){}
   try {
     try { rect.fittingOptions.autoFit=false; } catch(__){}
@@ -778,7 +813,7 @@ function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
         return;
       }catch(_posInline){}
     } else {
-      __imgApplyFit(rect);
+      __imgApplyFit(rect, clamp.fillProportional);
     }
 
     try {
@@ -851,7 +886,7 @@ function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
         try{
           var gbFb = rect.geometricBounds || [0,0,0,0];
           rect.geometricBounds = [gbFb[0], gbFb[1], gbFb[0] + targetWFb/Math.max(ratioFb,1e-6), gbFb[1] + targetWFb];
-          __imgApplyFit(rect);
+          __imgApplyFit(rect, clamp.fillProportional);
           log("[IMG][WARN] size fallback applied targetW=" + targetWFb.toFixed(2) + " holderW=" + hW.toFixed(2) + " wPt=" + wPtFb + " hPt=" + hPtFb);
         }catch(_set){}
       }
