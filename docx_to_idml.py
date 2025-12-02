@@ -263,7 +263,7 @@ def main(argv=None):
     parser.add_argument("input", nargs="?", help="Input .docx path")
     parser.add_argument("--no-images", action="store_true", help="不处理图片")
     parser.add_argument("--no-tables", action="store_true", help="不处理表格")
-    parser.add_argument("--no-textboxes", action="store_true", help="不处理文本框")
+    parser.add_argument("--no-textboxes", action="store_true", default=True, help=argparse.SUPPRESS)
     parser.add_argument("--log-dir", help="日志文件目录")
     parser.add_argument("--debug-log", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-run", action="store_true", help=argparse.SUPPRESS)

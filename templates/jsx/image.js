@@ -643,6 +643,7 @@ function __imgPlaceImageGroup(tf, story, page, specs){
   var innerStory = null;
   try{ innerStory = frame.parentStory; }catch(_){}
   if (!innerStory || !innerStory.isValid) return {frame:frame, tf:tf, story:story, page:page};
+  var placedCount = 0;
   for (var i=0;i<specs.length;i++){
     var si = specs[i] || {};
     try{
@@ -653,6 +654,7 @@ function __imgPlaceImageGroup(tf, story, page, specs){
       var rect = __imgPlaceInline(ipIn, fobj);
       if (rect && rect.isValid){
         __imgFloatSizeAndWrap(rect, si, true);
+        placedCount++;
       } else {
         try{ log("[IMG-GROUP][WARN] place failed idx=" + (i+1)); }catch(_){}
       }
@@ -660,6 +662,11 @@ function __imgPlaceImageGroup(tf, story, page, specs){
     }catch(_place){ }
   }
   try{ innerStory.recompose(); }catch(_){}
+  try{
+    var over = false;
+    try{ over = innerStory.overflows === true; }catch(_){}
+    log("[IMG-GROUP] placed=" + placedCount + "/" + specs.length + " overflow=" + over);
+  }catch(_){}
   return {frame:frame, tf:tf, story:story, page:page};
 }
 function __imgFloatSizeAndWrap(rect, spec, isInline, _retry){
