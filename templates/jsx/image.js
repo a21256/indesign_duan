@@ -349,7 +349,7 @@ function __imgFloatPostProcess(rect, st, page, tf, opts){
       }catch(_){}
       try{
         if (fl && fl.overset){
-          // 溢出：清理原矩形，插入分页符，再在新页页眉放图（保持顺序），失败则跳过
+          // 简化兜底：删除原矩形，插入分页符，在新页顶部放悬浮图；失败才告警
           var placedOnNewPage = false;
           var docNew = app && app.activeDocument;
           var srcFilePath = "";
@@ -357,13 +357,15 @@ function __imgFloatPostProcess(rect, st, page, tf, opts){
             if (rect && rect.isValid && rect.images && rect.images.length){
               var img0 = rect.images[0];
               srcFilePath = (img0 && img0.itemLink && img0.itemLink.filePath) ? img0.itemLink.filePath : "";
+            } else if (srcLabel) {
+              srcFilePath = srcLabel;
             }
           }catch(_sf){}
           try{ if (rect && rect.isValid) rect.remove(); }catch(_rmOld){}
-          // 在原文流插入分页符，确保文本顺序
+          // 原文流插入分页符，文本继续图后
           try{
-            var ipPB = null;
             if (story && story.isValid){
+              var ipPB = null;
               if (startIdxLocal !== null && story.insertionPoints.length > startIdxLocal){
                 ipPB = story.insertionPoints[startIdxLocal];
               }else if (story.insertionPoints.length){
@@ -375,12 +377,12 @@ function __imgFloatPostProcess(rect, st, page, tf, opts){
               }
             }
           }catch(_pbins){}
-          // 在分页后的页面顶部放图
+          // 新页顶部放图（悬浮，不入文本链）
           try{
             var basePage = (__pg && __pg.isValid) ? __pg : (page && page.isValid ? page : null);
             if (docNew && docNew.pages.length) basePage = docNew.pages[docNew.pages.length-1];
             if (docNew && docNew.isValid && srcFilePath && basePage && basePage.isValid){
-              var newPg = basePage;
+              var newPg = docNew.pages.add(LocationOptions.AFTER, basePage);
               var mp = newPg.marginPreferences || {};
               var pb = newPg.bounds || [0,0,0,0];
               var innerLeft = (pb[1] + (parseFloat(mp.left)||0));
@@ -389,37 +391,29 @@ function __imgFloatPostProcess(rect, st, page, tf, opts){
               var innerBottom = (pb[2] - (parseFloat(mp.bottom)||0));
               var maxW = Math.max(1, innerRight - innerLeft);
               var maxH = Math.max(1, innerBottom - innerTop) * 0.85;
-              var tgtW = maxW;
-              var tgtH = maxH;
-              // 若有原图尺寸可参考比例
+              var tgtW = maxW, tgtH = maxH;
               try{
-                if (spec && spec.w && spec.h){
-                  var wPt = __imgToPtLocal(spec.w), hPt = __imgToPtLocal(spec.h);
-                  if (wPt>0 && hPt>0){
-                    tgtW = Math.min(maxW, wPt);
-                    tgtH = tgtW * hPt / Math.max(1e-6, wPt);
-                    if (tgtH > maxH){
-                      var sc = maxH / tgtH;
-                      tgtH = maxH;
-                      tgtW = tgtW * sc;
-                    }
+                var wPt = __imgToPtLocal(spec && spec.w), hPt = __imgToPtLocal(spec && spec.h);
+                if (wPt>0 && hPt>0){
+                  tgtW = Math.min(maxW, wPt);
+                  tgtH = tgtW * hPt / Math.max(1e-6, wPt);
+                  if (tgtH > maxH){
+                    var sc = maxH / tgtH;
+                    tgtH = maxH;
+                    tgtW = tgtW * sc;
                   }
                 }
               }catch(_sz){}
-              var rectNew = null;
-              try{
-                rectNew = newPg.rectangles.add();
-                rectNew.geometricBounds = [innerTop, innerLeft, innerTop + tgtH, innerLeft + tgtW];
-                rectNew.place(File(srcFilePath));
-                rectNew.fit(FitOptions.PROPORTIONALLY);
-                rectNew.fit(FitOptions.CENTER_CONTENT);
-                placedOnNewPage = true;
-              }catch(_npRect){}
+              var rectNew = newPg.rectangles.add();
+              rectNew.geometricBounds = [innerTop, innerLeft, innerTop + tgtH, innerLeft + tgtW];
+              rectNew.place(File(srcFilePath));
+              rectNew.fit(FitOptions.PROPORTIONALLY);
+              rectNew.fit(FitOptions.CENTER_CONTENT);
+              placedOnNewPage = true;
             }
           }catch(_npErr){}
           if (!placedOnNewPage){
             try{ log("[WARN][IMG] skip due to overset src=" + srcLabel + " startPage=" + startPageName); }catch(_){}
-            try{ __imgRemoveTailEmptyPages(app.activeDocument, startPageCountLocal==null?app.activeDocument.pages.length: startPageCountLocal); }catch(_trim){}
           }
           return {page: page, tf: tf, story: story};
         }
