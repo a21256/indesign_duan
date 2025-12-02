@@ -334,7 +334,7 @@ function __imgFloatPostProcess(rect, st, page, tf, opts){
     if (!__tf && typeof tf!=="undefined") __tf = tf;
     if (!__tf && typeof curTextFrame!=="undefined") __tf = curTextFrame;
     if (__pg && __tf && typeof flushOverflow === "function") {
-      var fl = flushOverflow(story, __pg, __tf, 5);
+      var fl = flushOverflow(story, __pg, __tf, 1);
       if (fl && fl.frame && fl.page) {
         page  = fl.page;
         tf    = fl.frame;
