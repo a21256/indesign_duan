@@ -109,6 +109,48 @@ function __imgResolveStory(ip, tfMaybe, doc){
   if (st) { try { st.recompose(); } catch(_){} }
   return st;
 }
+// ensure story tail has a writable next frame when overset and chain is broken
+function __imgEnsureWritableTail(storyRef){
+  try{
+    var st = (storyRef && storyRef.isValid) ? storyRef : null;
+    if (!st) return null;
+    var tcs = st.textContainers;
+    if (!tcs || !tcs.length) return null;
+    var tail = tcs[tcs.length-1];
+    if (!tail || !tail.isValid) return null;
+    var over=false, storyOver=false, hasNext=false;
+    try{ over = tail.overflows === true; }catch(_){}
+    try{ storyOver = st.overflows === true; }catch(_){}
+    try{ hasNext = !!tail.nextTextFrame; }catch(_){}
+    try{
+      var nextId = (hasNext && tail.nextTextFrame && tail.nextTextFrame.isValid) ? tail.nextTextFrame.id : "NA";
+      var pgName = "NA"; try{ var pg = tail.parentPage; if (pg && pg.isValid) pgName = pg.name; }catch(_pg){}
+      log("[IMG][TAIL] check tail=" + (tail?tail.id:"NA") + " over=" + over + " storyOver=" + storyOver + " next=" + nextId + " page=" + pgName);
+    }catch(_){}
+    if (!hasNext && (over || storyOver)){
+      var basePage = null;
+      try{
+        basePage = (tail.parentPage && tail.parentPage.isValid) ? tail.parentPage : null;
+      }catch(_bp){}
+      if (!basePage){
+        try{ basePage = (typeof page!=="undefined" && page && page.isValid) ? page : null; }catch(_bp2){}
+      }
+      if (typeof __createLayoutFrame !== "function") return null;
+      var pkt = null;
+      try{ pkt = __createLayoutFrame(__CURRENT_LAYOUT, tail, {afterPage: basePage}); }catch(_pkt){}
+      if (pkt && pkt.frame && pkt.frame.isValid){
+        try{ tail.nextTextFrame = pkt.frame; }catch(_lnk){}
+        __imgRecomposeSafe(st);
+        try{
+          var pgN = "NA"; try{ if (pkt.page && pkt.page.isValid) pgN = pkt.page.name; }catch(_pgn){}
+          log("[IMG][TAIL] linked tail=" + tail.id + " -> newFrame=" + (pkt.frame?pkt.frame.id:"NA") + " page=" + pgN);
+        }catch(_log){}
+        return {frame: pkt.frame, page: pkt.page};
+      }
+    }
+  }catch(_){}
+  return null;
+}
 // dedupe anchor when consecutive images share same ip
 function __imgDedupeAnchor(ipCandidate, st){
   if (!ipCandidate || !ipCandidate.isValid) return ipCandidate;
@@ -1041,6 +1083,16 @@ function __imgAddImageAtV2(ip, spec) {
 
       // 2) story
       var st = _initStory(); if (!st) return null;
+
+      // ensure tail chain exists when story is already overset
+      var __tailPkt = __imgEnsureWritableTail(st);
+      if (__tailPkt && __tailPkt.frame && __tailPkt.frame.isValid){
+        try{
+          tf = __tailPkt.frame;
+          curTextFrame = __tailPkt.frame;
+          page = __tailPkt.page || (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid ? tf.parentPage : page);
+        }catch(_tail){}
+      }
 
       var isInline = _resolveInlineFlag();
       // 针对常见问题的内联图（有 w/h 且无 wrap/pos），强制按块图处理，避免尺寸/压字问题

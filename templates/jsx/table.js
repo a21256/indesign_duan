@@ -425,13 +425,101 @@
           }catch(_dbg){}
         }
 
+        function __tblTailSummary(storyRef){
+          try{
+            var st = (storyRef && storyRef.isValid) ? storyRef : null;
+            if (!st || !st.textContainers || !st.textContainers.length) return "tail=NA";
+            var tail = st.textContainers[st.textContainers.length-1];
+            if (!tail || !tail.isValid) return "tail=NA";
+            var nxtId = "NA"; try{ var nxt = tail.nextTextFrame; if (nxt && nxt.isValid) nxtId = nxt.id; }catch(_n){}
+            var pgName = "NA"; try{ var pg = tail.parentPage; if (pg && pg.isValid) pgName = pg.name; }catch(_p){}
+            var over = false; try{ over = tail.overflows; }catch(_o){}
+            var sOver = false; try{ sOver = st.overflows; }catch(_so){}
+            return "tail=" + tail.id + " over=" + over + " storyOver=" + sOver + " page=" + pgName + " next=" + nxtId;
+          }catch(_){}
+          return "tail=ERR";
+        }
+
+        // ensure story tail has next frame when overset and chain is broken
+        function __tblEnsureWritableTail(storyRef){
+          try{
+            var st = (storyRef && storyRef.isValid) ? storyRef : null;
+            if (!st) return null;
+            var tcs = st.textContainers;
+            if (!tcs || !tcs.length) return null;
+            var tail = tcs[tcs.length-1];
+            if (!tail || !tail.isValid) return null;
+            var over=false, storyOver=false, hasNext=false;
+            try{ over = tail.overflows === true; }catch(_){}
+            try{ storyOver = st.overflows === true; }catch(_){}
+            try{ hasNext = !!tail.nextTextFrame; }catch(_){}
+            try{
+              var nextId = (hasNext && tail.nextTextFrame && tail.nextTextFrame.isValid) ? tail.nextTextFrame.id : "NA";
+              var pgName = "NA"; try{ var pg = tail.parentPage; if (pg && pg.isValid) pgName = pg.name; }catch(_pg){}
+              log(__tableTag + " tail check id=" + (tail?tail.id:"NA") + " over=" + over + " storyOver=" + storyOver + " page=" + pgName + " next=" + nextId);
+            }catch(_log){}
+            if (!hasNext && (over || storyOver)){
+              var basePage = null;
+              try{ basePage = (tail.parentPage && tail.parentPage.isValid) ? tail.parentPage : null; }catch(_bp){}
+              if (!basePage){
+                try{ basePage = (typeof page!=="undefined" && page && page.isValid) ? page : null; }catch(_bp2){}
+              }
+              if (typeof __createLayoutFrame !== "function") return null;
+              var pkt = null;
+              try{ pkt = __createLayoutFrame(__CURRENT_LAYOUT, tail, {afterPage: basePage}); }catch(_pkt){}
+              if (pkt && pkt.frame && pkt.frame.isValid){
+                try{ tail.nextTextFrame = pkt.frame; }catch(_lnk){}
+                try{ st.recompose(); }catch(_r){}
+                try{
+                  var pgN = "NA"; try{ if (pkt.page && pkt.page.isValid) pgN = pkt.page.name; }catch(_pgn){}
+                  log(__tableTag + " tail linked " + tail.id + " -> newFrame=" + (pkt.frame?pkt.frame.id:"NA") + " page=" + pgN);
+                }catch(_log2){}
+                return {frame: pkt.frame, page: pkt.page};
+              }
+            }
+          }catch(_){}
+          return null;
+        }
+
         // ensure a clean paragraph and flush overflow before inserting table
         function __tblPrepareStory(){
           __tblLogOverset("pre-prepare");
+          try{ log(__tableTag + " prepare tail-pre " + __tblTailSummary(story)); }catch(_){}
           try { story.insertionPoints[-1].contents = "\r"; } catch(_){ }
           try { story.recompose(); } catch(_){ }
+          // 链断场景先补链，再进入 flushOverflow 避免无效造页
+          var __tailPkt = __tblEnsureWritableTail(story);
+          var __tailJustLinked = false;
+          if (__tailPkt && __tailPkt.frame && __tailPkt.frame.isValid){
+            __tailJustLinked = true;
+            try{
+              tf = __tailPkt.frame;
+              curTextFrame = __tailPkt.frame;
+              page = __tailPkt.page || (tf && tf.isValid && tf.parentPage && tf.parentPage.isValid ? tf.parentPage : page);
+              story = tf.parentStory;
+            }catch(_tail){}
+          }
+          var __pgCountBefore = 0; try{ __pgCountBefore = app.activeDocument.pages.length; }catch(_){}
+          var __tailInfoBefore = __tblTailSummary(story);
           try{
-            if (typeof flushOverflow === "function" && typeof tf !== "undefined" && tf && tf.isValid){
+            var __tailObj = null;
+            try{
+              if (story && story.isValid && story.textContainers && story.textContainers.length){
+                __tailObj = story.textContainers[story.textContainers.length-1];
+              }
+            }catch(_){}
+            var __tailHasNext = false; try{ __tailHasNext = (__tailObj && __tailObj.isValid && __tailObj.nextTextFrame); }catch(_){}
+            var __tailOver = false; try{ __tailOver = (__tailObj && __tailObj.isValid && __tailObj.overflows===true); }catch(_){}
+            var __storyOver = false; try{ __storyOver = (story && story.isValid && story.overflows===true); }catch(_){}
+            // 只有在链仍然断开且 story/tail 还 overset 时才允许 flushOverflow 造页，避免已补链后继续狂加页
+            var __shouldFlush = (typeof flushOverflow === "function"
+                                 && typeof tf !== "undefined" && tf && tf.isValid
+                                 && !__tailHasNext
+                                 && (__tailOver || __storyOver)
+                                 && !__tailJustLinked); // 刚补完链先尝试不造页
+
+            if (typeof flushOverflow === "function" && __shouldFlush){
+              try{ log(__tableTag + " flushOverflow.enter " + __tailInfoBefore + " pages=" + __pgCountBefore); }catch(_logEnter){}
               var __pre = flushOverflow(story, page, tf);
               if (__pre && __pre.frame && __pre.page){
                 page = __pre.page;
@@ -439,6 +527,10 @@
                 story = tf.parentStory;
                 curTextFrame = tf;
               }
+              var __pgCountAfter = __pgCountBefore; try{ __pgCountAfter = app.activeDocument.pages.length; }catch(_){}
+              try{ log(__tableTag + " flushOverflow.exit over=" + (story&&story.isValid?story.overflows:"NA") + " pages=" + __pgCountAfter + " tail=" + __tblTailSummary(story)); }catch(_logExit){}
+            }else{
+              try{ log(__tableTag + " flushOverflow.skip reason=" + (__shouldFlush?"tf/func missing":"no-next-and-not-over") + " tail=" + __tailInfoBefore); }catch(_logSkip){}
             }
           }catch(_){ }
           __tblLogOverset("post-prepare");
