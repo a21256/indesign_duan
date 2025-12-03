@@ -73,6 +73,20 @@
         var __tableWarnTag = __tableTagObj.warn;
         var __tableErrTag = __tableTagObj.err;
         __tblSelfCheck();
+        var __tblAbortReason = null;
+        var __docPageStart = null; try{ __docPageStart = app.activeDocument.pages.length; }catch(_){}
+        function __tblPageDelta(){
+          try{
+            var cur = app.activeDocument.pages.length;
+            return (cur - (__docPageStart||0));
+          }catch(_){}
+          return 0;
+        }
+        function __tblAbort(reason){
+          try{ log(__tableWarnTag + " abort table reason=" + reason + " pagesDelta=" + __tblPageDelta()); }catch(_){}
+          __tblAbortReason = reason || "unknown";
+          return false;
+        }
         function __resolveTableParaStyle(styleName){
           if (!styleName || styleName === "null" || styleName === "undefined") return null;
           try{
@@ -499,8 +513,30 @@
               story = tf.parentStory;
             }catch(_tail){}
           }
+          // 补链后，如果尾框仍然 over 且 next 依旧为空，视为无进展，直接终止
+          try{
+            var __tailStillOver = false, __tailHasNext2 = false;
+            var __tailObj2 = null;
+            try{
+              if (story && story.isValid && story.textContainers && story.textContainers.length){
+                __tailObj2 = story.textContainers[story.textContainers.length-1];
+              }
+            }catch(_){}
+            try{ __tailStillOver = (__tailObj2 && __tailObj2.isValid && __tailObj2.overflows===true); }catch(_){}
+            try{ __tailHasNext2 = (__tailObj2 && __tailObj2.isValid && __tailObj2.nextTextFrame); }catch(_){}
+            if (__tailStillOver && !__tailHasNext2){
+                return __tblAbort("tail still overset after relink id=" + (__tailObj2?__tailObj2.id:"NA"));
+            }
+          }catch(_abortTail){}
           var __pgCountBefore = 0; try{ __pgCountBefore = app.activeDocument.pages.length; }catch(_){}
           var __tailInfoBefore = __tblTailSummary(story);
+          // 如果补链后仍然 overset 且页数激增，直接终止，避免堆空页
+          try{
+            var __pgDeltaPre = __tblPageDelta();
+            if (__pgDeltaPre > 5 && story && story.isValid && story.overflows){
+              return __tblAbort("pre-flush overset with page delta " + __pgDeltaPre);
+            }
+          }catch(_){ }
           try{
             var __tailObj = null;
             try{
@@ -532,10 +568,22 @@
             }else{
               try{ log(__tableTag + " flushOverflow.skip reason=" + (__shouldFlush?"tf/func missing":"no-next-and-not-over") + " tail=" + __tailInfoBefore); }catch(_logSkip){}
             }
+            // 无进展再终止：flush 后 storyLen 无变化且仍 overset
+            try{
+              var __pgDeltaPost = __tblPageDelta();
+              var __lenNow = story && story.isValid ? story.characters.length : 0;
+              if (__pgDeltaPost > 5 && story && story.isValid && story.overflows && (__lenNow === __len0 || __lenNow <= __len0+5)){
+                return __tblAbort("post-flush no-progress pagesDelta=" + __pgDeltaPost + " len=" + __lenNow);
+              }
+            }catch(_np){ }
           }catch(_){ }
           __tblLogOverset("post-prepare");
+          return true;
         }
-        __tblPrepareStory();
+        var __prepOk = __tblPrepareStory();
+        if (__tblAbortReason){
+          return;
+        }
 
         function _ensureWritableFrameLocal(storyArg){
             // pick last non-overflow frame; fallback to tf; create new frame if needed
