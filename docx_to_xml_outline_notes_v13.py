@@ -22,8 +22,8 @@ STYLE_FLAGS = {
     "bold": False,
     "underline": False,
     "color": False,
-    "superscript": False,
-    "subscript": False,
+    "superscript": True,
+    "subscript": True,
     "tracking": False,      # letter spacing (tracking), in pt
     "font": False,          # font family
     "fontsize": False,      # font size in pt

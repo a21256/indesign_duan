@@ -327,6 +327,18 @@ def _collect_inline_with_notes(elem, foot_map, end_map):
             parts.append("[[/U]]")
             if c.tail: parts.append(c.tail)
             continue
+        if tag == "sup":
+            parts.append("[[SUP]]")
+            parts.append(_collect_inline_with_notes(c, foot_map, end_map))
+            parts.append("[[/SUP]]")
+            if c.tail: parts.append(c.tail)
+            continue
+        if tag == "sub":
+            parts.append("[[SUB]]")
+            parts.append(_collect_inline_with_notes(c, foot_map, end_map))
+            parts.append("[[/SUB]]")
+            if c.tail: parts.append(c.tail)
+            continue
 
         # inline notes
         if tag in ("footnote", "fn"):

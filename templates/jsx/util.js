@@ -8,13 +8,74 @@ function __jsonStringifySafe(obj){
   if (__HAS_JSON){
     try{ return JSON.stringify(obj); }catch(_){}
   }
-  try{ return String(obj); }catch(__){ return ""; }
+  try{
+    if (obj && typeof obj === "object"){
+      var parts = [];
+      for (var k in obj){
+        if (!obj.hasOwnProperty(k)) continue;
+        try{ parts.push(k+":"+obj[k]); }catch(_){}
+      }
+      if (parts.length) return "{"+parts.join(",")+"}";
+    }
+    return String(obj);
+  }catch(__){ return ""; }
 }
 function __jsonParseSafe(str){
   if (typeof JSON !== "undefined" && JSON && typeof JSON.parse === "function"){
     try{ return JSON.parse(str); }catch(_){}
   }
   try{ return eval("(" + str + ")"); }catch(__){ return null; }
+}
+
+// ----- superscript/subscript style helpers -----
+var __SUPSUB_CACHE = {doc: null, sup: null, sub: null};
+function __getDocFromStory(story){
+  try{
+    if (story && story.isValid && story.parent) return story.parent;
+  }catch(_){ }
+  try{ if (app && app.activeDocument) return app.activeDocument; }catch(_){ }
+  return null;
+}
+function __ensureSupSubStyles(doc){
+  if (!doc || !doc.isValid) return {sup:null, sub:null};
+  if (__SUPSUB_CACHE.doc === doc && __SUPSUB_CACHE.sup && __SUPSUB_CACHE.sub){
+    return {sup: __SUPSUB_CACHE.sup, sub: __SUPSUB_CACHE.sub};
+  }
+  function _tryNames(names){
+    for (var i=0;i<names.length;i++){
+      try{
+        var cs = doc.characterStyles.itemByName(names[i]);
+        if (cs && cs.isValid) return cs;
+      }catch(_){ }
+    }
+    return null;
+  }
+  var supStyle = _tryNames(["上角标", "上标", "Superscript"]);
+  var subStyle = _tryNames(["下角", "下标", "Subscript"]);
+  if (!supStyle) supStyle = _tryNames(["__DocxSuperscript"]);
+  if (!subStyle) subStyle = _tryNames(["__DocxSubscript"]);
+  var supName = "__DocxSuperscript";
+  var subName = "__DocxSubscript";
+  if (!supStyle){
+    try{
+      supStyle = doc.characterStyles.add({name: supName});
+      try{ supStyle.position = Position.SUPERSCRIPT; }catch(_p){}
+      try{ supStyle.superscriptSize = 60; }catch(_s){}
+      try{ supStyle.superscriptPosition = 30; }catch(_sp){}
+      log("[SUPSUB][STYLE] created "+supName);
+    }catch(eSup){ try{ log("[SUPSUB][STYLE][ERR] create sup: "+eSup); }catch(_l){} }
+  }
+  if (!subStyle){
+    try{
+      subStyle = doc.characterStyles.add({name: subName});
+      try{ subStyle.position = Position.SUBSCRIPT; }catch(_p2){}
+      try{ subStyle.subscriptSize = 60; }catch(_s2){}
+      try{ subStyle.subscriptPosition = 30; }catch(_sp2){}
+      log("[SUPSUB][STYLE] created "+subName);
+    }catch(eSub){ try{ log("[SUPSUB][STYLE][ERR] create sub: "+eSub); }catch(_l2){} }
+  }
+  __SUPSUB_CACHE = {doc: doc, sup: supStyle, sub: subStyle};
+  return {sup: supStyle, sub: subStyle};
 }
 
 function smartWrapStr(s){
@@ -123,10 +184,35 @@ function __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st)
   try {
     if (endCharIndex <= startCharIndex) return;
     var r = story.characters.itemByRange(startCharIndex, endCharIndex - 1);
+    st = st || {};
+    var supFlag = !!st.sup;
+    var subFlag = !!st.sub;
+    if (supFlag && subFlag) subFlag = false; // superscript takes priority if both toggled
     var txt=""; try{ txt = String(r.contents).substr(0,50); }catch(_){}
-    log("[I/B/U] range="+startCharIndex+"-"+endCharIndex+" ; flags="+__jsonStringifySafe(st)+" ; txt=\""+txt+"\"");
+    log("[I/B/U/S] range="+startCharIndex+"-"+endCharIndex+" ; flags="+__jsonStringifySafe(st)+" ; txt=\""+txt+"\"");
 
     try { r.underline = !!st.u; log("[U] set="+ (!!st.u)); } catch(eu){ log("[U][ERR] "+eu); }
+
+    if (supFlag || subFlag){
+      try {
+        var pos = supFlag ? Position.SUPERSCRIPT : Position.SUBSCRIPT;
+        r.position = pos;
+        log("[SUPSUB] position="+pos);
+        try { r.baselineShift = NothingEnum.NOTHING; } catch(_bs){}
+        var docRef = __getDocFromStory(story);
+        var sty = __ensureSupSubStyles(docRef);
+        if (supFlag && sty.sup && sty.sup.isValid){
+          try{ r.appliedCharacterStyle = sty.sup; log("[SUPSUB] applied style "+sty.sup.name); }catch(_as){}
+        } else if (subFlag && sty.sub && sty.sub.isValid){
+          try{ r.appliedCharacterStyle = sty.sub; log("[SUPSUB] applied style "+sty.sub.name); }catch(_ab){}
+        }
+      } catch(ep){
+        log("[SUPSUB][ERR] position set failed: "+ep);
+      }
+    } else {
+      try { r.position = Position.NORMAL; } catch(_pn){}
+      try { r.baselineShift = NothingEnum.NOTHING; } catch(_pb){}
+    }
 
     if (st.i) {
       try { var howI = __setItalicSafe(r); log("[I] via " + howI + " ; " + __fontInfo(r)); } catch(ei){ log("[I][ERR] "+ei); }
@@ -134,14 +220,15 @@ function __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st)
     if (st.b) {
       try { var howB = __setBoldSafe(r);   log("[B] via " + howB + " ; " + __fontInfo(r)); } catch(eb){ log("[B][ERR] "+eb); }
     }
+
   } catch(e) {
-    log("[IBU][ERR] "+e);
+    log("[IBU/SUP][ERR] "+e);
   }
 }
 function __processNoteMatch(m, ctx){
   // ctx: {story, tf, page, stFlags, pendingNoteId, tableTag, tableWarnTag}
   var story = ctx.story;
-  var st = ctx.stFlags || {i:0,b:0,u:0};
+  var st = ctx.stFlags || {i:0,b:0,u:0,sup:0,sub:0};
   function on(x){ return x>0; }
   if (m[1]) {
     ctx.pendingNoteId = parseInt(m[1], 10);
@@ -166,6 +253,8 @@ function __processNoteMatch(m, ctx){
     if (flag === "I") st.i = closing ? 0 : 1;
     else if (flag === "B") st.b = closing ? 0 : 1;
     else if (flag === "U") st.u = closing ? 0 : 1;
+    else if (flag === "SUP") { st.sup = closing ? 0 : 1; if (!closing) st.sub = 0; }
+    else if (flag === "SUB") { st.sub = closing ? 0 : 1; if (!closing) st.sup = 0; }
     return;
   }
 }
