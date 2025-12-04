@@ -496,18 +496,30 @@ def _load_jsx_template():
     """Load external JSX template; inline template has been removed."""
     tpl_path = os.environ.get("JSX_TEMPLATE_PATH", JSX_TEMPLATE_PATH)
     tpl_abs = os.path.abspath(tpl_path) if tpl_path else None
+    # fallback: try alongside this file (onefile extraction dir)
+    alt_tpl = os.path.join(os.path.abspath(os.path.dirname(__file__)), "templates", "indesign_autoflow_map_levels.tpl.jsx")
     if not tpl_abs:
         raise FileNotFoundError("JSX template path is not set. Set JSX_TEMPLATE_PATH or run --dump-jsx-template to see the default path.")
     try:
         with open(tpl_abs, "r", encoding="utf-8") as fh:
             base_text = fh.read()
     except FileNotFoundError:
-        raise FileNotFoundError(f"JSX template not found: {tpl_abs}")
+        if os.path.exists(alt_tpl):
+            tpl_abs = alt_tpl
+            with open(tpl_abs, "r", encoding="utf-8") as fh:
+                base_text = fh.read()
+        else:
+            raise FileNotFoundError(f"JSX template not found: {tpl_abs}")
     except Exception as exc:
         raise RuntimeError(f"Failed to read JSX template: {tpl_abs} err={exc}")
 
     frag_dir = os.environ.get("JSX_FRAGMENT_DIR", JSX_FRAGMENT_DIR)
     frag_dir = os.path.abspath(frag_dir)
+    # fallback to extraction dir fragments if missing
+    if not os.path.isdir(frag_dir):
+        alt_frag_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "templates", "jsx")
+        if os.path.isdir(alt_frag_dir):
+            frag_dir = alt_frag_dir
     fragments = {}
     for key, fname in JSX_FRAGMENTS.items():
         frag_path = os.path.join(frag_dir, fname)
