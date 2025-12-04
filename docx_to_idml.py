@@ -30,6 +30,11 @@ def _runtime_base_dir() -> str:
     Resolve a stable base dir (prefer real exe dir, avoid onefile temp).
     Order: NUITKA_ONEFILE_PARENT > argv[0] dir (if exists) > sys.executable dir > this file dir.
     """
+    # Nuitka onefile extracts data into a temp dir; prefer it to avoid needing copied resources.
+    env_temp = os.environ.get("NUITKA_ONEFILE_TEMP")
+    if env_temp and os.path.isdir(env_temp):
+        return os.path.abspath(env_temp)
+
     env_parent = os.environ.get("NUITKA_ONEFILE_PARENT")
     if env_parent and os.path.isdir(env_parent):
         return os.path.abspath(env_parent)

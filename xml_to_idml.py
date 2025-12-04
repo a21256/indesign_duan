@@ -16,6 +16,11 @@ def _runtime_base_dir() -> str:
     Order: NUITKA_ONEFILE_PARENT (real exe dir) > argv[0] dir > sys.executable dir > this file dir.
     This avoids writing to the onefile temp extraction dir that gets cleaned up.
     """
+    # prefer Nuitka onefile temp extraction dir so bundled templates/assets are found without copying
+    env_temp = os.environ.get("NUITKA_ONEFILE_TEMP")
+    if env_temp and os.path.isdir(env_temp):
+        return os.path.abspath(env_temp)
+
     env_parent = os.environ.get("NUITKA_ONEFILE_PARENT")
     if env_parent and os.path.isdir(env_parent):
         return os.path.abspath(env_parent)
