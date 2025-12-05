@@ -448,7 +448,21 @@ def main(argv=None):
     if args.mode == "regex":
         rules_path = getattr(exporter, "regex_rules_path", None)
         if rules_path:
-            _log_user(f"[INFO] regex 规则来源: {rules_path}")
+            def _is_under(base_dir: Optional[str], target: str) -> bool:
+                try:
+                    if not base_dir:
+                        return False
+                    base_abs = os.path.abspath(base_dir)
+                    return os.path.commonprefix([base_abs, os.path.abspath(target)]) == base_abs
+                except Exception:
+                    return False
+
+            onefile_temp = os.environ.get("NUITKA_ONEFILE_TEMP")
+            onefile_parent = os.environ.get("NUITKA_ONEFILE_PARENT")
+            if _is_under(onefile_temp, rules_path) or _is_under(onefile_parent, rules_path):
+                _log_user("[INFO] regex 规则使用内置默认")
+            else:
+                _log_user(f"[INFO] regex 规则来源: {rules_path}")
         else:
             _log_user("[INFO] regex 规则使用内置默认")
     export_summary = exporter.process(XML_PATH)

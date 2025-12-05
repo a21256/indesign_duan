@@ -205,7 +205,21 @@ def load_regex_rules(config_path: Optional[str] = None) -> Optional[str]:
             NEGATIVE_PATTERNS = list(negative or DEFAULT_NEGATIVE_PATTERNS)
             NUMERIC_DOTTED_PATTERN = str(numeric) if numeric else DEFAULT_NUMERIC_DOTTED_PATTERN
             chosen_path = candidate
-            logger.info(f"Regex rules loaded from {candidate}")
+            # avoid leaking temp extraction path; if inside onefile temp, log generic
+            onefile_temp = os.environ.get("NUITKA_ONEFILE_TEMP")
+            onefile_parent = os.environ.get("NUITKA_ONEFILE_PARENT")
+            def _is_under(base, path):
+                try:
+                    if not base:
+                        return False
+                    base_abs = os.path.abspath(base)
+                    return os.path.commonprefix([base_abs, os.path.abspath(path)]) == base_abs
+                except Exception:
+                    return False
+            if _is_under(onefile_temp, candidate) or _is_under(onefile_parent, candidate):
+                logger.info("Regex rules loaded (bundled)")
+            else:
+                logger.info(f"Regex rules loaded from {candidate}")
             break
         except Exception as exc:
             logger.warning(f"Failed to load regex rules from {candidate}: {exc}")
@@ -2445,7 +2459,7 @@ class DOCXOutlineExporter:
         return "\n".join(parts)
 
     def to_xml(self, output_path: str):
-        logger.info(f"Writing XML -> {output_path}")
+        logger.info("Writing XML")
         parts = ['<?xml version="1.0" encoding="UTF-8"?>', "<document>"]
         if self.root.body_paragraphs:
             parts.append("  <body>")
