@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "figure": {
+    "style": "FigureCaption",
+    "patterns": [
+      "^\\u56fe\\s*\\d+(?:[-\\u2010\\u2011\\u2012\\u2013\\u2014]\\d+)*",
+      "^fig\\.?\\s*\\d",
+      "^figure\\s*\\d"
+    ]
+  },
+  "table": {
+    "style": "TableCaption",
+    "patterns": [
+      "^\\u8868\\s*\\d+(?:[-\\u2010\\u2011\\u2012\\u2013\\u2014]\\d+)*",
+      "^table\\s*\\d",
+      "^tab\\.?\\s*\\d"
+    ]
+  }
+}

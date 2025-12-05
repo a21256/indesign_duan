@@ -57,8 +57,9 @@ import xml_to_idml as X
 from docx_to_xml_outline_notes_v13 import DOCXOutlineExporter
 from xml_to_idml import XML_PATH, extract_paragraphs_with_levels, write_jsx, JSX_PATH
 from xml_to_idml import AUTO_RUN_MACOS, AUTO_RUN_WINDOWS, run_indesign_windows, run_indesign_macos
-from xml_to_idml import LOG_PATH  
+from xml_to_idml import LOG_PATH
 from pipeline_logger import PipelineLogger
+import re
 
 PIPELINE_LOGGER: Optional[PipelineLogger] = None
 
@@ -190,6 +191,77 @@ def _prompt_hidden(prompt_text: str) -> str:
         return getpass.getpass(prompt_text)
     except Exception:
         return input(prompt_text)
+
+
+def _load_caption_rules():
+    """
+    Optional caption rules (caption_rules.json), shape:
+    {
+      "enabled": true,
+      "figure": {"style": "FigureCaption", "patterns": ["^图\\s*\\d", "^Fig"]},
+      "table":  {"style": "TableCaption", "patterns": ["^表\\s*\\d", "^Table"]}
+    }
+    """
+    default_rules = {
+        "enabled": True,
+        "figure": {
+            "style": "FigureCaption",
+            # 中文“图123”或“图1-2-3”，包含多种连字符；英文 Fig/Figure + 数字
+            "patterns": [
+                r"^\u56fe\s*\d+(?:[-\u2010\u2011\u2012\u2013\u2014]\d+)*",
+                r"^fig\.?\s*\d",
+                r"^figure\s*\d",
+            ],
+        },
+        "table": {
+            "style": "TableCaption",
+            "patterns": [
+                r"^\u8868\s*\d+(?:[-\u2010\u2011\u2012\u2013\u2014]\d+)*",
+                r"^table\s*\d",
+                r"^tab\.?\s*\d",
+            ],
+        },
+    }
+    path = os.path.join(BASE_DIR, "caption_rules.json")
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                default_rules.update(data)
+    except Exception as e:
+        _log_warn(f"[WARN] 读取 caption_rules.json 失败，使用默认规则: {e}")
+    return default_rules
+
+
+def _apply_caption_styles(paragraphs, rules):
+    """
+    Given list of (style, text), return new list with figure/table caption styles applied.
+    只调整样式名，不移动/删除段落。
+    """
+    if not rules or not rules.get("enabled", True):
+        return paragraphs
+    fig_cfg = rules.get("figure") or {}
+    tab_cfg = rules.get("table") or {}
+    fig_style = (fig_cfg.get("style") or "").strip()
+    tab_style = (tab_cfg.get("style") or "").strip()
+    fig_patterns = [p for p in fig_cfg.get("patterns", []) if p]
+    tab_patterns = [p for p in tab_cfg.get("patterns", []) if p]
+    fig_re = [re.compile(p, re.IGNORECASE) for p in fig_patterns] if fig_patterns else []
+    tab_re = [re.compile(p, re.IGNORECASE) for p in tab_patterns] if tab_patterns else []
+
+    out = []
+    for sty, txt in paragraphs:
+        new_style = sty
+        stripped = (txt or "").strip()
+        if stripped and fig_style and fig_re and sty.lower() in ("body",):
+            if any(r.match(stripped) for r in fig_re):
+                new_style = fig_style
+        if stripped and new_style == sty and tab_style and tab_re and sty.lower() in ("body",):
+            if any(r.match(stripped) for r in tab_re):
+                new_style = tab_style
+        out.append((new_style, txt))
+    return out
 
 
 def _verify_flow(cli_password: str | None) -> bool:
@@ -388,6 +460,8 @@ def main(argv=None):
 
     # 2)  XML -> paragraphs
     paragraphs = extract_paragraphs_with_levels(XML_PATH)
+    cap_rules = _load_caption_rules()
+    paragraphs = _apply_caption_styles(paragraphs, cap_rules)
     if args.debug_log:
         _log_user(f"[INFO] 解析到 {len(paragraphs)} 段；示例前3段: {paragraphs[:3]}")
     if PIPELINE_LOGGER and args.debug_log:
