@@ -637,7 +637,8 @@ class DOCXOutlineExporter:
     @staticmethod
     def _omath_to_text(math_element) -> str:
         """
-        Flatten a Word OMML math node to inline text with basic sub/sup markers.
+        Flatten a Word OMML math node to inline text with basic sub/sup markers
+        and common constructs (n-ary, roots, fractions, matrices, accents).
         """
         def walk(el) -> str:
             try:
@@ -677,6 +678,14 @@ class DOCXOutlineExporter:
                 num = walk(num_el) if num_el is not None else ""
                 den = walk(den_el) if den_el is not None else ""
                 return f"({num})/({den})"
+            if name == "rad":
+                base_el = el.find("./m:e", M_NSMAP)
+                deg_el = el.find("./m:deg", M_NSMAP)
+                base = walk(base_el) if base_el is not None else ""
+                deg = walk(deg_el) if deg_el is not None else ""
+                if deg:
+                    return f"root({deg}, {base})"
+                return f"√({base})"
             if name == "nary":
                 sym = ""
                 try:
@@ -692,6 +701,61 @@ class DOCXOutlineExporter:
                 sup = walk(sup_el) if sup_el is not None else ""
                 expr = walk(expr_el) if expr_el is not None else ""
                 return f"{sym}[[SUB]]{sub}[[/SUB]][[SUP]]{sup}[[/SUP]] {expr}"
+            if name in ("limLow", "limUpp"):
+                base = walk(el.find("./m:e", M_NSMAP) or etree.Element("m:e"))
+                lim = walk(el.find("./m:lim", M_NSMAP) or etree.Element("m:lim"))
+                if name == "limLow":
+                    return f"{base}[[SUB]]{lim}[[/SUB]]"
+                return f"{base}[[SUP]]{lim}[[/SUP]]"
+            if name == "acc":
+                base_el = el.find("./m:e", M_NSMAP)
+                base = walk(base_el) if base_el is not None else ""
+                chr_val = ""
+                try:
+                    chr_el = el.find("./m:accPr/m:chr", M_NSMAP)
+                    if chr_el is not None:
+                        chr_val = chr_el.get(f"{{{M_NS}}}val") or ""
+                except Exception:
+                    chr_val = ""
+                if chr_val in ("^", "ˆ", "꭛", "ˇ"):
+                    return f"{base}^"
+                if chr_val in ("¯", "ˉ", "̄"):
+                    return f"{base}¯"
+                if chr_val in ("→", "⟶", "⟵", "⟷"):
+                    return f"{chr_val}{base}"
+                return f"{base}{chr_val}"
+            if name == "m":  # matrix
+                rows = []
+                for mr in el.findall("./m:mr", M_NSMAP):
+                    cells = []
+                    for me in mr.findall("./m:e", M_NSMAP):
+                        cells.append(walk(me))
+                    rows.append(",".join(cells))
+                return "[[" + "];[".join(rows) + "]]" if rows else ""
+            if name == "eqArr":  # piecewise/cases
+                parts = []
+                for mr in el.findall("./m:mr", M_NSMAP):
+                    cells = []
+                    for me in mr.findall("./m:e", M_NSMAP):
+                        cells.append(walk(me))
+                    if cells:
+                        parts.append(", ".join(cells))
+                if parts:
+                    return "{" + " ; ".join(parts) + "}"
+            if name == "groupChr":  # stretchy delimiters -> plain
+                base = walk(el.find("./m:e", M_NSMAP) or etree.Element("m:e"))
+                chr_val = ""
+                try:
+                    chr_el = el.find("./m:groupChrPr/m:chr", M_NSMAP)
+                    if chr_el is not None:
+                        chr_val = chr_el.get(f"{{{M_NS}}}val") or ""
+                except Exception:
+                    chr_val = ""
+                if chr_val in ("|", "‖"):
+                    return f"|{base}|"
+                if chr_val:
+                    return f"{chr_val}{base}{chr_val}"
+                return base
             # default: concatenate children
             return "".join(walk(ch) for ch in el) or (el.text or "")
 
