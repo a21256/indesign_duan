@@ -70,7 +70,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 NSMAP = {"w": W_NS}
+M_NSMAP = {"m": M_NS}
 
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -78,7 +80,7 @@ WP_NS= "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 WPS_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 WPG_NS = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
 V_NS = "urn:schemas-microsoft-com:vml"
-NSMAP_ALL = {"w": W_NS, "a": A_NS, "r": R_NS, "wp": WP_NS, "wps": WPS_NS, "wpg": WPG_NS, "v": V_NS}
+NSMAP_ALL = {"w": W_NS, "a": A_NS, "r": R_NS, "wp": WP_NS, "wps": WPS_NS, "wpg": WPG_NS, "v": V_NS, "m": M_NS}
 NS = NSMAP_ALL
 XP_RUN_BLIPS = etree.XPath(".//w:drawing//a:blip", namespaces=NSMAP_ALL)
 XP_RUN_EXTENT = etree.XPath(
@@ -577,31 +579,35 @@ class DOCXOutlineExporter:
     @staticmethod
     def _collect_text_from_p(par_el, *, skip_note_refs: bool = False) -> str:
         chunks: List[str] = []
-        runs = par_el.findall(".//w:r", NSMAP)
         pending_strip_leading = False
-        for run in runs:
-            text = DOCXOutlineExporter._text_from_run(run)
-            is_note_ref = False
-            if skip_note_refs:
-                is_note_ref = DOCXOutlineExporter._is_note_reference_run(run, text or "")
-            if is_note_ref:
-                if chunks:
-                    stripped_prev = chunks[-1].rstrip(NOTE_MARKER_EDGE)
-                    if stripped_prev != chunks[-1]:
-                        chunks[-1] = stripped_prev
-                        if not chunks[-1]:
-                            chunks.pop()
-                pending_strip_leading = True
-                continue
-            if not text:
-                continue
-            if pending_strip_leading:
-                stripped = text.lstrip(NOTE_MARKER_EDGE)
-                if not stripped:
+        for node in par_el.iter():
+            if node.tag == f"{{{W_NS}}}r":
+                text = DOCXOutlineExporter._text_from_run(node)
+                is_note_ref = False
+                if skip_note_refs:
+                    is_note_ref = DOCXOutlineExporter._is_note_reference_run(node, text or "")
+                if is_note_ref:
+                    if chunks:
+                        stripped_prev = chunks[-1].rstrip(NOTE_MARKER_EDGE)
+                        if stripped_prev != chunks[-1]:
+                            chunks[-1] = stripped_prev
+                            if not chunks[-1]:
+                                chunks.pop()
+                    pending_strip_leading = True
                     continue
-                text = stripped
-                pending_strip_leading = False
-            chunks.append(text)
+                if not text:
+                    continue
+                if pending_strip_leading:
+                    stripped = text.lstrip(NOTE_MARKER_EDGE)
+                    if not stripped:
+                        continue
+                    text = stripped
+                    pending_strip_leading = False
+                chunks.append(text)
+            elif node.tag in (f"{{{M_NS}}}oMath", f"{{{M_NS}}}oMathPara"):
+                math_text = DOCXOutlineExporter._omath_to_text(node)
+                if math_text:
+                    chunks.append(math_text)
         if chunks:
             return "".join(chunks)
         fallback: List[str] = []
@@ -610,6 +616,12 @@ class DOCXOutlineExporter:
                 fallback.append(node.text or "")
             elif node.tag == f"{{{W_NS}}}tab":
                 fallback.append("\t")
+            elif node.tag == f"{{{M_NS}}}t":
+                fallback.append(node.text or "")
+            elif node.tag == f"{{{M_NS}}}chr":
+                val = node.get(f"{{{M_NS}}}val")
+                if val:
+                    fallback.append(val)
         return "".join(fallback)
 
     @staticmethod
@@ -621,6 +633,70 @@ class DOCXOutlineExporter:
             elif node.tag == f"{{{W_NS}}}tab":
                 parts.append("\t")
         return "".join(parts)
+
+    @staticmethod
+    def _omath_to_text(math_element) -> str:
+        """
+        Flatten a Word OMML math node to inline text with basic sub/sup markers.
+        """
+        def walk(el) -> str:
+            try:
+                name = etree.QName(el).localname
+            except Exception:
+                name = el.tag.split("}", 1)[-1]
+
+            if name == "t":
+                return el.text or ""
+            if name == "chr":
+                return el.get(f"{{{M_NS}}}val") or ""
+            if name == "r":
+                return "".join(walk(ch) for ch in el)
+            if name == "sSub":
+                base_el = el.find("./m:e", M_NSMAP)
+                sub_el = el.find("./m:sub", M_NSMAP)
+                base = walk(base_el) if base_el is not None else ""
+                sub = walk(sub_el) if sub_el is not None else ""
+                return f"{base}[[SUB]]{sub}[[/SUB]]"
+            if name == "sSup":
+                base_el = el.find("./m:e", M_NSMAP)
+                sup_el = el.find("./m:sup", M_NSMAP)
+                base = walk(base_el) if base_el is not None else ""
+                sup = walk(sup_el) if sup_el is not None else ""
+                return f"{base}[[SUP]]{sup}[[/SUP]]"
+            if name == "sSubSup":
+                base_el = el.find("./m:e", M_NSMAP)
+                sub_el = el.find("./m:sub", M_NSMAP)
+                sup_el = el.find("./m:sup", M_NSMAP)
+                base = walk(base_el) if base_el is not None else ""
+                sub = walk(sub_el) if sub_el is not None else ""
+                sup = walk(sup_el) if sup_el is not None else ""
+                return f"{base}[[SUB]]{sub}[[/SUB]][[SUP]]{sup}[[/SUP]]"
+            if name == "frac":
+                num_el = el.find("./m:num", M_NSMAP)
+                den_el = el.find("./m:den", M_NSMAP)
+                num = walk(num_el) if num_el is not None else ""
+                den = walk(den_el) if den_el is not None else ""
+                return f"({num})/({den})"
+            if name == "nary":
+                sym = ""
+                try:
+                    chr_el = el.find("./m:naryPr/m:chr", M_NSMAP)
+                    sym = chr_el.get(f"{{{M_NS}}}val") if chr_el is not None else ""
+                except Exception:
+                    sym = ""
+                sym = sym or "∑"
+                sub_el = el.find("./m:sub", M_NSMAP)
+                sup_el = el.find("./m:sup", M_NSMAP)
+                expr_el = el.find("./m:e", M_NSMAP)
+                sub = walk(sub_el) if sub_el is not None else ""
+                sup = walk(sup_el) if sup_el is not None else ""
+                expr = walk(expr_el) if expr_el is not None else ""
+                return f"{sym}[[SUB]]{sub}[[/SUB]][[SUP]]{sup}[[/SUP]] {expr}"
+            # default: concatenate children
+            return "".join(walk(ch) for ch in el) or (el.text or "")
+
+        text = walk(math_element).strip()
+        return text or "[[MATH]]"
 
     @classmethod
     def _is_note_reference_run(cls, run_element, text: str) -> bool:
@@ -1777,6 +1853,19 @@ class DOCXOutlineExporter:
         has_valid_list = bool(list_meta.get("list-type") or list_meta.get("abstractNumId"))
         if label and want_prefix and has_valid_list:
             chunks.append(label)
+
+        # Inline math (OMML) is not part of paragraph.runs; collect it so formulas are not dropped.
+        math_texts: List[str] = []
+        try:
+            for node in paragraph._element.iter():
+                if node.tag in (f"{{{M_NS}}}oMath", f"{{{M_NS}}}oMathPara"):
+                    txt = self._omath_to_text(node)
+                    if txt:
+                        math_texts.append(txt)
+        except Exception:
+            pass
+        if math_texts:
+            chunks.extend(math_texts)
 
         # Traverse runs: inline images and text/notes/tabs
         para_has_frames = False
