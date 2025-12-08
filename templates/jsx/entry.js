@@ -779,6 +779,16 @@ function _holderInnerBounds(holder){
         if (!s.isValid) { s = app.activeDocument.paragraphStyles.add({name:styleName}); }
 
         var text = String(raw).replace(/^\s+|\s+$/g, "");
+        try{
+          // 兜底将 <sup>/<sub> 转成标记，避免遗漏
+          if (/<sup>/i.test(text) || /<sub>/i.test(text)){
+            text = text.replace(/<sup>([\s\S]*?)<\/sup>/gi, "[[SUP]]$1[[/SUP]]");
+            text = text.replace(/<sub>([\s\S]*?)<\/sub>/gi, "[[SUB]]$1[[/SUB]]");
+          }
+          if (text.indexOf("[[SUP") !== -1 || text.indexOf("[[SUB") !== -1){
+            try{ log("[SUPSUB][TEXT] para="+idx+" style="+styleName+" snippet="+text.substr(0,80)); }catch(_slog){}
+          }
+        }catch(_p){ try{ log("[SUPSUB][MARK] preprocess failed: "+_p); }catch(__){} }
         if (text.length === 0) return;
 
         var insertionStart = 0;
@@ -800,7 +810,15 @@ function _holderInnerBounds(holder){
                         var startIdx = story.characters.length;
                         story.insertionPoints[-1].contents = chunk;
                         var endIdx   = story.characters.length;
-                        __applyInlineFormattingOnRange(story, startIdx, endIdx, {i:(st.i>0), b:(st.b>0), u:(st.u>0), sup:(st.sup>0), sub:(st.sub>0)});
+                        __applyInlineFormattingOnRange(story, startIdx, endIdx, {
+                          i:(st.i>0),
+                          b:(st.b>0),
+                          u:(st.u>0),
+                          sup:(st.sup>0),
+                          sub:(st.sub>0),
+                          sup2:(st.sup2>0),
+                          sub2:(st.sub2>0)
+                        });
                     }
                     try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles.itemByName("[None]"); } catch(_){ try { story.insertionPoints[-1].appliedCharacterStyle = app.activeDocument.characterStyles[0]; } catch(__){} }
 

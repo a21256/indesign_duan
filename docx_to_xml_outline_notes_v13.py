@@ -702,8 +702,10 @@ class DOCXOutlineExporter:
                 expr = walk(expr_el) if expr_el is not None else ""
                 return f"{sym}[[SUB]]{sub}[[/SUB]][[SUP]]{sup}[[/SUP]] {expr}"
             if name in ("limLow", "limUpp"):
-                base = walk(el.find("./m:e", M_NSMAP) or etree.Element("m:e"))
-                lim = walk(el.find("./m:lim", M_NSMAP) or etree.Element("m:lim"))
+                base_el = el.find("./m:e", M_NSMAP)
+                lim_el = el.find("./m:lim", M_NSMAP)
+                base = walk(base_el) if base_el is not None else ""
+                lim = walk(lim_el) if lim_el is not None else ""
                 if name == "limLow":
                     return f"{base}[[SUB]]{lim}[[/SUB]]"
                 return f"{base}[[SUP]]{lim}[[/SUP]]"

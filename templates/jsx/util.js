@@ -28,7 +28,7 @@ function __jsonParseSafe(str){
 }
 
 // ----- superscript/subscript style helpers -----
-var __SUPSUB_CACHE = {doc: null, sup: null, sub: null};
+var __SUPSUB_CACHE = {doc: null, sup: null, sub: null, sup2: null, sub2: null};
 function __getDocFromStory(story){
   try{
     if (story && story.isValid && story.parent) return story.parent;
@@ -37,9 +37,14 @@ function __getDocFromStory(story){
   return null;
 }
 function __ensureSupSubStyles(doc){
-  if (!doc || !doc.isValid) return {sup:null, sub:null};
+  if (!doc || !doc.isValid) return {sup:null, sub:null, sup2:null, sub2:null};
   if (__SUPSUB_CACHE.doc === doc && __SUPSUB_CACHE.sup && __SUPSUB_CACHE.sub){
-    return {sup: __SUPSUB_CACHE.sup, sub: __SUPSUB_CACHE.sub};
+    return {
+      sup: __SUPSUB_CACHE.sup,
+      sub: __SUPSUB_CACHE.sub,
+      sup2: __SUPSUB_CACHE.sup2,
+      sub2: __SUPSUB_CACHE.sub2
+    };
   }
   function _tryNames(names){
     for (var i=0;i<names.length;i++){
@@ -52,10 +57,14 @@ function __ensureSupSubStyles(doc){
   }
   var supStyle = _tryNames(["上角标", "上标", "Superscript"]);
   var subStyle = _tryNames(["下角", "下标", "Subscript"]);
+  var supStyle2 = _tryNames(["__DocxSuperscriptSmall"]);
+  var subStyle2 = _tryNames(["__DocxSubscriptSmall"]);
   if (!supStyle) supStyle = _tryNames(["__DocxSuperscript"]);
   if (!subStyle) subStyle = _tryNames(["__DocxSubscript"]);
   var supName = "__DocxSuperscript";
   var subName = "__DocxSubscript";
+  var sup2Name = "__DocxSuperscriptSmall";
+  var sub2Name = "__DocxSubscriptSmall";
   if (!supStyle){
     try{
       supStyle = doc.characterStyles.add({name: supName});
@@ -74,8 +83,30 @@ function __ensureSupSubStyles(doc){
       log("[SUPSUB][STYLE] created "+subName);
     }catch(eSub){ try{ log("[SUPSUB][STYLE][ERR] create sub: "+eSub); }catch(_l2){} }
   }
-  __SUPSUB_CACHE = {doc: doc, sup: supStyle, sub: subStyle};
-  return {sup: supStyle, sub: subStyle};
+  if (!supStyle2){
+    try{
+      supStyle2 = doc.characterStyles.add({name: sup2Name});
+      try{ supStyle2.position = Position.SUPERSCRIPT; }catch(_p3){}
+      try{ supStyle2.superscriptSize = 80; }catch(_s3){}
+      try{ supStyle2.superscriptPosition = 10; }catch(_sp3){}
+      log("[SUPSUB][STYLE] created "+sup2Name);
+    }catch(eSup2){ try{ log("[SUPSUB][STYLE][ERR] create sup2: "+eSup2); }catch(_l3){} }
+  }
+  if (!subStyle2){
+    try{
+      subStyle2 = doc.characterStyles.add({name: sub2Name});
+      try{ subStyle2.position = Position.SUBSCRIPT; }catch(_p4){}
+      try{ subStyle2.subscriptSize = 80; }catch(_s4){}
+      try{ subStyle2.subscriptPosition = 6; }catch(_sp4){}
+      log("[SUPSUB][STYLE] created "+sub2Name);
+    }catch(eSub2){ try{ log("[SUPSUB][STYLE][ERR] create sub2: "+eSub2); }catch(_l4){} }
+  }
+  try{
+    log("[SUPSUB][STYLE] resolved sup="+(supStyle&&supStyle.name)+" sub="+(subStyle&&subStyle.name)
+        +" sup2="+(supStyle2&&supStyle2.name)+" sub2="+(subStyle2&&subStyle2.name));
+  }catch(_log){} 
+  __SUPSUB_CACHE = {doc: doc, sup: supStyle, sub: subStyle, sup2: supStyle2, sub2: subStyle2};
+  return {sup: supStyle, sub: subStyle, sup2: supStyle2, sub2: subStyle2};
 }
 
 function smartWrapStr(s){
@@ -187,7 +218,6 @@ function __applyInlineFormattingOnRange(story, startCharIndex, endCharIndex, st)
     st = st || {};
     var supFlag = !!st.sup;
     var subFlag = !!st.sub;
-    if (supFlag && subFlag) subFlag = false; // superscript takes priority if both toggled
     var txt=""; try{ txt = String(r.contents).substr(0,50); }catch(_){}
     log("[I/B/U/S] range="+startCharIndex+"-"+endCharIndex+" ; flags="+__jsonStringifySafe(st)+" ; txt=\""+txt+"\"");
 
@@ -250,11 +280,18 @@ function __processNoteMatch(m, ctx){
     // format toggles [[/I]] etc
     var closing = m[4] === "/";
     var flag = m[5];
+    try{ log("[SUPSUB][FLAG] flag="+flag+" closing="+closing+" st="+__jsonStringifySafe(st)); }catch(_lf){}
     if (flag === "I") st.i = closing ? 0 : 1;
     else if (flag === "B") st.b = closing ? 0 : 1;
     else if (flag === "U") st.u = closing ? 0 : 1;
-    else if (flag === "SUP") { st.sup = closing ? 0 : 1; if (!closing) st.sub = 0; }
-    else if (flag === "SUB") { st.sub = closing ? 0 : 1; if (!closing) st.sup = 0; }
+    else if (flag === "SUP") {
+      st.sup = closing ? 0 : 1;
+      if (!closing) { st.sub = 0; }
+    }
+    else if (flag === "SUB") {
+      st.sub = closing ? 0 : 1;
+      if (!closing) { st.sup = 0; }
+    }
     return;
   }
 }
